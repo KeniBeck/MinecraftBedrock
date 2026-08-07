@@ -99,6 +99,65 @@ async def test_world_activated_replica_config_deseada() -> None:
     assert server.applied_config_rev == 3
 
 
+async def test_world_activated_sin_config_rev_no_pisa_la_revision() -> None:
+    """``WORLD.ACTIVATED`` no lleva ``config_rev`` (§22): se reaplica sin cambiarla."""
+    bus = InProcessEventBus()
+    runtime = FakeRuntime()
+    config = FakeConfigurationReader(env={"MOTD": "viejo"})
+    apply_config, deps = make_harness(bus, config, runtime)
+    await seed(deps)
+    bus.subscribe(CONFIG_CHANGED_TOPIC, ConfigChangedHandler(apply_config))
+    bus.subscribe(WORLD_ACTIVATED_TOPIC, WorldActivatedHandler(apply_config))
+
+    await bus.publish(
+        DomainEvent(type="CONFIG.CHANGED", server_id="srv-1", payload={"config_rev": 5})
+    )
+    config.env["MOTD"] = "otro"
+    await bus.publish(DomainEvent(type="WORLD.ACTIVATED", server_id="srv-1"))
+
+    server = await deps.repository.get_required(ServerId("srv-1"))
+    assert server.spec.environment["MOTD"] == "otro"
+    assert server.applied_config_rev == 5
+
+
+async def test_world_activated_inyecta_level_name_del_mundo_activado() -> None:
+    """``WORLD.ACTIVATED`` propaga el ``name`` como env ``LEVEL_NAME`` (§7.2, §22)."""
+    bus = InProcessEventBus()
+    runtime = FakeRuntime()
+    config = FakeConfigurationReader(env={"MOTD": "viejo"})
+    apply_config, deps = make_harness(bus, config, runtime)
+    await seed(deps)
+    bus.subscribe(WORLD_ACTIVATED_TOPIC, WorldActivatedHandler(apply_config))
+
+    await bus.publish(
+        DomainEvent(
+            type="WORLD.ACTIVATED",
+            server_id="srv-1",
+            payload={"name": "MundoNuevo", "level_name": "MundoNuevo"},
+        )
+    )
+
+    server = await deps.repository.get_required(ServerId("srv-1"))
+    assert server.spec.environment["LEVEL_NAME"] == "MundoNuevo"
+    assert runtime.materialized, "el spec cambió → el contenedor debe recrearse"
+
+
+async def test_world_activated_creado_sin_name_mantiene_el_actual() -> None:
+    """Sin ``name`` en el payload no se pisa el ``LEVEL_NAME`` existente."""
+    bus = InProcessEventBus()
+    runtime = FakeRuntime()
+    config = FakeConfigurationReader(env={"MOTD": "viejo", "LEVEL_NAME": "Actual"})
+    apply_config, deps = make_harness(bus, config, runtime)
+    await seed(deps)
+    bus.subscribe(WORLD_ACTIVATED_TOPIC, WorldActivatedHandler(apply_config))
+
+    await bus.publish(DomainEvent(type="WORLD.ACTIVATED", server_id="srv-1"))
+
+    server = await deps.repository.get_required(ServerId("srv-1"))
+    assert server.spec.environment["LEVEL_NAME"] == "Actual"
+    assert server.applied_config_rev is None
+
+
 async def test_config_changed_sin_server_id_se_ignora() -> None:
     bus = InProcessEventBus()
     runtime = FakeRuntime()

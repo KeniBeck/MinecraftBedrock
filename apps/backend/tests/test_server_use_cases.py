@@ -385,6 +385,37 @@ async def test_apply_config_sin_cambio_no_recrea() -> None:
     assert len(runtime.materialized) == 1
 
 
+async def test_apply_config_con_level_name_inyecta_env_y_recrea() -> None:
+    """``ApplyConfigCommand.level_name`` inyecta ``LEVEL_NAME`` y recrea (§22)."""
+    bus = InProcessEventBus()
+    runtime = FakeRuntime()
+    deps = make_deps(runtime, FakeConfigurationReader(env={"MOTD": "antes"}), bus)
+    server_id = await make_running(deps, runtime)
+
+    view = await ApplyConfigUseCase(deps, OperationGuard()).execute(
+        ApplyConfigCommand(server_id=server_id, level_name="MundoNuevo")
+    )
+
+    assert view.state == ServerState.STARTING
+    assert runtime.specs["r1"].environment["LEVEL_NAME"] == "MundoNuevo"
+    assert len(runtime.materialized) == 2
+
+
+async def test_apply_config_sin_level_name_no_inyecta_env() -> None:
+    bus = InProcessEventBus()
+    runtime = FakeRuntime()
+    deps = make_deps(runtime, FakeConfigurationReader(env={"MOTD": "antes"}), bus)
+    server_id = await make_running(deps, runtime)
+
+    view = await ApplyConfigUseCase(deps, OperationGuard()).execute(
+        ApplyConfigCommand(server_id=server_id)
+    )
+
+    assert view.state == ServerState.RUNNING
+    assert "LEVEL_NAME" not in runtime.specs["r0"].environment
+    assert len(runtime.materialized) == 1
+
+
 async def test_change_version_publica_version_changed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     # Host/dominio que ven los clientes Bedrock (no el contenedor interno).
     server_public_host: str = "localhost"
 
+    # Importación de mundos (paso de cierre §16): tamaño máximo de un snapshot
+    # ``.mcworld``/tar.gz subido por multipart. Starlette spolea los archivos a
+    # disco y su ``max_part_size`` solo limita campos, así que el límite real se
+    # valida aquí al leer el ``UploadFile`` (los mundos pesan cientos de MB).
+    world_max_import_bytes: int = 2 * 1024 * 1024 * 1024
+
     # Monitoring (Fase D paso 9): intervalo del poller y timeout del ping RakNet.
     monitoring_poll_interval_seconds: float = 5.0
     monitoring_probe_timeout: float = 2.0

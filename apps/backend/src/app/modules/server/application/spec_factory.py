@@ -165,6 +165,18 @@ class RuntimeSpecFactory:
         self._settings = settings
         self._allocator = allocator if allocator is not None else build_port_allocator(settings)
 
+    def data_dir(self, server_id: str, version: str = "") -> Path:
+        """Raíz de datos de un servidor (misma lógica que el volumen ``/data``).
+
+        Coincide exactamente con el directorio que ``render`` monta como
+        volumen: si el árbol contiene un binario Bedrock local (p. ej. el
+        ``data/`` del repo en dev) se usa ese; si no, ``{storage.base_path}/
+        {server_id}``. El módulo World la usa como raíz de su storage para no
+        divergir del mount del contenedor (§22, sin rutas paralelas).
+        """
+        base_path = self._settings.get("storage.base_path", "/var/lib/bedrockpanel")
+        return _discover_server_data_dir(base_path, server_id, version)
+
     def render(
         self,
         server_id: str,

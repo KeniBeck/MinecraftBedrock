@@ -19,10 +19,13 @@ from app.bootstrap.config import get_settings
 from app.bootstrap.container import Container, build_container
 from app.bootstrap.errors import register_exception_handlers
 from app.kernel.logging import configure_logging
+from app.modules.backup.api.router import router as backup_router
 from app.modules.console.api.router import router as console_router
 from app.modules.iam.api.router import router as iam_router
 from app.modules.monitoring.api.router import router as monitoring_router
+from app.modules.player.api.router import router as player_router
 from app.modules.server.api.router import router as server_router
+from app.modules.world.api.router import router as world_router
 
 
 @asynccontextmanager
@@ -62,6 +65,9 @@ def create_app(container: Container | None = None) -> FastAPI:
     app.include_router(server_router, prefix=api_prefix)
     app.include_router(console_router, prefix=api_prefix)
     app.include_router(monitoring_router, prefix=api_prefix)
+    app.include_router(world_router, prefix=api_prefix)
+    app.include_router(player_router, prefix=api_prefix)
+    app.include_router(backup_router, prefix=api_prefix)
 
     _register_root(app)
     return app

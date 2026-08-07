@@ -19,11 +19,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 # Registra los modelos de cada módulo para ``create_all``/``drop_all`` en la
 # fixture de integración (Fase A paso 2; Fase C paso 8 añade IAM; Fase D paso
-# 10 añade Configuration).
+# 10 añade Configuration; Fase E paso 11 añade Player; Fase E paso 12 añade
+# World; Fase F paso 13 añade Backup).
+import app.modules.backup.infrastructure.models  # noqa: F401
 import app.modules.configuration.infrastructure.models  # noqa: F401
 import app.modules.console.infrastructure.models  # noqa: F401
 import app.modules.iam.infrastructure.models  # noqa: F401
+import app.modules.player.infrastructure.models  # noqa: F401
 import app.modules.server.infrastructure.models  # noqa: F401
+import app.modules.world.infrastructure.models  # noqa: F401
 from app.infrastructure.db.base import Base
 from app.infrastructure.events.bus import InProcessEventBus
 from app.kernel.ports.runtime import RuntimeSpec, RuntimeState

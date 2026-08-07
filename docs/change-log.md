@@ -652,4 +652,726 @@ del perfil, historial append-only).
 - **ADR-005 Proposed**: sin test de paridad del catálogo todavía.
 - No avanzar al paso 11 (Fase D) sin confirmación del usuario.
 
+## 18. FASE E — paso 11: Módulo Player
 
+> **Fecha**: 2026-08-06
+> **Alcance**: parser declarativo de join/leave en Console (Pieza 1) + módulo Player completo
+> (Pieza 2: dominio/aplicación/infraestructura/migración `0005_player_tables`/wiring/tests).
+> El `technical-design.md` (TDD) permanece **intacto**; solo ADR + change-log registran
+> decisiones.
+
+### Pieza 1 — Parser declarativo en Console
+
+- **`infrastructure/parsers/player_join_detector.py`**: `PlayerJoinDetector`, consumidor de
+  `CONSOLE_OUTPUT_TOPIC` (mismo patrón que `save_detector.py`). Reconoce por regex
+  (case-insensitive) las líneas `Player connected: <name>, xuid: <xuid>`,
+  `Player disconnected: <name>, xuid: <xuid>` y `Player timed out: <name>, xuid: <xuid>`
+  (timed-out → `PLAYER.LEFT`), y publica `PLAYER.JOINED`/`PLAYER.LEFT` con payload
+  `{server_id, name, xuid}`. **Requiere XUID** en la línea; si falta, la línea se ignora.
+- **Responsabilidad limitada**: el parser solo reconoce el patrón y publica; **no interpreta
+  semántica de negocio**. `PLAYER.JOINED`/`PLAYER.LEFT` los publica Console (según §9.2);
+  el módulo Player solo los **consume**.
+- **Hallazgo — formato de BDS no confirmado**: los patrones de línea se basan en salida típica
+  de BDS (`Player connected: <name>, xuid: <xuid>`), pero **no se ha verificado contra una
+  consola real**. Mismo criterio que el hallazgo C1 del catálogo de comandos: se asume un
+  formato, se aísla en el parser y se valida con pruebas de caja negra contra BDS real en el
+  paso de verificación final. El parser está diseñado para ajustar solo la regex si difiere.
+
+### Pieza 2 — Módulo Player (§3.5)
+
+- **Dominio** (`modules/player/domain/`):
+  - `errors.py`: `PlayerValidationError` (`PLAYER.INVALID_PAYLOAD`),
+    `PlayerNotFoundError` (`PLAYER.NOT_FOUND`).
+  - `player.py`: `Player` frozen (xuid, name, first_seen_at, last_seen_at, playtime_seconds,
+    created_at, updated_at).
+  - `session.py`: `PlaySession` (id, server_id, xuid, joined_at, left_at, reason,
+    playtime_seconds, `elapsed_seconds`) y `SessionEndReason.LEFT/ABORTED`. **Las sesiones
+    abortadas (fin desconocido) no acumulan playtime.**
+  - `events.py`: `PLAYER.BANNED` (topic `player.banned`), que **publica** el módulo; y
+    `PLAYER.JOINED`/`PLAYER.LEFT`/`PLAYER.OPERATOR_CHANGED` (topics `player.*`), que
+    **consume**.
+  - `repository.py`: `PlayerRepositoryPort` (get_player, get_player_by_name, save_player,
+    get_open_session, save_session, list_open_sessions, list_sessions).
+- **Aplicación** (`modules/player/application/`):
+  - `use_cases.py`: `ResolvePlayerUseCase.cache` (upsert del jugador; refresca nombre y
+    last_seen), `JoinPlayerUseCase.join` (idempotente si ya hay sesión abierta),
+    `LeavePlayerUseCase.leave` (cierra con `LEFT` y acumula playtime; **defensivo**: sin sesión
+    abierta devuelve `None` sin lanzar), `CleanPresenceUseCase.clean` (en `SERVER.STARTED`:
+    aborta las sesiones abiertas sin acumular playtime), `BanPlayerUseCase.ban`
+    (`ban <name>` + publica `PLAYER.BANNED` solo si Console acepta el comando),
+    `UnbanPlayerUseCase.unban` (`unban <xuid>`), `KickPlayerUseCase.kick` (`kick <name>`).
+    Dependencias: `PlayerDeps` (repository, `ConsoleFacade`, bus, ids, time, settings).
+  - `handlers.py`: `PlayerJoinedHandler`, `PlayerLeftHandler`, `ServerStartedHandler`
+    (limpieza de presencia), `OperatorChangedHandler` (solo consistencia, sin lógica). Todos
+    **defensivos**: payload inválido o sin `server_id` → no-op.
+  - `facade.py`: `PlayerFacade` con **superficie pública mínima** (§3.5): `resolve_xuid`
+    (gamertag→XUID, para Permission en Fase F), `find_player` y `register_handlers`.
+- **Infraestructura** (`modules/player/infrastructure/`):
+  - `models.py` + `serialization.py`: `PlayerRow` (`player_players`: xuid String(64) PK,
+    name, fechas, playtime) y `PlaySessionRow` (`player_sessions`: id String(36) PK,
+    server_id/xuid indexados, joined/left_at, reason, playtime). **Sin FKs** a otros bounded
+    contexts.
+  - `postgres_repository.py`: `PostgresPlayerRepository` con upserts
+    (`pg_insert.on_conflict_do_update`); `get_player_by_name` devuelve el jugador con
+    `last_seen_at` más reciente (el gamertag nunca es identidad única, §16.6).
+  - `memory.py`: `InMemoryPlayerRepository` para tests.
+- **Migración** `0005_player_tables.py`: tablas `player_players` y `player_sessions` +
+  índices; **head único** (0001→0002→0003→0004→0005).
+- **Wiring**: `container.py` suscribe `PlayerJoinDetector` a `CONSOLE_OUTPUT_TOPIC` (junto a
+  `SaveDetector`), añade `player_facade: PlayerFacade` con `PostgresPlayerRepository` real +
+  `ConsoleFacade` (ban/unban/kick **reusan** la facade de Console existente); `alembic/env.py`
+  y `tests/conftest.py` registran los models de Player; `make_container` de tests usa el repo
+  en memoria.
+
+**Tests** (+29 unitarios + 4 integración opt-in): detector (7: joined/left/timed-out, ignora
+líneas no relacionadas y sin XUID, requiere server_id, case-insensitive), use cases (15: caché
+nueva/refresca/vacía, join abre/idempotente, leave cierra con playtime 90 s y acumula 150 s
+entre sesiones/defensivo, clean aborta 2 sin playtime y no afecta a otros servidores, ban con
+`PLAYER.BANNED` completo + actor_id, ban desconocido→`PLAYER.NOT_FOUND`, unban/kick por
+comando, xuid vacío→`PLAYER.INVALID_PAYLOAD`), handlers (7: abrir/cerrar, payloads inválidos
+ignorados, `SERVER.STARTED` limpia, `OPERATOR_CHANGED` sin efecto, topics suscritos) e
+integración Postgres (4: roundtrip+upsert, `get_player_by_name` más reciente, sesiones
+open/close/presencia por servidor, `list_sessions` desc).
+
+### Verificación
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅ (250 archivos) · `uv run mypy
+  --strict` ✅ (250 archivos, incluye los tests del paso).
+- `uv run pytest -q` ✅ **281 passed, 21 deselected** (252 previos + 29 unitarios Player; los 4
+  de integración Player opt-in), 6 warnings (JWT key corta en tests, pre-existente).
+- Integración opt-in contra Postgres real (Docker 5433, DB `panel_test`, rol
+  `bedrockpanel`): **21 passed** (17 previos + 4 Player).
+- `uv run alembic upgrade head` aplicado sobre la BBDD dev real (5433/bedrockpanel):
+  0003→0004→0005. `uv run alembic heads` ✅ `0005_player_tables (head)` — cadena única
+  0001→0002→0003→0004→0005. Tablas `player_players`/`player_sessions` creadas.
+
+### Pendiente / deuda
+- **Formato de líneas de BDS sin confirmar** (hallazgo): validar contra consola real en el paso
+  de verificación final (mismo criterio que C1); si difiere, solo cambia la regex del parser.
+- **Sin API REST de Player**: la facade queda lista (resolveXuid/findPlayer) pero **no se
+  conectó a HTTP**; los endpoints de jugadores/sesiones/bans quedan para el paso de cierre
+  (igual que IAM/Server/Console en Fase D). **Sin tabla de bans** aún: el ban se registra vía
+  comando de Console + evento `PLAYER.BANNED`; persistir el estado de ban queda pendiente.
+- **Sin API HTTP de Console** aún (paso 7 la dejó sin REST): parsers publican eventos pero
+  la lectura de líneas por HTTP/WS queda para una iteración posterior.
+- No avanzar al paso 12 (World) sin confirmación del usuario.
+
+## 19. Corrección — Ciclo de vida del stream de Console (deuda §10 decisión 11)
+
+> **Fecha**: 2026-08-06
+> **Alcance**: cerrar la deuda de la decisión 11 — `console_stream`
+> (`ConsoleLogStream`) se exponía en el `Container` pero nunca se iniciaba, por
+> lo que ningún parser declarativo (`SaveDetector`, `PlayerJoinDetector`) recibía
+> líneas reales. **Mínimo necesario**: atar el arranque/parada del stream a los
+> eventos `SERVER.*` ya publicados. No es el supervisor de tareas de Fase H.
+
+### Qué se hizo
+- **`ConsoleStreamManager`** (`modules/console/infrastructure/stream_manager.py`):
+  gestor de ciclo de vida del stream con **una tarea `asyncio.Task` por
+  `server_id`**:
+  - `SERVER.STARTED` → resuelve el `runtime_id` vía `ServerConsoleReader`
+    (facade Server **solo lectura**, mismo puerto que usa Console) y lanza una
+    tarea de fondo que ejecuta `ConsoleLogStream.consume(server_id, runtime_id)`.
+  - `SERVER.STOPPED`/`SERVER.CRASHED`/`SERVER.REMOVED` → cancela la tarea del
+    servidor y la espera (`suppress(CancelledError)`); si la tarea ya terminó
+    sola, no queda estado residual.
+  - **Defensivo**: sin `server_id`, sin runtime (`runtime_id=None`) o servidor
+    desconocido → no-op; si la tarea muere con error se loguea y se limpia
+    (`finally`), sin tumbar el proceso ni dejar consumidores huérfanos.
+- **Multi-stream verificado**: `ConsoleLogStream.consume` es **sin estado por
+  invocación** (solo recibe `server_id`+`runtime_id`); una tarea por servidor
+  sostiene varios streams concurrentes **sin cambios en el adaptador** (test
+  `test_varios_servidores_conviven_y_se_paran_independientes`).
+- **Parada limpia sobre servidor eliminado**: `SERVER.REMOVED` cancela la tarea
+  (no queda un consumidor intentando leer logs de un contenedor que ya no
+  existe); cubierto por `test_server_removed_detiene_el_stream_sin_consumidor_orfano`.
+- **Wiring**: `build_container` crea el gestor con `console_deps.server` +
+  `console_stream` y lo suscribe al bus; `make_container` (tests de API) lo
+  replica para que producción y tests se comporten igual.
+
+### Verificación
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅ (252 archivos) ·
+  `uv run mypy --strict` ✅ (252 archivos).
+- `uv run pytest -q` ✅ **291 passed, 21 deselected** (281 previos + **10**
+  unitarios del gestor), 6 warnings (JWT key corta en tests, pre-existente).
+- Integración opt-in contra Postgres real (5433/panel_test): **21 passed**
+  (sin cambios respecto al paso 11 — el gestor no toca persistencia).
+
+### Hallazgo — el stream de Docker no es en vivo (`follow=False`)
+- El adaptador `DockerRuntimeAdapter.stream_logs` usa
+  `container.logs(stream=True, follow=False, tail="all")` (testado en
+  `test_runtime.py`), es decir, **vuelca el histórico de líneas de una vez y
+  termina**: es "cola", no "cola + streaming" como describe el contrato §4.1.
+- **Consecuencia**: aunque el gestor ya arranca el stream en `SERVER.STARTED`,
+  ese volcado único captura el *tail* del arranque y la tarea termina; las
+  líneas posteriores (p. ej. un `Player connected` de un jugador que entra
+  después de arrancar) **no llegan** a los parsers. El cableado por sí solo
+  **no puebla** `player_players`/`player_sessions` en vivo.
+- **Por qué no se arregló aquí**: pasar a `follow=True` convierte el iterador en
+  un generador **bloqueante** sobre el socket, y `consume` lo itera de forma
+  síncrona dentro de la tarea asyncio — congelaría el event loop del panel entre
+  líneas. Hacerlo bien requiere un **boundary asíncrono** (iterar el stream en un
+  hilo trabajador / `asyncio.to_thread`) en el adaptador de streaming: un cambio
+  mayor que **no se improvisa** en esta corrección (mismo criterio que la
+  instrucción de detenerse y reportar hallazgos).
+- **Opciones para decidir** (siguiente paso, fuera de esta corrección):
+  1. Dejar `follow=False` (el stream captura solo el tail al arrancar) — sirve
+     para registrar el arranque pero **no** para jugadores en vivo.
+  2. Cambiar el adaptador a `follow=True` + hilo de lectura por servidor —
+     objetivo real ("cola + streaming"); requiere una corrección dedicada.
+
+### Cómo verificar manualmente (documentado, no ejecutado aquí)
+1. Panel arriba (BBDD dev 5433) → arrancar un servidor por el panel
+   (publica `SERVER.STARTED`; el gestor inicia el stream).
+2. Comprobar en `pgAdmin`/`psql`: `select count(*) from console_lines;` sube con
+   las líneas del arranque (el buffer se puebla con el volcado inicial).
+3. Conectarse a Minecraft y hacer `/say hola` / entrar: mientras el adaptador
+   siga en `follow=False`, las líneas nuevas **no** aparecerán (hallazgo
+   anterior); con la opción 2 aparecerán y
+   `player_players`/`player_sessions` se poblarán al conectarse.
+
+### Pendiente / deuda
+- **Decidir el `follow` del adaptador Docker** (hallazgo anterior): el cableado
+  del gestor queda listo y probado para ambos casos; falta la corrección del
+  adaptador de streaming (hilo/`to_thread`) para el flujo en vivo.
+- El supervisor de tareas genérico de Fase H sigue fuera de alcance.
+- No avanzar al paso 12 (World) sin confirmación del usuario.
+
+## 20. Corrección — Adaptador de streaming en vivo (`follow=True` + boundary asíncrono)
+
+> **Fecha**: 2026-08-06
+> **Alcance**: cerrar el hallazgo §19. `DockerRuntimeAdapter.stream_logs` pasa a
+> `container.logs(stream=True, follow=True, tail="all")` (cola + streaming), y el
+> boundary asíncrono necesario se resuelve moviendo la lectura del generador
+> bloqueante de docker-py a un **hilo trabajador** que publica líneas en el event
+> loop. El contrato `ServerRuntimePort.stream_logs` (`Iterator[bytes]`) **no
+> cambia**; `ConsoleStreamManager` (§19) se reutiliza tal cual.
+
+### Qué se hizo
+- **`DockerRuntimeAdapter.stream_logs`** (`infrastructure/runtime/docker.py`):
+  `follow=False` → `follow=True`. El iterador ahora es un generador **bloqueante**
+  sobre el socket; termina cuando el daemon cierra el stream al detener/eliminar
+  el contenedor. Docstring actualizado con el nuevo comportamiento.
+- **`ConsoleLogStream.consume`** (`modules/console/infrastructure/stream.py`):
+  boundary asíncrono con **hilo trabajador `daemon`** por invocación
+  (`console-stream-{server_id}`):
+  - El hilo itera `stream_logs(runtime_id)` y entrega cada línea al loop con
+    `loop.call_soon_threadsafe` sobre un `asyncio.Queue`; el consumidor de la
+    corrutina las normaliza y publica como `CONSOLE.OUTPUT`.
+  - Centinela `_EOF` para terminación ordenada; **excepciones del runtime viajan
+    por la cola y se re-lanzan en la corrutina**, de modo que
+    `ConsoleStreamManager._run` las loguea y limpia el estado (`finally`), igual
+    que antes.
+  - Normalización/`_iter_lines` intactas (los tests unitarios existentes siguen
+    pasando).
+- **Tests** (`tests/test_console_stream_live.py`, 3 nuevos):
+  - `test_consume_no_bloquea_el_event_loop`: runtime bloqueante con
+    `reader_started`/`stream_stopped`/`reader_exited`; llega "primera", el ticker
+    sigue latiendo mientras el stream espera y "ultima" llega al liberar — **el
+    event loop nunca se congela**.
+  - `test_cancelar_detiene_la_lectura_sin_colgarse`: cancelar la tarea no cuelga
+    el loop; el hilo sale solo cuando el stream se agota (ver hallazgo).
+  - `test_consume_propaga_errores_del_runtime`: `ExplodingRuntime` → el
+    `RuntimeError` se propaga a la corrutina.
+- `tests/test_runtime.py`: `test_stream_logs_returns_iterador_de_bytes` actualizado
+  a `follow=True`.
+
+### Verificación
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅ (253 archivos) ·
+  `uv run mypy --strict` ✅ (253 archivos).
+- `uv run pytest -q` ✅ **294 passed, 21 deselected** (291 previos + **3** del
+  boundary), 6 warnings (JWT key corta en tests, pre-existente).
+- **Prueba real end-to-end ejecutada** (daemon Docker 29.7.1): contenedor
+  `alpine:3.20` real que emite 3 líneas estilo BDS en vivo (join de Steve a los
+  3s, join de Alex a los 11s, left de Steve a los 19s) → adaptador real
+  `follow=True` → `ConsoleLogStream` → `PlayerJoinDetector` → `PlayerFacade` →
+  **Postgres dev (5433)**:
+  - `console_lines`: **3** líneas (el stream capturó en vivo lo emitido *después*
+    de conectar, no un volcado previo).
+  - `player_players`: Steve (first_seen 01:42:23, playtime **15s**) y Alex
+    (first_seen 01:42:31, playtime 0 — sesión abierta).
+  - `player_sessions`: Steve cerrada en 01:42:39 con playtime **15s** y
+    reason `left`; Alex abierta (`left_at` NULL). El pipeline completo puebla
+    las tablas en vivo.
+
+### Hallazgo — cancelar la tarea no interrumpe el hilo de lectura
+- La tarea asyncio se cancela al instante (`await queue.get()` se interrumpe),
+  pero el **hilo trabajador no se puede interrumpir a la fuerza** mientras el
+  generador espera el próximo byte del socket docker-py; sale solo cuando Docker
+  cierra el stream al detener/eliminar el contenedor (o el servidor muere solo).
+- **Decisión**: documentarlo como comportamiento esperado, no forzar nada frágil.
+  El hilo es `daemon=True`, así que **no bloquea el shutdown del proceso**; y al
+  parar el servidor, el stream se cierra y el hilo termina. El test
+  `test_cancelar_detiene_la_lectura_sin_colgarse` verifica que el loop no cuelga
+  y deja constancia de que el hilo termina solo cuando el stream se agota.
+- **Deuda**: el formato de línea real de BDS (mensaje exacto del join/left y
+  entrega por líneas del log de BDS con el panel y un cliente Minecraft real)
+  sigue **pendiente de verificación manual** — el end-to-end de esta corrección
+  usó líneas sintéticas con el formato documentado del parser.
+
+### Cómo verificar manualmente (documentado, no ejecutado aquí)
+1. Panel arriba (BBDD dev 5433) → arrancar un servidor por el panel.
+2. `select count(*) from console_lines;` sube con cada línea que BDS emite
+   **en vivo** (ya no es un volcado único).
+3. Conectarse a Minecraft: `player_players`/`player_sessions` se pueblan al
+   entrar; `player_sessions.left_at`/`playtime_seconds`/`reason` al salir.
+   Comparar el mensaje real de BDS con el formato del parser
+   (`Player connected: <nombre>, xuid: <xuid>`).
+
+### Pendiente / deuda
+- Verificación manual con un **cliente Minecraft real** y el formato exacto de
+  línea de BDS (deuda del hallazgo).
+- El supervisor de tareas genérico de Fase H sigue fuera de alcance.
+- No avanzar al paso 12 (World) sin confirmación del usuario.
+
+## 21. Corrección — El stream no arrancaba en producción: probe RakNet inválido + XUID con coma
+
+> **Fecha**: 2026-08-07
+> **Alcance**: bug real reportado ("ConsoleStreamManager no arranca el stream en
+> producción": `console_lines` no crecía pese a un jugador conectado). La causa
+> raíz **no era el wiring** (que estaba correcto en `build_container`) sino una
+> **cadena gated por el probe**: BDS quedaba `starting` para siempre y por eso
+> `SERVER.STARTED` nunca se publicaba. De paso se encontró un **segundo bug
+> real** en el parser (XUID con coma en la línea de disconnect de BDS).
+
+### Evidencia del bug (producción, servidor real `bedrock-panel-server`)
+1. `docker logs bedrock-panel-server`: `Server started.` y
+   `Player connected: CrafterTec, xuid: 2535473172645342` reales.
+2. BBDD: `server_servers.state = 'starting'` (nunca `running`), `console_lines = 3`
+   (solo las líneas sintéticas de §20; ni una línea real).
+3. `RakNetStatusProbe.probe('localhost', 19132)` → `OFFLINE` (timeout 2s), pese a
+   que el puerto está publicado (`docker port` → `19132/udp`) y un ping RakNet
+   bien formado responde en **0.5 ms**.
+
+### Cadena causal demostrada
+- El wiring de producción **sí** suscribe el gestor (`container.py:173-178`,
+  `stream_manager.subscribe()`), y los temas coinciden (`event.type.lower()` =
+  `server.started`).
+- Pero `SERVER.STARTED` solo lo publica `MarkStartedUseCase` (use_cases.py:187),
+  que solo invoca `StatusPoller._reconcile` (polling.py:127) **cuando el probe
+  responde online**.
+- El probe enviaba `\x01\x00` — un paquete **malformado** (RakNet `unconnected
+  ping` exige `0x01 + timestamp(8) + magic(16) + GUID(8)`); BDS lo ignora → el
+  probe siempre devolvía `offline` → el servidor quedaba `starting` → sin
+  `SERVER.STARTED` → el gestor jamás arrancaba el stream → `console_lines`
+  congelado en 3.
+
+### Qué se hizo
+- **Probe corregido** (`monitoring/infrastructure/raknet_probe.py`): envía un
+  `ID_UNCONNECTED_PING` válido (`0x01` + timestamp big-endian + magic
+  `00ffff00fefefefefdfdfdfd12345678` + GUID cero). Verificado contra el servidor
+  real: **ONLINE 1.5 ms**.
+- **Observabilidad del gestor** (`stream_manager.py`): logs explícitos al recibir
+  `SERVER.STARTED`, al descartar por stream ya activo, al faltar runtime y al
+  arrancar la tarea (server_id + runtime_id) — rastro visible en los logs del
+  panel (permanente, útil para futuras depuraciones).
+- **Segundo bug real corregido** (`parsers/player_join_detector.py`): la línea
+  real de BDS es `Player disconnected: X, xuid: <xuid>, pfid: <...>` — el
+  `\S+` capturaba la coma y creaba un jugador basura (`xuid = "2535473172645342,"`
+  visto en `player_players`). Los regex pasan a `(?P<xuid>\d+)` (XUID decimal).
+- **Tests**: `test_raknet_probe_*` ahora validan el paquete enviado
+  (id 0x01, longitud 33, magic en offset 9); nuevo
+  `test_left_detector_captura_xuid_con_sufijo_pfid`.
+
+### Evidencia de la corrección (producción, con `--reload`)
+1. Tras guardar el fix, el panel recargó y el poller confirmó online →
+   `server_servers.state = 'running'` (antes `starting`).
+2. `SERVER.STARTED` → el gestor arrancó el stream → `console_lines` pasó de
+   **3 → 50** con las **líneas reales** del contenedor (historial completo vía
+   `tail="all"` + seguimiento en vivo): `Server started.`, versiones, join y
+   disconnect reales de CrafterTec.
+3. `player_players` se pobló con el XUID real `2535473172645342` y
+   `player_sessions` con su sesión.
+4. El stream **sigue activo** en vivo (la cola del log de BDS aparece en
+   `console_lines`).
+
+### Verificación
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅ (253 archivos) ·
+  `uv run mypy --strict` ✅ (253 archivos).
+- `uv run pytest -q` ✅ **295 passed, 21 deselected** (294 + 1 test del parser).
+
+### Pendiente / deuda
+- La fila basura del parser (`xuid` con coma) se limpió de la BBDD dev; la
+  sesión huérfana de la línea mal parseada también. La corrección aplica a
+  líneas nuevas.
+- Confirmar el formato de `Player timed out` real (mismo patrón `\d+` cubierto).
+- El supervisor de tareas genérico de Fase H sigue fuera de alcance.
+
+## 22. FASE E — paso 12: Módulo World + adaptador de storage con validación de rutas
+
+> **Fecha**: 2026-08-07
+> **Alcance**: cierre de la Fase E. Por un lado el **adaptador
+> `LocalServerStorage`** del puerto `ServerStoragePort` (árbol `worlds/` de un
+> servidor sobre filesystem local) con una **superficie de seguridad real**:
+> ninguna operación puede salir de la raíz. Por otro el **módulo World**
+> completo (dominio, aplicación, infraestructura, migración y wiring) con la
+> API funcional: crear, importar (`.mcworld`/tar.gz), exportar (con `save
+> hold`/`save resume`), duplicar, eliminar, activar (excluyente) y reconciliar
+> la metadata con el volumen.
+
+### Adaptador `LocalServerStorage`
+- **Validación estricta de rutas** en `_resolve` (mismo rigor que
+  `_validate_runtime_id` de Docker): rechaza rutas absolutas, `..` en cualquier
+  componente, symlinks que resuelvan fuera de la raíz (también en rutas aún no
+  existentes vía `resolve(strict=False)`), separadores de Windows (`\`) y
+  unidades de Windows (`C:`) — esta última capa es **defensa-in-depth**: en
+  POSIX `..\windows` o `C:/windows` no son traversal/absolutas de verdad, pero
+  se rechazan igual para que el contrato sea idéntico en cualquier plataforma.
+- **Snapshots como streams** (un mundo pesa cientos de MB): `world_snapshot`
+  empaqueta a zip `.mcworld` en un fichero temporal (el caller lo cierra) y
+  `write_snapshot` extrae zip/tar.gz validando cada miembro contra Zip Slip
+  (rutas absolutas, `..`, tar con symlink/hardlink → `STORAGE` error) y con
+  soporte para el directorio envolvente común de los `.mcworld` (`_strip_wrapper`).
+- **Locks**: `asyncio.Lock` por `scope` en la instancia (exclusión mutua en
+  proceso). El resolver `LocalServerStorageResolver` cachea una instancia por
+  `server_id` precisamente porque los locks viven en la instancia.
+- **Raíz compartida con el mount**: `RuntimeSpecFactory.data_dir(server_id)`
+  (ahora público) devuelve la misma ruta que el volumen `/data` — sin rutas
+  paralelas (§22).
+
+### Módulo World
+- **Dominio**: entidad `World` (id, server_id, name, level_name, size_bytes,
+  activated, created_at, updated_at); errores `WORLD.INVALID_PAYLOAD /
+  NOT_FOUND / ALREADY_EXISTS / CORRUPT / ACTIVE_IN_USE`; eventos `WORLD.CREATED
+  / IMPORTED / EXPORTED / DUPLICATED / DELETED / ACTIVATED` con `world_event()`.
+- **Aplicación**: 7 use cases.
+  - `create`: metadata + `levelname.txt` (BDS genera el `level.dat` real en el
+    primer arranque con ese level-name; el panel solo siembra el name file).
+  - `import_`: extrae el snapshot, exige `level.dat` (mínimo de validez) y si no
+    está **limpia lo extraído** y falla con `WORLD.CORRUPT`.
+  - `export`: bajo el lock del storage, si el servidor corre pide `save hold`
+    antes de empaquetar y `save resume` al terminar. Los comandos de save son
+    **best-effort** (decisión §22): si Console los rechaza el snapshot se
+    exporta igual y puede quedar menos consistente (documentado).
+  - `duplicate`: clona vía snapshot→restauración con rollback si el clon no
+    tiene `level.dat`.
+  - `delete`: el mundo **activo no se puede eliminar** (`WORLD.ACTIVE_IN_USE`);
+    primero hay que activar otro. El borrado del filesystem pasa por aquí (el
+    `sync` nunca borra metadata).
+  - `activate`: **excluyente por servidor** (`deactivate_worlds` + upsert).
+  - `sync`: reconcilia metadata con el volumen; crea metadata de mundos con
+    `level.dat` que el panel aún no conoce (`activated=False`).
+- **Infraestructura**: `world_metadata` (migración `0006_world_tables`, índice
+  por `server_id`), `PostgresWorldRepository` (upsert, `delete()`, `update()`
+  atómico para deactivar), `InMemoryWorldRepository` para tests.
+- **Handlers**: World consume `SERVER.VERSION_CHANGED` solo por consistencia
+  (defensivo, nunca corta el bus).
+
+### Decisión §22 — `config_rev` opcional y activación de mundo
+- `ApplyConfigCommand.config_rev` pasa a `int | None = None`
+  (`None` = "reaplicar sin cambiar la revisión") y `ApplyConfigUseCase` solo
+  actualiza `desired/applied` si llega revisión. `WORLD.ACTIVATED` **no lleva**
+  `config_rev`: la revisión de Configuration la conserva Configuration; el
+  handler de Server la trata como reaplicación sin cambio de revisión.
+  `_optional_config_rev(event)` tolera payload sin `config_rev` o no entero.
+- Test clave: `test_world_activated_sin_config_rev_no_pisa_la_revision`
+  (config_rev previo 5 se conserva tras reaplicar por activación de mundo).
+
+### Verificación
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅ (274 archivos) ·
+  `uv run mypy --strict .` ✅ (274 archivos).
+- `uv run pytest -q` ✅ **355 passed, 24 deselected** (antes 325/21):
+  +26 use cases World, +3 handlers World; los +3 deselected son la integración
+  opt-in contra Postgres real (`test_world_postgres_integration.py`, requiere
+  `BEDROCK_PANEL_TEST_DATABASE_URL`). 30 tests del storage (
+  `tests/test_local_storage.py`): traversal, rutas absolutas, symlinks, Zip
+  Slip, envolvente `.mcworld`, tar.gz, locks.
+- Cadena alembic: `0005_player_tables -> 0006_world_tables (head)`.
+
+### Pendiente / deuda
+- **Validación NBT de `level.dat` fuera de alcance del MVP** (§22): World solo
+  exige la existencia del fichero; el `level_name` real lo lee BDS.
+- **Lock distribuido** para multi-instancia no resuelto en el MVP (locks en
+  proceso); limitación señalada en el adaptador.
+- No avanzar al paso 13 (Backup) sin confirmación del usuario.
+
+---
+
+## 23. Paso 13 — módulo Backup (Fase F)
+
+Alcance confirmado por el usuario: compresión **tar+zstd** con `zstandard`,
+gatillos **manual + pre-restore** (el programado queda diseñado para consumir
+`TASK.STARTED` en Fase G, paso 15 Scheduler) y granularidad **por mundo**.
+Backup **no depende del módulo World** (matriz §1.3): el mundo se direcciona por
+el directorio `worlds/<nombre>` (decisión §22; el §7.4 habla de `world_id`, pero
+importarlo violaría la matriz).
+
+### Puerto y adaptador
+- `BackupStorePort` ya existía en `kernel/ports/backups.py` (put/get/delete/
+  exists/list/verify con streams); **reutilizado sin cambios**.
+- **`ServerStoragePort.move(rel_from, rel_to)`** añadido al contrato e
+  implementado en `LocalServerStorage`: ambas rutas pasan por `_resolve`,
+  origen debe existir, destino no, `mkdir` del padre + `rename` (swap atómico
+  para la restauración). Validación `PurePath` con defensa-in-depth (mismo
+  criterio que §22: separadores/rutas de Windows también en POSIX).
+- `LocalBackupStore` (nuevo `app/infrastructure/backups/local.py`): artefactos
+  bajo `{root}/{ref}`, `ref` validada contra traversal (no vacía, no absoluta,
+  sin `..`, sin `\`), `verify` recalcula SHA-256 en streaming.
+
+### Formato de artefacto (`application/archive.py`)
+- `bedrockpanel-backup/v1`: `tar.zst` cuyo **primer** miembro es
+  `manifest.json` (format/world/entries/created_at) y el segundo
+  `world.mcworld` (zip del árbol del mundo de `world_snapshot`).
+- **Python 3.13 no soporta `tarfile` con zstd nativo** (llega en 3.14): se
+  envuelve el tar con `zstandard.ZstdCompressor(...).stream_writer` +
+  `FLUSH_FRAME` para escribir; para leer se descomprime el artefacto a un
+  `tempfile.TemporaryFile` seekable y se abre con `tarfile mode="r:"`
+  (el lector de zstd no permite seek hacia atrás).
+- SHA-256 del artefacto completo **en streaming**, guardado en el registro
+  (BBDD). El manifiesto **no** se autoreferencia (imposible en una sola pasada
+  de streaming); lista las entradas del nivel, que es lo que §8.2 usa para
+  validar (`level.dat`).
+
+### Use cases (`BackupDeps`: repository, storage, store, console, server, bus,
+ids, time, settings)
+- **create**: valida mundo (existe + nombre limpio), registro `RUNNING` +
+  `BACKUP.STARTED`, lock `backup:{server_id}`, `save hold`/`save resume`
+  best-effort solo si el servidor corre (mismo criterio que World export,
+  §22), snapshot → artefacto → `store.put`; éxito → `COMPLETED` +
+  `BACKUP.COMPLETED` (size/checksum); fallo → `FAILED` + `BACKUP.FAILED`.
+- **restore**: solo estados `COMPLETED`; `BACKUP.RESTORE_STARTED`; si el
+  servidor corre, `stop`; `store.verify(checksum)` (fallo → registro
+  `CORRUPT` + `BackupCorruptError`); extracción a `staging/{backup_id}`,
+  `_require_valid_manifest` (entries con `level.dat`), **snapshot pre-restore
+  protegido** si el mundo existía, `remove` + `move(staging → worlds/<nombre>)`;
+  éxito → `BACKUP.RESTORE_COMPLETED` + `start` si estaba corriendo; fallo →
+  rollback al pre-restore (best-effort) y `BACKUP.RESTORE_FAILED` (el servidor
+  queda detenido). El pre-restore se registra como backup `protected=True`.
+- **prune**: retención keep-last-N por mundo (default 10), respeta `protected`
+  y omite estado `DELETED`; borra artefacto + registro + `BACKUP.DELETED`.
+- **validate**: checksum + manifiesto con `level.dat` → `BACKUP.VALIDATED`;
+  cualquier fallo → registro `CORRUPT` + `BackupCorruptError`.
+
+### Eventos
+- Publica `BACKUP.STARTED/PROGRESS/COMPLETED/FAILED/RESTORE_STARTED/
+  RESTORE_COMPLETED/RESTORE_FAILED/DELETED/VALIDATED` (9; topics
+  `backup.*`). Consume `WORLD.DELETED` (`WorldDeletedHandler` → `mark_orphaned`,
+  defensivo). `TASK.STARTED` (backup programado) queda reservado para Fase G.
+
+### Infraestructura
+- `backup_backups` (migración `0007_backup_tables`, índice por `server_id`),
+  `PostgresBackupRepository` (upsert con `pg_insert`, listado desc por
+  `created_at` con filtro de mundo y límite, `mark_orphaned` como UPDATE
+  atómico) e `InMemoryBackupRepository` para tests.
+- Wiring: `BackupFacade` en el `AppContainer` y bloque en `build_container`
+  (`PostgresBackupRepository`, `LocalBackupStore` en
+  `backup.base_path` default `{storage_base}/backups`, `console_facade` y
+  `server_facade`); `alembic/env.py` y `tests/conftest.py` registran los
+  modelos.
+
+### Decisión §23 — restauración y verificación
+- La verificación de checksum (paso previo a cualquier extracción) **no publica
+  `BACKUP.RESTORE_FAILED`**: marca el registro `CORRUPT` y lanza
+  `BackupCorruptError` (el evento de fallo de restauración queda para errores
+  de staging/swap, donde el servidor ya fue detenido y hay que notificar).
+- El branch de rollback (`swapped=True`) es **defensivo**: con el swap como
+  última operación atómica de `_stage_and_swap`, no hay ruta de ejecución que
+  falle después; se conserva por robustez ante fallos del adaptador.
+
+### Verificación
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅ (294 archivos) ·
+  `uv run mypy --strict .` ✅ (294 archivos).
+- `uv run pytest -q` ✅ **398 passed, 28 deselected** (antes 355/24):
+  +27 use cases + handlers Backup, +12 `LocalBackupStore`; los +4 deselected
+  son la integración opt-in contra Postgres real
+  (`test_backup_postgres_integration.py`, requiere
+  `BEDROCK_PANEL_TEST_DATABASE_URL`).
+- Cadena alembic: `0006_world_tables -> 0007_backup_tables (head)`.
+
+### Pendiente / deuda
+- **Gatillo programado** (`TASK.STARTED`) pendiente de la Fase G (Scheduler,
+  paso 15); `BACKUP.PROGRESS` definido pero aún sin emisor (snapshots sin
+  progreso incremental en el MVP).
+- **Guard de concurrencia** (`BackupInProgressError` definido en el dominio)
+  sin emisor aún: el lock `backup:{server_id}` protege las operaciones de
+  storage, pero no rechaza backups simultáneos del mismo servidor a nivel de
+  registro.
+- **Lock distribuido** y **backup remoto (S3)** en Fase 2 (mismo criterio que
+  §22).
+- No avanzar al paso 14 (Permission) sin confirmación del usuario.
+
+
+## 24. Paso de cierre — API HTTP de World/Player/Backup (vertical slice §16)
+
+Cierre del paso 1-13 del TDD §16: los tres módulos que quedaban sin HTTP se
+exponen vía REST con el mismo patrón que IAM/Server/Console (`modules/*/api`
+con `schemas.py` + `router.py`, auth compartida de `bootstrap/security.py`,
+mapeo central de errores de `bootstrap/errors.py` y facades intactas). Solo
+traducción request → comando y resultado → respuesta; sin reglas de negocio en
+la API (Blueprint §4.7).
+
+### Decisiones confirmadas por el usuario
+- **Rol de las operaciones destructivas** (world.delete, backup.restore —
+  sobrescribe el mundo actual — y backup.delete): **operator por servidor**
+  (`require_server_action`), consistente con el precedente `server.delete`.
+  No se exige admin global; una matriz por acción es Fase H.
+- **Player ban/unban/kick**: se exponen vía API ahora, ampliando la facade
+  pública con los use cases del Paso 11 (`player.manage`, operator+).
+
+### Decisión §24 — consistencia del export de World
+- `ExportWorldResult` y `ExportWorldUseCase` ganan el campo **`consistent`**
+  (pendiente del Paso 12): `True` si el servidor estaba detenido o `save hold`
+  fue aceptado por Console; `False` si corría y el `save hold` falló
+  (best-effort, §22). `_best_effort_save` ahora devuelve `bool`. La respuesta
+  HTTP del export lleva la cabecera `X-BedrockPanel-Consistent` (el cuerpo es
+  el artefacto binario) y `WORLD.EXPORTED` incluye `consistent` en el payload.
+
+### Decisiones §24 — descargas, tamaño de subida y delete de backup
+- **Streaming de artefactos grandes** (export de mundo y download de backup):
+  `StreamingResponse` con generador que cierra el stream al terminar; nunca se
+  carga el mundo/backup en memoria. `BackupFacade.download` abre el artefacto
+  y devuelve `BackupDownload(backup, stream)`.
+- **Límite de import de mundos**: `MultiPartParser.max_part_size` (Starlette)
+  solo limita campos, no los archivos que spolea a disco → límite explícito
+  `Settings.world_max_import_bytes` (default 2 GiB, `BEDROCK_PANEL_...`),
+  validado en el router al leer el `UploadFile` (413 `WORLD.IMPORT_TOO_LARGE`).
+- **Delete individual de backup**: nuevo `DeleteBackupUseCase` +
+  `DeleteBackupCommand` + `BackupFacade.delete_backup`; borra artefacto +
+  registro y publica `BACKUP.DELETED`. Los backups **protegidos** se rechazan
+  (422 `BACKUP.INVALID_PAYLOAD`), mismo criterio que prune.
+- **Player por servidor**: los endpoints player son scoped a `server_id` para
+  reusar `require_server_action` (lectura ≥ viewer, gestión ≥ operator).
+
+### Endpoints
+- **World** (`/servers/{server_id}/worlds`): list, create, import (multipart
+  `file` + `name`), sync, `/{name}/export` (zip `.mcworld`), `/{name}/duplicate`,
+  `/{name}/activate`, delete. Acciones: `world.list/view/export` lectura,
+  `world.create/import/sync/duplicate/activate/delete` escritura.
+- **Backup** (`/servers/{server_id}/backups`): create, list (filtro por mundo y
+  límite), `/{backup_id}`, `/{backup_id}/restore`, `/{backup_id}/validate`,
+  `/{backup_id}/download` (tar.zst), `/{backup_id}` (delete), prune. Acciones:
+  `backup.list/view/download` lectura; `backup.create/restore/validate/delete/
+  prune` escritura. Todo backup se resuelve con verificación de `server_id`
+  (404 sin filtrar existencia).
+- **Player** (`/servers/{server_id}/players`): `search?name=` (resolveXuid),
+  `online` (presencia), `/{xuid}` (findPlayer), `/{xuid}/sessions`,
+  `/{xuid}/ban|unban|kick` (202, acuse de Console). Acciones: `player.list/view/
+  sessions/online` lectura; `player.manage` escritura.
+- `READ_ACTIONS` ampliado con `world.export`, `backup.view`, `backup.download`,
+  `player.view`, `player.sessions`, `player.online`.
+
+### Facades (sin tocar su lógica interna)
+- **World**: `ExportWorldResult.consistent` + `_best_effort_save → bool`.
+- **Backup**: `download` y `delete_backup` (nuevos; `DeleteBackupUseCase`).
+- **Player**: `list_sessions`, `online_players`, `ban`, `unban`, `kick`
+  (reusan los use cases del Paso 11).
+
+### Infraestructura
+- Dependencia `python-multipart` añadida (`pyproject.toml`) para `Form`/`File`.
+- `bootstrap/main.py` registra los routers World/Player/Backup bajo
+  `Settings.api_prefix`; los `Container` ya exponían las tres facades.
+
+### Verificación
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅ (300 archivos) ·
+  `uv run mypy --strict .` ✅ (300 archivos).
+- `uv run pytest -q` ✅ **414 passed, 28 deselected** (antes 398/28):
+  +16 tests HTTP de integración (World 8, Backup 4, Player 4) en
+  `test_api_integration.py`, incluyendo import/export multipart con streaming,
+  límite de tamaño (413), restore de backup, prune por retención, presencia/
+  sesiones y ban/unban/kick.
+
+### Pendiente / deuda
+- **Scheduler (paso 15)** y **Permission (paso 14)**: no avanzar sin
+  confirmación del usuario.
+
+---
+
+## 25. Corrección — `WORLD.ACTIVATED` no recreaba el contenedor
+
+### Síntoma (reportado en runtime real)
+- `POST /servers/{id}/worlds/{name}/activate` responde 200 y la metadata de
+  World queda `activated=true`, pero el contenedor **nunca se recrea**:
+  `docker inspect` muestra un `Created` anterior a la llamada, el servidor
+  sigue sirviendo el mundo viejo y el env del contenedor no lleva
+  `LEVEL_NAME` ni `SERVER_NAME`.
+
+### Causa raíz
+- La cadena `World → WORLD.ACTIVATED → Server` existía pero **no transportaba
+  el mundo activado**: `WorldActivatedHandler` solo reenviaba `server_id` y
+  descartaba el `name` del payload. `ApplyConfigUseCase` re-renderizaba el
+  spec desde la config deseada de Configuration (que la activación de un mundo
+  no toca), así que el spec no cambiaba, `_spec_changed` era `False` y el
+  contenedor no se recreaba.
+- Además `LEVEL_NAME`/`SERVER_NAME` solo se emiten si vienen de la config
+  deseada de Configuration; la activación de un mundo nunca los poblaba.
+
+### Decisión §25 — el `name` del mundo activado se inyecta como `LEVEL_NAME`
+- `ApplyConfigCommand` gana el campo `level_name: str | None = None`
+  (directorio del mundo activado, el `name` de `WORLD.ACTIVATED`).
+- `WorldActivatedHandler` propaga `event.payload["name"]` al comando
+  (`_optional_level_name`); mantiene `config_rev=None` (decisión §22).
+- `ApplyConfigUseCase` inyecta `LEVEL_NAME=<level_name>` en la config deseada
+  **antes** de renderizar el spec: si cambia respecto al spec actual, recrea
+  (parar si corre → materializar → arrancar si tocaba). Sin `level_name`
+  conserva el comportamiento previo (p. ej. `CONFIG.CHANGED`).
+
+### Archivos
+- `apps/backend/src/app/modules/server/application/commands.py`
+- `apps/backend/src/app/modules/server/application/handlers.py`
+- `apps/backend/src/app/modules/server/application/use_cases.py`
+- `apps/backend/tests/test_server_handlers.py`, `apps/backend/tests/test_server_use_cases.py`
+
+### Verificación
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅ (300 archivos) ·
+  `uv run mypy --strict .` ✅ (300 archivos).
+- `uv run pytest -q` ✅ **418 passed, 28 deselected** (antes 414/28):
+  +4 tests (handler inyecta `LEVEL_NAME` y recrea, payload sin `name` conserva
+  el actual, use case con `level_name` inyecta env y recrea, use case sin
+  `level_name` no inyecta).
+- Pendiente de verificación en runtime real: repetir el ciclo crear mundo →
+  activar y confirmar en el contenedor `Created` renovado + `LEVEL_NAME`
+  correcto (criterio del informe de bug).
+
+---
+
+## 26. Corrección — `sync` de World no actualizaba mundos ya conocidos
+
+### Síntoma (reportado en runtime real)
+- Un mundo creado a mano en el volumen ("Mundo Nuevo Test1", ~988K en disco)
+  queda con `size_bytes = 0` en `world_metadata` tras **dos**
+  `POST /servers/{id}/worlds/sync` (ambas responden 201 sin error).
+
+### Causa raíz
+- `ScanWorldsUseCase.sync` era solo "descubridor": para cada directorio con
+  `level.dat`, `if name in tracked: continue` descartaba todo mundo ya
+  conocido, así que los campos derivables del disco (`size_bytes`,
+  `level_name`) solo se aplicaban al crear la metadata. `list_worlds()` del
+  storage ya devolvía el tamaño real; el use case simplemente no lo usaba para
+  filas existentes.
+
+### Decisión §26 — `sync` es un reconciliador completo
+- Por cada mundo del filesystem: si no hay metadata → se crea (`activated=False`,
+  como antes); si ya existe → se refrescan `level_name` y `size_bytes` desde el
+  disco vía `replace` (nuevo helper `_refreshed_world`), preservando `id`,
+  `activated`, `created_at` y solo tocando `updated_at` cuando algo cambió
+  (idempotente: un `sync` sin cambios no escribe).
+- El return pasa de "solo los nuevos" a **el listado reconciliado completo**
+  (creados + refrescados), para que el cliente obtenga el estado fresco en la
+  misma respuesta.
+- **Declaración explícita de alcance**: `sync` **sigue siendo manual** — no se
+  auto-dispara con `WORLD.SAVED`. Motivos: (a) `WORLD.SAVED` lo publica el
+  `SaveDetector` del módulo Console y no está cableado a World, lo que añadiría
+  una dependencia de eventos nueva sin pedido; (b) el reconcilio es barato,
+  idempotente y el panel ya puede invocarlo cuándo quiera; (c) la activación
+  (`WORLD.ACTIVATED`, corregida en §25) ya refresca el contenedor en el ciclo
+  de vida. Si en el futuro se quiere refresco automático de tamaño, será una
+  decisión de producto documentada aparte (nuevo suscriptor de `WORLD.SAVED`).
+- No borra metadata de mundos que ya no están en disco (el borrado sigue
+  pasando por `DeleteWorldUseCase`); un mundo sin `level.dat` simplemente no se
+  reconcilia.
+
+### Archivos
+- `apps/backend/src/app/modules/world/application/use_cases.py`
+  (`ScanWorldsUseCase.sync`, helper `_refreshed_world`)
+- `apps/backend/src/app/modules/world/application/facade.py` (docstring de `sync`)
+- `apps/backend/tests/test_world_use_cases.py`
+
+### Verificación
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅ (300 archivos) ·
+  `uv run mypy --strict .` ✅ (300 archivos).
+- `uv run pytest -q` ✅ **421 passed, 28 deselected** (antes 418/28): +3 tests
+  (refresca `size_bytes` de un mundo conocido, preserva identidad/activación al
+  refrescar, refresca `level_name` desde `levelname.txt`). Siguen verdes
+  `test_sync_no_duplica_metadata_existente` y el sync vía HTTP.
+- Reproducción del bug en tests sin Docker: mundo con metadata y `size_bytes`
+  desactualizado → `sync` → `size_bytes` = real del disco (confirmado en
+  `world_metadata` del repositorio y en la respuesta de `sync`).

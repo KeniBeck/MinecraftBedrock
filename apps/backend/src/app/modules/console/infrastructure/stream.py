@@ -1,20 +1,32 @@
-"""Adaptador de streaming: runtime → buffer + ``CONSOLE.OUTPUT`` (§5.2).
+"""Adaptador de streaming en vivo: runtime → buffer + ``CONSOLE.OUTPUT`` (§5.2).
 
 Consume ``ServerRuntimePort.stream_logs`` (``Iterator[bytes]`` real del
-contenedor), normaliza las líneas (decodifica, quita ``\r``, ignora vacías) y
-las vuelca al buffer publicando un ``CONSOLE.OUTPUT`` por línea. No interpreta
-negocio: el parseo lo hacen consumidores declarativos de ``infrastructure/parsers``.
+contenedor) y normaliza las líneas (decodifica, quita ``\r``, ignora vacías).
+El iterador del runtime es **síncrono y bloqueante** (``docker logs
+--follow``); se lee en un **hilo worker** para no bloquear el event loop, y las
+líneas vuelven al loop vía ``call_soon_threadsafe`` sobre una cola, donde se
+vuelcan al buffer publicando un ``CONSOLE.OUTPUT`` por línea (change-log §20).
+
+La cancelación (parada del servidor) no fuerza al hilo: el generador termina
+solo cuando Docker cierra el stream (el contenedor se detiene/elimina) y el
+hilo sale por EOF. No interpreta negocio: el parseo lo hacen consumidores
+declarativos de ``infrastructure/parsers``.
 """
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from collections.abc import Iterator
+from typing import Any
 
 from app.kernel.events.bus import EventBusPort
 from app.kernel.ports.runtime import ServerRuntimePort
 from app.modules.console.domain.errors import ConsoleUnavailableError
 from app.modules.console.domain.events import console_output
 from app.modules.console.infrastructure.store import ConsoleLogWriter
+
+_EOF: Any = object()
 
 
 class ConsoleLogStream:
@@ -31,20 +43,45 @@ class ConsoleLogStream:
         self._bus = bus
 
     async def consume(self, server_id: str, runtime_id: str | None) -> None:
-        """Consume el stream del runtime hasta que se agote o falle.
+        """Consume el stream del runtime sin bloquear el event loop.
 
-        Cada línea se añade al buffer (con su ``seq``) y se publica como
-        ``CONSOLE.OUTPUT``. Si el runtime no tiene artefacto se lanza
-        ``CONSOLE.UNAVAILABLE``.
+        El iterador síncrono se lee en un hilo ``daemon``; las líneas se pasan
+        de vuelta al loop con ``call_soon_threadsafe`` y aquí se añaden al
+        buffer publicando un ``CONSOLE.OUTPUT`` por línea. Si el runtime no
+        tiene artefacto se lanza ``CONSOLE.UNAVAILABLE``. La corrutina termina
+        con el EOF del stream (el contenedor se detuvo/eliminó) o al cancelarse.
         """
         if runtime_id is None:
             raise ConsoleUnavailableError(
                 f"Sin runtime para consumir la consola de {server_id}",
                 context={"server_id": server_id},
             )
-        iterator = self._runtime.stream_logs(runtime_id)
-        for line in self._iter_lines(iterator):
-            record = await self._store.append(server_id, line)
+        queue: asyncio.Queue[Any] = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        def _read() -> None:
+            try:
+                iterator = self._runtime.stream_logs(runtime_id)
+                for line in self._iter_lines(iterator):
+                    loop.call_soon_threadsafe(queue.put_nowait, line)
+            except Exception as exc:  # noqa: BLE001 — el loop decide cómo propagar
+                loop.call_soon_threadsafe(queue.put_nowait, exc)
+            else:
+                loop.call_soon_threadsafe(queue.put_nowait, _EOF)
+
+        threading.Thread(
+            target=_read,
+            name=f"console-stream-{server_id}",
+            daemon=True,
+        ).start()
+
+        while True:
+            item = await queue.get()
+            if item is _EOF:
+                return
+            if isinstance(item, BaseException):
+                raise item
+            record = await self._store.append(server_id, item)
             await self._bus.publish(console_output(server_id, record.line, record.seq))
 
     @staticmethod

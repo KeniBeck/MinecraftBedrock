@@ -44,10 +44,19 @@ class RemoveServerCommand:
 
 @dataclass(frozen=True, slots=True)
 class ApplyConfigCommand:
-    """Aplica la config deseada (entrada: evento ``CONFIG.CHANGED``)."""
+    """Aplica la config deseada (entrada: evento ``CONFIG.CHANGED``/``WORLD.ACTIVATED``).
+
+    ``config_rev`` es opcional: ``None`` significa "reaplicar sin cambiar la
+    revisión" (p. ej. ``WORLD.ACTIVATED``, que no conoce las revisions de
+    Configuration — decisión §22). ``level_name`` es el directorio del mundo
+    activado (el ``name`` de ``WORLD.ACTIVATED``): se inyecta como env
+    ``LEVEL_NAME`` al renderizar el spec (decisión §22, ``WORLD.ACTIVATED`` →
+    recrear con level-name).
+    """
 
     server_id: str
-    config_rev: int
+    config_rev: int | None = None
+    level_name: str | None = None
     actor_id: str | None = None
 
 

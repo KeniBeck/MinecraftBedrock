@@ -17,18 +17,24 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.bootstrap.config import Settings, get_settings
+from app.infrastructure.backups.local import LocalBackupStore
 from app.infrastructure.common.ids import UuidIdGenerator
 from app.infrastructure.common.settings import EnvSettingsAdapter
 from app.infrastructure.common.time import SystemTimeProvider
 from app.infrastructure.db.session import Database, DatabaseSettings
 from app.infrastructure.events.bus import InProcessEventBus
+from app.infrastructure.parsers.player_join_detector import PlayerJoinDetector
 from app.infrastructure.parsers.save_detector import SaveDetector
 from app.infrastructure.runtime import (
     DockerFromEnvClientFactory,
     DockerRuntimeAdapter,
     DockerRuntimeSettings,
 )
+from app.infrastructure.storage import LocalServerStorageResolver
 from app.kernel.ports.runtime import ServerRuntimePort
+from app.modules.backup.application.facade import BackupFacade
+from app.modules.backup.application.use_cases import BackupDeps
+from app.modules.backup.infrastructure.postgres_repository import PostgresBackupRepository
 from app.modules.configuration.application.facade import ConfigurationFacade
 from app.modules.configuration.domain.property_schema import PropertySchema
 from app.modules.configuration.infrastructure.postgres_repository import (
@@ -41,6 +47,7 @@ from app.modules.console.application.use_cases import ConsoleDeps
 from app.modules.console.domain.events import CONSOLE_OUTPUT_TOPIC
 from app.modules.console.infrastructure.postgres_store import PostgresConsoleLogStore
 from app.modules.console.infrastructure.stream import ConsoleLogStream
+from app.modules.console.infrastructure.stream_manager import ConsoleStreamManager
 from app.modules.iam.application.facade import IamFacade
 from app.modules.iam.application.use_cases import IamDeps
 from app.modules.iam.infrastructure.audit_store import PostgresAuditStore
@@ -53,6 +60,9 @@ from app.modules.monitoring.application.polling import StatusPoller
 from app.modules.monitoring.infrastructure.memory import InMemoryMetricSampleStore
 from app.modules.monitoring.infrastructure.poller import BackgroundPoller
 from app.modules.monitoring.infrastructure.raknet_probe import RakNetStatusProbe
+from app.modules.player.application.facade import PlayerFacade
+from app.modules.player.application.use_cases import PlayerDeps
+from app.modules.player.infrastructure.postgres_repository import PostgresPlayerRepository
 from app.modules.server.application.facade import ServerFacade
 from app.modules.server.application.ports import ConfigurationReader
 from app.modules.server.application.spec_factory import (
@@ -62,6 +72,9 @@ from app.modules.server.application.spec_factory import (
 from app.modules.server.application.use_cases import ServerDeps
 from app.modules.server.domain.repository import ServerRepositoryPort
 from app.modules.server.infrastructure.postgres_repository import PostgresServerRepository
+from app.modules.world.application.facade import WorldFacade
+from app.modules.world.application.use_cases import WorldDeps
+from app.modules.world.infrastructure.postgres_repository import PostgresWorldRepository
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +90,9 @@ class Container:
     console_facade: ConsoleFacade
     console_stream: ConsoleLogStream
     iam_facade: IamFacade
+    player_facade: PlayerFacade
+    world_facade: WorldFacade
+    backup_facade: BackupFacade
     monitoring_facade: MonitoringFacade
     monitoring_poller: BackgroundPoller | None = None
 
@@ -160,7 +176,16 @@ def build_container() -> Container:
     save_detector = SaveDetector(bus=event_bus)
     event_bus.subscribe(CONSOLE_OUTPUT_TOPIC, save_detector)
 
+    player_join_detector = PlayerJoinDetector(bus=event_bus)
+    event_bus.subscribe(CONSOLE_OUTPUT_TOPIC, player_join_detector)
+
     console_stream = ConsoleLogStream(runtime=runtime_port, store=console_store, bus=event_bus)
+    stream_manager = ConsoleStreamManager(
+        stream=console_stream,
+        server=console_deps.server,
+        bus=event_bus,
+    )
+    stream_manager.subscribe()
 
     iam_repository = PostgresIamRepository(session_factory)
     iam_sessions = PostgresSessionStore(session_factory)
@@ -178,6 +203,48 @@ def build_container() -> Container:
     )
     iam_facade = IamFacade(iam_deps)
     iam_facade.register_handlers()
+
+    player_repository = PostgresPlayerRepository(session_factory)
+    player_deps = PlayerDeps(
+        repository=player_repository,
+        console=console_facade,
+        bus=event_bus,
+        ids=ids,
+        time=time,
+        settings=settings_port,
+    )
+    player_facade = PlayerFacade(player_deps)
+    player_facade.register_handlers()
+
+    world_repository = PostgresWorldRepository(session_factory)
+    world_deps = WorldDeps(
+        repository=world_repository,
+        storage=LocalServerStorageResolver(spec_factory),
+        console=console_facade,
+        server=console_deps.server,
+        bus=event_bus,
+        ids=ids,
+        time=time,
+    )
+    world_facade = WorldFacade(world_deps)
+    world_facade.register_handlers()
+
+    storage_base = str(settings_port.get("storage.base_path", "/var/lib/bedrockpanel"))
+    backup_base = str(settings_port.get("backup.base_path", f"{storage_base}/backups"))
+    backup_repository = PostgresBackupRepository(session_factory)
+    backup_deps = BackupDeps(
+        repository=backup_repository,
+        storage=LocalServerStorageResolver(spec_factory),
+        store=LocalBackupStore(backup_base),
+        console=console_facade,
+        server=server_facade,
+        bus=event_bus,
+        ids=ids,
+        time=time,
+        settings=settings_port,
+    )
+    backup_facade = BackupFacade(backup_deps)
+    backup_facade.register_handlers()
 
     monitoring_store = InMemoryMetricSampleStore()
     status_poller = StatusPoller(
@@ -207,6 +274,9 @@ def build_container() -> Container:
         console_facade=console_facade,
         console_stream=console_stream,
         iam_facade=iam_facade,
+        player_facade=player_facade,
+        world_facade=world_facade,
+        backup_facade=backup_facade,
         monitoring_facade=monitoring_facade,
         monitoring_poller=background_poller,
     )

@@ -325,6 +325,12 @@ class ApplyConfigUseCase:
         async with self._guard.locked(cmd.server_id):
             server = await deps.repository.get_required(ServerId(cmd.server_id))
             desired = await deps.configuration.desired_config(cmd.server_id)
+            if cmd.level_name is not None:
+                desired = DesiredConfig(
+                    version=desired.version,
+                    environment={**desired.environment, "LEVEL_NAME": cmd.level_name},
+                    config_rev=desired.config_rev,
+                )
             occupied = await _occupied_ports(deps.repository, exclude=server.id.value)
             new_spec = deps.spec_factory.render(
                 server.id.value,
@@ -345,8 +351,9 @@ class ApplyConfigUseCase:
                     actor_id=cmd.actor_id,
                 )
 
-            server.desired_config_rev = cmd.config_rev
-            server.applied_config_rev = cmd.config_rev
+            if cmd.config_rev is not None:
+                server.desired_config_rev = cmd.config_rev
+                server.applied_config_rev = cmd.config_rev
             await deps.repository.save(server)
             await deps.bus.publish(
                 server_event(

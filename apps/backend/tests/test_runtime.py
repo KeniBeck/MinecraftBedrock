@@ -334,7 +334,7 @@ def test_stream_logs_returns_iterador_de_bytes() -> None:
     stream = adapter.stream_logs()
 
     assert list(stream) == [b"line1\n", b"line2\n"]
-    container.logs.assert_called_once_with(stream=True, follow=False, tail="all")
+    container.logs.assert_called_once_with(stream=True, follow=True, tail="all")
 
 
 def test_inspect_returns_normalized_dto() -> None:

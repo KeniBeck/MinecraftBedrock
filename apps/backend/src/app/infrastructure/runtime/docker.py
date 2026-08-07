@@ -525,10 +525,17 @@ class DockerRuntimeAdapter:
 
     @_map_docker_errors
     def stream_logs(self, runtime_id: str | None = None) -> Iterator[bytes]:
-        """Secuencia de líneas stdout/stderr (cola + streaming) (§4.1)."""
+        """Stream en vivo de líneas stdout/stderr (cola + streaming) (§4.1).
+
+        ``container.logs(stream=True, follow=True, tail="all")``: el iterador
+        es bloqueante sobre el socket del daemon y termina cuando el contenedor
+        se detiene/elimina (el daemon cierra el stream). El consumo se hace en
+        un hilo worker dentro de ``ConsoleLogStream.consume`` para no bloquear
+        el event loop (change-log §20).
+        """
         self._validate_runtime_id(runtime_id)
         container = self._container()
-        return cast(Iterator[bytes], container.logs(stream=True, follow=False, tail="all"))
+        return cast(Iterator[bytes], container.logs(stream=True, follow=True, tail="all"))
 
     @_map_docker_errors
     def send_stdin(self, runtime_id: str, data: str) -> None:

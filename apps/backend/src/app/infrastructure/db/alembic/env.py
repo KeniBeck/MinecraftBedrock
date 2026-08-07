@@ -16,9 +16,12 @@ from sqlalchemy import Connection, pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 # Registro de modelos por módulo (Bluepring §10.5: tablas con prefijo).
+import app.modules.backup.infrastructure.models  # noqa: F401
 import app.modules.console.infrastructure.models  # noqa: F401
 import app.modules.iam.infrastructure.models  # noqa: F401
+import app.modules.player.infrastructure.models  # noqa: F401
 import app.modules.server.infrastructure.models  # noqa: F401
+import app.modules.world.infrastructure.models  # noqa: F401
 from app.bootstrap.config import get_settings
 from app.infrastructure.db.base import Base
 

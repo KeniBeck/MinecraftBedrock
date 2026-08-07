@@ -5,7 +5,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.modules.configuration.infrastructure.reader import BedrockConfigurationReader
-from app.modules.monitoring.infrastructure.raknet_probe import RakNetStatusProbe
+from app.modules.monitoring.infrastructure.raknet_probe import (
+    _RAKNET_MAGIC,
+    RakNetStatusProbe,
+)
 
 
 class DummySettings:
@@ -66,18 +69,25 @@ def test_raknet_probe_reports_online_when_udp_reply_is_received() -> None:
             self.sent = (payload, address)
 
         def recvfrom(self, size: int) -> tuple[bytes, tuple[str, int]]:
+            del size
             return b"\x01\x00", ("127.0.0.1", 19132)
 
         def close(self) -> None:
             return None
 
     target = "app.modules.monitoring.infrastructure.raknet_probe.socket.socket"
-    with patch(target, return_value=FakeSocket()):
+    with patch(target, return_value=FakeSocket()) as socket_factory:
         probe = RakNetStatusProbe()
         result = probe.probe("127.0.0.1", 19132, timeout=0.1)
 
     assert result.online is True
     assert result.latency_ms >= 0.0
+
+    payload, address = socket_factory.return_value.sent or (b"", ("", 0))
+    assert address == ("127.0.0.1", 19132)
+    assert payload[0] == 0x01
+    assert len(payload) == 33
+    assert payload[9:25] == _RAKNET_MAGIC
 
 
 def test_raknet_probe_reports_offline_when_timeout_occurs() -> None:
