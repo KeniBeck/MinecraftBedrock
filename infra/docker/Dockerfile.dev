@@ -1,0 +1,28 @@
+# Dockerfile de desarrollo del backend BedrockPanel.
+# Imagen base Python 3.13 (TDD §3). El código fuente se monta por volumen en
+# docker-compose.dev.yml para recarga en caliente (uvicorn --reload).
+FROM python:3.13-slim AS dev
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    UV_LINK_MODE=copy
+
+# Instala uv dentro de la imagen.
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+WORKDIR /workspace/apps/backend
+
+# Primero copia la configuración del proyecto para cachear la resolución.
+COPY apps/backend/pyproject.toml apps/backend/uv.lock ./
+COPY apps/backend/.python-version ./
+
+# Sincroniza dependencias (main + dev).
+RUN uv sync
+
+# Copia el código fuente del backend.
+COPY apps/backend/src ./src
+
+EXPOSE 8000
+
+CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

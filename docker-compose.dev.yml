@@ -1,0 +1,30 @@
+# docker-compose.dev.yml — desarrollo del panel (backend) únicamente.
+services:
+  postgres:
+    image: postgres:16
+    container_name: bedrockpanel-postgres
+    environment:
+      POSTGRES_USER: bedrockpanel
+      POSTGRES_PASSWORD: bedrockpanel_dev
+      POSTGRES_DB: bedrockpanel
+    ports:
+      - "5433:5432"
+    volumes:
+      - bedrockpanel-pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+  panel:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.dev
+    container_name: bedrockpanel-dev
+    command: ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./apps/backend/src:/workspace/apps/backend/src
+    environment:
+      BEDROCK_PANEL_DEBUG: "true"
+      BEDROCK_PANEL_LOG_LEVEL: "DEBUG"
+
+volumes:
+  bedrockpanel-pgdata:

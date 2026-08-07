@@ -1,0 +1,16 @@
+services:
+  minecraft:
+    image: itzg/minecraft-bedrock-server
+    container_name: minecraft-bedrock
+    restart: unless-stopped
+    ports:
+      - "19132:19132/udp"
+    environment:
+      EULA: "TRUE"
+      GAMEMODE: survival
+      DIFFICULTY: normal
+      LEVEL_NAME: "Servidor Local"
+      SERVER_NAME: "Minecraft Arch Linux"
+      MAX_PLAYERS: 10
+    volumes:
+      - ./data:/data
