@@ -662,3 +662,15 @@ async def test_world_deleted_defensivo_con_payload_invalido(
 
     record = await fx.repository.get_backup(backup.id)
     assert record is not None and record.orphaned is False
+
+
+async def test_limite_max_backups_per_server_se_aplica(
+    storage_root: Path,
+    backup_root: Path,
+) -> None:
+    fx = Fixture(storage_root, backup_root)
+    fx.deps.settings = FakeSettings({"limits.max_backups_per_server": 1})
+    fx.seed_world()
+    await fx.make_backup()
+    with pytest.raises(BackupValidationError):
+        await fx.make_backup()

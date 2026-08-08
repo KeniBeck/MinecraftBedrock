@@ -24,12 +24,15 @@ from app.modules.server.application.commands import (
     RestartServerCommand,
     StartServerCommand,
     StopServerCommand,
+    UpdateResourcesCommand,
 )
 from app.modules.server.application.ports import ConfigurationReader, DesiredConfig
 from app.modules.server.application.results import ServerView, connection_from_spec
 from app.modules.server.application.spec_factory import RuntimeSpecFactory
 from app.modules.server.domain.errors import (
+    ServerBusyError,
     ServerNotMaterializedError,
+    ServerResourcesValidationError,
     ServerStateError,
 )
 from app.modules.server.domain.events import (
@@ -43,6 +46,7 @@ from app.modules.server.domain.events import (
     SERVER_STOPPING,
     SERVER_VERSION_CHANGED,
     server_event,
+    server_resources_changed,
 )
 from app.modules.server.domain.repository import ServerRepositoryPort
 from app.modules.server.domain.server import Server, ServerId
@@ -415,6 +419,87 @@ class ChangeVersionUseCase:
                 )
             )
             return to_view(server, deps.settings)
+
+
+class UpdateServerResourcesUseCase:
+    """Actualiza CPU/RAM de un servidor existente y recrea el contenedor.
+
+    Flujo: obtener servidor → validar estado (no ``starting``/``stopping``/
+    ``removed``) → validar cotas (CPU ≥ 1, RAM ≥ 512 MB) → si no hay cambios,
+    no-op → persistir nuevo spec → recrear el contenedor (parar → materialize →
+    arrancar si corría) → publicar ``SERVER.RESOURCES_CHANGED``.
+    """
+
+    def __init__(self, deps: ServerDeps, guard: OperationGuard) -> None:
+        self._deps = deps
+        self._guard = guard
+
+    async def execute(self, cmd: UpdateResourcesCommand) -> ServerView:
+        deps = self._deps
+        async with self._guard.locked(cmd.server_id):
+            server = await deps.repository.get_required(ServerId(cmd.server_id))
+
+            if server.state in (
+                ServerState.STARTING,
+                ServerState.STOPPING,
+                ServerState.REMOVED,
+            ):
+                raise ServerBusyError(
+                    f"No se pueden cambiar recursos desde {server.state}",
+                    context={"server_id": cmd.server_id, "state": server.state},
+                )
+
+            self._validate(cmd)
+            was_running = server.state in (ServerState.STARTING, ServerState.RUNNING)
+            old_resources = dict(server.spec.resources)
+
+            changed = server.change_resources(
+                cpu_cores=cmd.cpu_cores,
+                ram_mb=cmd.ram_mb,
+            )
+            if not changed:
+                return to_view(server, deps.settings)
+
+            await _recreate(
+                deps,
+                server,
+                server.spec,
+                restart_if_running=was_running,
+                actor_id=cmd.actor_id,
+            )
+            await deps.repository.save(server)
+            await deps.bus.publish(
+                server_resources_changed(
+                    server.id.value,
+                    actor_id=cmd.actor_id,
+                    old_resources=old_resources,
+                    new_resources=dict(server.spec.resources),
+                )
+            )
+            return to_view(server, deps.settings)
+
+    @staticmethod
+    def _validate(cmd: UpdateResourcesCommand) -> None:
+        if cmd.cpu_cores is not None and cmd.cpu_cores < 1:
+            raise ServerResourcesValidationError(
+                "CPU cores debe ser al menos 1",
+                context={"cpu_cores": cmd.cpu_cores},
+            )
+        if cmd.cpu_cores is not None and cmd.cpu_cores > 64:
+            raise ServerResourcesValidationError(
+                "CPU cores no puede superar 64",
+                context={"cpu_cores": cmd.cpu_cores},
+            )
+        if cmd.ram_mb is not None and cmd.ram_mb < 512:
+            raise ServerResourcesValidationError(
+                "RAM debe ser al menos 512 MB",
+                context={"ram_mb": cmd.ram_mb},
+            )
+        if cmd.ram_mb is not None and cmd.ram_mb > 65536:
+            raise ServerResourcesValidationError(
+                "RAM no puede superar 65536 MB",
+                context={"ram_mb": cmd.ram_mb},
+            )
 
 
 async def _recreate(

@@ -10,6 +10,7 @@ from app.kernel.errors import (
     BusinessRuleViolation,
     InvalidStateError,
     NotFoundError,
+    ValidationError,
 )
 
 
@@ -41,3 +42,15 @@ class ServerPortExhaustedError(BusinessRuleViolation):
     """No quedan puertos libres en el pool para el servidor (Blueprint §16.3)."""
 
     code = "SERVER.PORT_EXHAUSTED"
+
+
+class ServerResourcesValidationError(ValidationError):
+    """Los recursos solicitados (CPU/RAM) no cumplen las cotas mínimas."""
+
+    code = "SERVER.RESOURCES_INVALID"
+
+
+class ServerBusyError(InvalidStateError):
+    """Operación rechazada porque el servidor está en una transición de estado."""
+
+    code = "SERVER.BUSY"

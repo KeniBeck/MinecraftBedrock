@@ -69,3 +69,13 @@ class ChangeVersionCommand:
     server_id: str
     version: str
     actor_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateResourcesCommand:
+    """Actualiza CPU/RAM de un servidor existente (extensión paso 19)."""
+
+    server_id: str
+    cpu_cores: float | None = None
+    ram_mb: int | None = None
+    actor_id: str | None = None

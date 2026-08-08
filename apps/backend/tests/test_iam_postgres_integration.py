@@ -160,3 +160,111 @@ async def test_audit_log(
     assert len(rows) == 1
     assert rows[0].action == "AUTH.LOGIN_SUCCESS"
     assert rows[0].detail == {"username": "it-user"}
+
+
+async def test_audit_tamper_evident_verifica_cadena(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    from app.modules.iam.application.ports import AuditEntry
+    from app.modules.iam.infrastructure.audit_store import PostgresAuditStore
+
+    store = PostgresAuditStore(db_session_factory)
+    for index in range(3):
+        await store.record(
+            AuditEntry(
+                id=f"iam-hash-{index}",
+                actor_id="iam-it-1",
+                actor_type="user",
+                action="AUTH.LOGIN_SUCCESS",
+                result="success",
+                created_at=NOW,
+                resource_type="user",
+                resource_id="iam-it-1",
+                detail={},
+            )
+        )
+    assert await store.verify() == []
+
+    from sqlalchemy import select
+
+    from app.modules.iam.infrastructure.models import IamAuditLogRow
+
+    async with db_session_factory() as session:
+        result = await session.execute(
+            select(IamAuditLogRow).order_by(IamAuditLogRow.created_at, IamAuditLogRow.id)
+        )
+        rows = result.scalars().all()
+    assert len(rows) == 3
+    assert rows[0].prev_hash == ""
+    assert rows[0].hash
+    assert rows[1].prev_hash == rows[0].hash
+    assert rows[2].prev_hash == rows[1].hash
+
+
+async def test_cataclogo_permissions_sembrado(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    from app.modules.iam.infrastructure.iam_security import PostgresPermissionRepository
+
+    repo = PostgresPermissionRepository(db_session_factory)
+    await repo.seed_catalog()
+    permissions = await repo.list_permissions()
+    assert len(permissions) > 60
+    viewer = await repo.permissions_for_role(BuiltinRole.VIEWER)
+    assert "server.view" in viewer
+    assert "server.start" not in viewer
+    operator = await repo.permissions_for_role(BuiltinRole.OPERATOR)
+    assert "server.start" in operator
+    assert "iam.user.create" not in operator
+    admin = await repo.permissions_for_role(BuiltinRole.ADMIN)
+    assert "iam.user.create" in admin
+
+
+async def test_api_keys_crud(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    from app.modules.iam.application.ports import ApiKey
+    from app.modules.iam.infrastructure.iam_security import PostgresApiKeyStore
+
+    store = PostgresApiKeyStore(db_session_factory)
+    key = ApiKey(
+        id="iam-key-1",
+        user_id="iam-it-1",
+        name="ci",
+        key_hash="h" * 64,
+        scopes=("server.list",),
+        created_at=NOW,
+    )
+    await store.create(key)
+    found = await store.get_by_hash("h" * 64)
+    assert found is not None and found.scopes == ("server.list",)
+    keys = await store.list_for_user("iam-it-1")
+    assert len(keys) == 1
+    await store.rotate("iam-key-1", "iam-it-1", "g" * 64)
+    assert await store.get_by_hash("h" * 64) is None
+    assert await store.get_by_hash("g" * 64) is not None
+    await store.revoke("iam-key-1", "iam-it-1")
+    assert await store.list_for_user("iam-it-1") == []
+
+
+async def test_usuario_roundtrip_2fa(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    repo = PostgresIamRepository(db_session_factory)
+    user = User(
+        id="iam-it-4",
+        username="it-2fa",
+        password_hash="x",
+        display_name="2FA",
+        status=UserStatus.ACTIVE,
+        created_at=NOW,
+        totp_secret="ciphertext",
+        totp_enabled=True,
+        backup_codes="cipher-codes",
+    )
+    await repo.save(user)
+    loaded = await repo.get("iam-it-4")
+    assert loaded is not None
+    assert loaded.totp_secret == "ciphertext"
+    assert loaded.totp_enabled is True
+    assert loaded.backup_codes == "cipher-codes"

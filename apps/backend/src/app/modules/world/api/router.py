@@ -112,7 +112,9 @@ async def import_world(
     stream.seek(0, os.SEEK_END)
     size_bytes = stream.tell()
     stream.seek(0)
-    limit = get_container(request).settings.world_max_import_bytes
+    container = get_container(request)
+    max_mb = container.settings_service.get_int("limits.max_world_size_mb", 2048)
+    limit = max_mb * 1024 * 1024
     if size_bytes > limit:
         raise http_error(
             413,

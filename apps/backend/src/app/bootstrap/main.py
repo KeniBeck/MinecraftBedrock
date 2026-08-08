@@ -28,6 +28,7 @@ from app.modules.permission.api.router import router as permission_router
 from app.modules.player.api.router import router as player_router
 from app.modules.scheduler.api.router import router as scheduler_router
 from app.modules.server.api.router import router as server_router
+from app.modules.settings.api.router import router as settings_router
 from app.modules.template.api.router import router as template_router
 from app.modules.world.api.router import router as world_router
 
@@ -40,6 +41,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     reconciler = app.state.container.console_stream_reconciler
     if reconciler is not None:
         await reconciler.reconcile()
+    await app.state.container.settings_service.reload()
     for poller in pollers:
         await poller.start()
     try:
@@ -81,6 +83,7 @@ def create_app(container: Container | None = None) -> FastAPI:
     app.include_router(scheduler_router, prefix=api_prefix)
     app.include_router(template_router, prefix=api_prefix)
     app.include_router(notification_router, prefix=api_prefix)
+    app.include_router(settings_router, prefix=api_prefix)
 
     _register_root(app)
     return app

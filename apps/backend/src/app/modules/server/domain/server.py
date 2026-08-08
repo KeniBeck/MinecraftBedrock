@@ -102,3 +102,27 @@ class Server:
         self.spec.resources = dict(self.spec.resources)
         self.spec.labels = dict(self.spec.labels)
         self.spec.version = version
+
+    def change_resources(self, *, cpu_cores: float | None, ram_mb: int | None) -> bool:
+        """Actualiza CPU/RAM del spec; devuelve True si algo cambió.
+
+        El spec se copia defensivamente (misma política que ``change_version``).
+        Las claves del dict ``resources`` son las que consume el runtime
+        (``cpus``/``memory_mb``; hallazgo B7: la imagen Bedrock de itzg espera
+        ``memory_mb`` en MB).
+        """
+        current = self.spec.resources
+        new_cpus = cpu_cores if cpu_cores is not None else float(current.get("cpus", 0.0))
+        new_ram = ram_mb if ram_mb is not None else int(current.get("memory_mb", 0))
+        if float(new_cpus) == float(current.get("cpus", 0)) and int(new_ram) == int(
+            current.get("memory_mb", 0)
+        ):
+            return False
+
+        self.spec = RuntimeSpec(
+            **{f: getattr(self.spec, f) for f in self.spec.__dataclass_fields__}
+        )
+        self.spec.resources = dict(current)
+        self.spec.resources["cpus"] = float(new_cpus)
+        self.spec.resources["memory_mb"] = int(new_ram)
+        return True

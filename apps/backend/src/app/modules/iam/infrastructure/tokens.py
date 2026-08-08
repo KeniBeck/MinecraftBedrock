@@ -44,6 +44,10 @@ class JwtTokenService(TokenService):
     def _access_ttl(self) -> int:
         return int(self._settings.get("iam.access_token_ttl_seconds", 900))
 
+    @property
+    def _temp_ttl(self) -> int:
+        return int(self._settings.get("iam.temp_token_ttl_seconds", 300))
+
     def create_access_token(self, identity: Identity) -> str:
         now = datetime.now(UTC)
         claims: dict[str, Any] = {
@@ -74,3 +78,30 @@ class JwtTokenService(TokenService):
 
     def hash_token(self, raw: str) -> str:
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def create_temp_token(self, user_id: str) -> str:
+        now = datetime.now(UTC)
+        claims: dict[str, Any] = {
+            "sub": user_id,
+            "purpose": "2fa",
+            "iat": now,
+            "exp": now + timedelta(seconds=self._temp_ttl),
+            "iss": self._issuer,
+        }
+        return jwt.encode(claims, self._secret, algorithm=self._algorithm)
+
+    def decode_temp_token(self, token: str) -> str:
+        try:
+            claims = jwt.decode(
+                token,
+                self._secret,
+                algorithms=[self._algorithm],
+                issuer=self._issuer,
+            )
+        except jwt.ExpiredSignatureError as exc:
+            raise TokenExpiredError("Temp token 2FA vencido") from exc
+        except jwt.InvalidTokenError as exc:
+            raise TokenInvalidError("Temp token 2FA inválido") from exc
+        if claims.get("purpose") != "2fa":
+            raise TokenInvalidError("Temp token sin propósito 2FA")
+        return str(claims["sub"])

@@ -34,7 +34,11 @@ class BedrockConfigurationReader:
         properties = self._load_properties()
         self._schema.validate(properties)
         return DesiredConfig(
-            version=str(self._settings.get("server.default_version", "LATEST")),
+            version=str(
+                self._settings.get(
+                    "defaults.version", self._settings.get("server.default_version", "LATEST")
+                )
+            ),
             environment=self._schema.to_environment(properties),
             config_rev=0,
         )

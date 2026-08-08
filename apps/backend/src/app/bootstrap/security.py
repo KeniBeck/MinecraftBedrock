@@ -48,13 +48,43 @@ async def get_current_user(
     request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)] = None,
 ) -> Identity:
-    """Identidad autenticada a partir del Bearer token (o 401)."""
-    if credentials is None or not credentials.credentials:
-        raise http_error(401, "AUTH.TOKEN_MISSING", "Falta el token de acceso")
-    try:
-        return resolve_access(credentials.credentials, get_container(request))
-    except _AUTH_FAILURES as exc:
-        raise http_error(401, exc.code, exc.message) from exc
+    """Identidad autenticada: Bearer token o API key (``X-API-Key``)."""
+    container = get_container(request)
+
+    if credentials is not None and credentials.credentials:
+        try:
+            return resolve_access(credentials.credentials, container)
+        except _AUTH_FAILURES as exc:
+            raise http_error(401, exc.code, exc.message) from exc
+
+    api_key = request.headers.get("x-api-key")
+    if api_key:
+        return await _resolve_api_key_identity(api_key, container)
+
+    raise http_error(401, "AUTH.TOKEN_MISSING", "Falta el token de acceso")
+
+
+async def _resolve_api_key_identity(raw: str, container: Container) -> Identity:
+    """Resuelve la identidad desde el material de una API key (scopes incluidos).
+
+    La key se autoriza por el usuario al que pertenece y sus scopes limitan las
+    acciones (intersección en ``AccessControlService.authorize``).
+    """
+    from app.kernel.ports.access import Identity as KernelIdentity
+
+    key = await container.iam_facade.resolve_api_key(raw)
+    if key is None:
+        raise http_error(401, "AUTH.API_KEY_INVALID", "API key inválida o vencida")
+    user = await container.iam_facade.deps.repository.get(key.user_id)
+    if user is None:
+        raise http_error(401, "AUTH.API_KEY_INVALID", "Usuario de la API key no existe")
+    return KernelIdentity(
+        id=user.id,
+        username=user.username,
+        roles=tuple(sorted(role.value for role in user.roles)),
+        scopes=key.scopes,
+        is_api_key=True,
+    )
 
 
 def require_action(action: str) -> Callable[..., Awaitable[Identity]]:

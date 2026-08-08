@@ -385,6 +385,28 @@ def test_materialize_uses_env_ports_volumes_from_spec() -> None:
     assert kwargs["nano_cpus"] == 2_000_000_000
 
 
+def test_materialize_aplica_ram_desde_memory_mb_en_bytes() -> None:
+    client = FakeClient()
+    adapter = make_adapter(client)
+    adapter.materialize(
+        _spec(
+            "srv-1",
+            resources={"memory_mb": 8192, "cpus": 4.0},
+        )
+    )
+    kwargs = client.containers.created[0][2]
+    assert kwargs["mem_limit"] == 8192 * 1024 * 1024
+    assert kwargs["nano_cpus"] == 4_000_000_000
+
+
+def test_materialize_sin_ram_no_pone_mem_limit() -> None:
+    client = FakeClient()
+    adapter = make_adapter(client)
+    adapter.materialize(_spec("srv-1", resources={"cpus": 1.0}))
+    kwargs = client.containers.created[0][2]
+    assert kwargs["mem_limit"] is None
+
+
 # estado ---------------------------------------------------------------
 
 

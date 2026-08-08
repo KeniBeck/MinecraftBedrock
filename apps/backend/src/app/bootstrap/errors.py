@@ -34,6 +34,8 @@ from app.kernel.errors import (
 from app.modules.console.domain.errors import CommandRejectedError
 from app.modules.iam.domain.errors import (
     AccountSuspendedError,
+    ApiKeyInvalidError,
+    ApiKeyScopeError,
     AuthenticationError,
     AuthorizationError,
     ForbiddenError,
@@ -43,6 +45,8 @@ from app.modules.iam.domain.errors import (
     TokenExpiredError,
     TokenInvalidError,
     TokenRevokedError,
+    TwoFactorInvalidError,
+    TwoFactorNotEnabledError,
     UserAlreadyExistsError,
     UserNotFoundError,
 )
@@ -65,9 +69,15 @@ def status_for(error: AppError) -> int:
     """Traduce un ``AppError`` a status HTTP (mapping central y único)."""
     if isinstance(error, HttpError):
         return error.status_code
-    if isinstance(error, _AUTH_FAILURES + (AuthenticationError,)):
+    if isinstance(
+        error,
+        _AUTH_FAILURES + (AuthenticationError, ApiKeyInvalidError, TwoFactorInvalidError),
+    ):
         return 401
-    if isinstance(error, (AccountSuspendedError, AuthorizationError, ForbiddenError)):
+    if isinstance(
+        error,
+        (AccountSuspendedError, AuthorizationError, ForbiddenError, ApiKeyScopeError),
+    ):
         return 403
     if isinstance(
         error,
@@ -93,6 +103,7 @@ def status_for(error: AppError) -> int:
             ServerPortExhaustedError,
             BusinessRuleViolation,
             ConsoleError,
+            TwoFactorNotEnabledError,
         ),
     ):
         return 409

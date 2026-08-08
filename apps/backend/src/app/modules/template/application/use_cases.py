@@ -242,7 +242,11 @@ def _profile_config(
     profile: ConfigProfile | None,
 ) -> tuple[str, dict[str, str]]:
     if profile is None:
-        version = str(deps.settings.get("server.default_version", "LATEST"))
+        version = str(
+            deps.settings.get(
+                "defaults.version", deps.settings.get("server.default_version", "LATEST")
+            )
+        )
         return version, {}
     return profile.version, dict(profile.properties)
 

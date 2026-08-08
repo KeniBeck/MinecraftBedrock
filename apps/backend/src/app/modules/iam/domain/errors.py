@@ -6,7 +6,13 @@ para que el kernel no conozca dominios (mismo patrón que ``SERVER.*``).
 
 from __future__ import annotations
 
-from app.kernel.errors import BusinessRuleViolation, DomainError, NotFoundError
+from app.kernel.errors import (
+    BusinessRuleViolation,
+    DomainError,
+    InfrastructureError,
+    NotFoundError,
+    ValidationError,
+)
 
 
 class IAMError(DomainError):
@@ -85,3 +91,39 @@ class ForbiddenError(AuthorizationError):
     """La identidad no está autorizada para la acción sobre el recurso."""
 
     code = "AUTH.FORBIDDEN"
+
+
+class TwoFactorRequiredError(AuthenticationError):
+    """La cuenta tiene 2FA habilitado: se exige el segundo factor."""
+
+    code = "AUTH.TWO_FACTOR_REQUIRED"
+
+
+class TwoFactorInvalidError(AuthenticationError):
+    """El código TOTP o backup code proporcionado es inválido."""
+
+    code = "AUTH.TWO_FACTOR_INVALID"
+
+
+class TwoFactorNotEnabledError(ValidationError):
+    """Operación de 2FA solicitada sobre una cuenta sin 2FA activo."""
+
+    code = "AUTH.TWO_FACTOR_NOT_ENABLED"
+
+
+class ApiKeyInvalidError(AuthenticationError):
+    """La API key no existe, está revocada o vencida."""
+
+    code = "AUTH.API_KEY_INVALID"
+
+
+class ApiKeyScopeError(AuthorizationError):
+    """La API key no tiene el scope necesario para la acción."""
+
+    code = "AUTH.API_KEY_SCOPE"
+
+
+class SecretCipherError(InfrastructureError):
+    """No se pudo cifrar/descifrar un secreto (clave o ciphertext inválido)."""
+
+    code = "IAM.SECRET_CIPHER"

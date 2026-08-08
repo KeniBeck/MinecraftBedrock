@@ -12,6 +12,7 @@ from app.modules.server.application.commands import (
     RestartServerCommand,
     StartServerCommand,
     StopServerCommand,
+    UpdateResourcesCommand,
 )
 from app.modules.server.application.handlers import (
     AllowlistToggledHandler,
@@ -34,6 +35,7 @@ from app.modules.server.application.use_cases import (
     ServerDeps,
     StartServerUseCase,
     StopServerUseCase,
+    UpdateServerResourcesUseCase,
 )
 from app.modules.server.domain.events import (
     ALLOWLIST_TOGGLED_TOPIC,
@@ -67,6 +69,7 @@ class ServerFacade:
         self._remove = RemoveServerUseCase(self.deps, self._guard)
         self._apply_config = ApplyConfigUseCase(self.deps, self._guard)
         self._change_version = ChangeVersionUseCase(self.deps, self._guard)
+        self._update_resources = UpdateServerResourcesUseCase(self.deps, self._guard)
         self._get = GetServerQuery(self.repository, self.deps.settings)
         self._list = ListServersQuery(self.repository, self.deps.settings)
 
@@ -102,6 +105,9 @@ class ServerFacade:
 
     async def change_version(self, cmd: ChangeVersionCommand) -> ServerView:
         return await self._change_version.execute(cmd)
+
+    async def update_resources(self, cmd: UpdateResourcesCommand) -> ServerView:
+        return await self._update_resources.execute(cmd)
 
     # -- consultas ----------------------------------------------------------
 

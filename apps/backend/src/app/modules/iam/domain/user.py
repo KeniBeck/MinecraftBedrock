@@ -35,6 +35,9 @@ class User:
     created_at: datetime
     last_login_at: datetime | None = None
     roles: set[BuiltinRole] = field(default_factory=set)
+    totp_secret: str | None = None
+    totp_enabled: bool = False
+    backup_codes: str | None = None
 
     @property
     def is_active(self) -> bool:

@@ -47,14 +47,22 @@ from app.modules.iam.domain.events import (
 )
 from app.modules.iam.domain.role import BuiltinRole
 from app.modules.iam.domain.user import User, UserStatus
+from app.modules.iam.infrastructure.iam_security import (
+    FernetSecretCipher,
+    PyotpTotpService,
+)
 from app.modules.iam.infrastructure.memory import (
+    InMemoryApiKeyStore,
     InMemoryAuditStore,
     InMemoryIamRepository,
+    InMemoryPermissionRepository,
     InMemorySessionStore,
 )
 from tests.conftest import FakeSettings, FakeTime, SequenceIds
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
+
+_FERNET_KEY = "9Dfa2Y5t4kMX6k4oyar_EgtQ1cFcdPE8V_6I688Tu4k="
 
 
 class FakePasswordHasher:
@@ -85,6 +93,18 @@ class FakeTokenService:
 
     def hash_token(self, raw: str) -> str:
         return f"sha256:{raw}"
+
+    def create_temp_token(self, user_id: str) -> str:
+        token = f"temp.{user_id}.{self._n}"
+        self._n += 1
+        return token
+
+    def decode_temp_token(self, token: str) -> str:
+        if not token.startswith("temp."):
+            from app.modules.iam.domain.errors import TokenInvalidError
+
+            raise TokenInvalidError("temp token inválido")
+        return token.split(".")[1]
 
 
 def make_user(
@@ -131,6 +151,10 @@ class Deps:
             ids=self.ids,
             time=self.time,
             settings=self.settings,
+            permissions=InMemoryPermissionRepository(),
+            api_keys=InMemoryApiKeyStore(),
+            cipher=FernetSecretCipher(_FERNET_KEY),
+            totp=PyotpTotpService(),
         )
 
 

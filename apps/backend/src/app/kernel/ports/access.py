@@ -16,11 +16,19 @@ from typing import Any, Protocol
 
 @dataclass(frozen=True, slots=True)
 class Identity:
-    """Identidad autenticada (emitida por IAM)."""
+    """Identidad autenticada (emitida por IAM).
+
+    ``scopes`` solo se rellena cuando la identidad proviene de una API key
+    (``is_api_key=True``): limita las acciones autorizadas (intersección con los
+    permisos del usuario). Con ``is_api_key=True`` y ``scopes`` vacío, ninguna
+    acción queda autorizada.
+    """
 
     id: str
     username: str
     roles: tuple[str, ...] = field(default_factory=tuple)
+    scopes: tuple[str, ...] = field(default_factory=tuple)
+    is_api_key: bool = False
 
 
 @dataclass(frozen=True, slots=True)

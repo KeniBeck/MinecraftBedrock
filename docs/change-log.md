@@ -2377,3 +2377,337 @@ recrear desde el panel).
 - `uv run mypy --strict .` ✅ (376 archivos)
 - `uv run pytest -q` ✅ **565 passed, 31 deselected** (antes 526/31): +39 tests
   del módulo Notification (7 + 4 + 8 + 5 + 7 + 8).
+
+## 23. Fase H — paso 18: IAM completo (matriz de permisos, 2FA, API keys, auditoría tamper-evident)
+
+> **Fecha**: 2026-08-08
+> **Origen**: el paso 17 dejó IAM con auth JWT, roles base y ACL por servidor,
+> pero sin matriz de permisos por acción (TDD §14.2), sin 2FA, sin API keys y
+> con auditoría básica (sin cadena de hash). Este paso completa el módulo según
+> el blueprint §3.1/§16.2.
+
+### 1. Matriz de permisos por acción
+
+- Catálogo de códigos organizado por categoría en
+  `modules/iam/domain/permissions.py`: `PERMISSION_CODES` (65 códigos),
+  `READ_ACTIONS` (vista), `WRITE_ACTIONS` (operator) y `PANEL_ACTIONS`
+  (ámbito panel, solo admin/super_admin). La matriz `ROLE_PERMISSIONS` asigna:
+  viewer → solo lectura; operator → lectura + escritura sobre servidores;
+  admin/super_admin → todo el catálogo.
+- `AccessControlService.authorize(identity, action, resource)` evalúa:
+  1. `super_admin`/`admin` global → siempre autorizado.
+  2. Ámbito panel (`resource is None`/`"panel"`): la acción debe estar en
+     `PANEL_ACTIONS` y concedida por el rol global (equivale a admin global).
+  3. Ámbito servidor (`server:{id}` o `{server_id}`): el rol de la membresía
+     debe conceder la acción.
+- Persistencia: tablas `iam_permissions` + `iam_role_permissions` sembradas en
+  la migración 0012; `PermissionRepositoryPort` (Postgres + en memoria con la
+  matriz estática de fallback). `require_action`/`require_server_action` ya
+  usaban los códigos: ahora se validan contra la matriz.
+
+### 2. Auditoría tamper-evident
+
+- `iam_audit_logs` gana `prev_hash` y `hash`: `prev_hash` = hash del registro
+  anterior (global); `hash` = SHA-256 de
+  `f"{prev_hash}|{id}|{actor_id}|{action}|{resource_id}|{created_at}|{result}"`.
+- `PostgresAuditStore`/`InMemoryAuditStore` calculan la cadena al guardar y
+  exponen `verify()` (devuelve la lista de errores; vacío = íntegra).
+- Endpoint `GET /iam/audit/verify` (admin) → `{"valid", "errors"}`.
+
+### 3. 2FA (TOTP)
+
+- Dependencias nuevas: `pyotp>=2.9`, `cryptography>=42.0`.
+- Columnas en `iam_users`: `totp_secret` (Text cifrado con Fernet),
+  `totp_enabled` (bool) y `backup_codes` (Text cifrado).
+- `SecretCipherPort` (Fernet, clave `iam.encryption_key`) y `TotpServicePort`
+  (pyotp: `random_base32`, `provisioning_uri`, `verify` con `valid_window=1`,
+  backup codes de 8 hex con `secrets.token_hex(4)`).
+- Flujos:
+  - `POST /auth/2fa/enable` → secreto + provisioning URI (QR) + 10 backup codes.
+  - `POST /auth/2fa/verify` → valida el código TOTP y activa el 2FA.
+  - `POST /auth/login` → si la cuenta tiene 2FA, responde
+    `{"requires_2fa": true, "temp_token": ...}` (temp token JWT de corta vida).
+  - `POST /auth/verify-2fa` → valida TOTP/backup code y emite los tokens.
+  - `POST /auth/2fa/backup` → regenera backup codes (2FA ya activo).
+
+### 4. API keys
+
+- Tabla `iam_api_keys`: `id`, `user_id`, `name`, `key_hash` (SHA-256), `scopes`
+  (jsonb), `last_used_at`, `created_at`, `expires_at`.
+- Material `sk_live_` + 32 hex (solo se muestra una vez); se guarda el hash.
+- AuthN: `X-API-Key` en `get_current_user` resuelve la key, carga el usuario y
+  monta una `Identity` con `is_api_key=True` y `scopes`; la intersección de
+  scopes se aplica en `AccessControlService.authorize` (si la key no tiene el
+  scope → 403; key sin scopes → deniega todo).
+- Endpoints: `GET/POST /iam/api-keys`, `DELETE /iam/api-keys/{id}`,
+  `POST /iam/api-keys/{id}/regenerate` (todos admin vía `require_action`).
+
+### Archivos
+
+| Archivo | Cambio |
+|---|---|
+| `modules/iam/domain/permissions.py` | Catálogo, READ/WRITE/PANEL_ACTIONS y matriz `ROLE_PERMISSIONS` |
+| `modules/iam/domain/repository.py` | `PermissionRepositoryPort` (listar/sembrar/por rol) |
+| `modules/iam/domain/user.py` | `totp_secret`, `totp_enabled`, `backup_codes` |
+| `modules/iam/domain/errors.py` | Errores 2FA/API keys/cipher |
+| `modules/iam/application/access.py` | `authorize` con matriz de permisos + intersección de scopes |
+| `modules/iam/application/audit_chain.py` | Cómputo/verificación de la cadena de hash |
+| `modules/iam/application/security_use_cases.py` | Use cases 2FA y API keys |
+| `modules/iam/application/ports.py` | `ApiKeyStorePort`, `SecretCipherPort`, `TotpServicePort`, `temp_token` en `TokenService` |
+| `modules/iam/application/use_cases.py` | `LoginUseCase` emite challenge 2FA; `IamDeps` nuevos puertos |
+| `modules/iam/application/facade.py` | Métodos 2FA/API keys/auditoría |
+| `modules/iam/infrastructure/models.py` | Columnas 2FA + hash-chain + `iam_permissions`/`iam_role_permissions`/`iam_api_keys` |
+| `modules/iam/infrastructure/iam_security.py` | `PostgresPermissionRepository`, `PostgresApiKeyStore`, `FernetSecretCipher`, `PyotpTotpService`, generación de material |
+| `modules/iam/infrastructure/audit_store.py` | Hash-chain en `record` + `verify()` |
+| `modules/iam/api/schemas.py` + `api/router.py` | Endpoints 2FA, API keys, auditoría |
+| `bootstrap/container.py` / `config.py` | Wiring y settings `iam.encryption_key`/`iam.totp_issuer`/`iam.temp_token_ttl_seconds` |
+| `bootstrap/security.py` | `get_current_user` con `X-API-Key` |
+| `bootstrap/errors.py` | Mapping de errores 2FA/API keys |
+| `infrastructure/db/alembic/versions/0012_iam_complete.py` | Migración completa (depende de 0011) |
+| `kernel/ports/access.py` | `Identity.scopes` + `is_api_key` |
+
+### Tests
+
+- `tests/test_iam_permissions_matrix.py` (200): catálogo, partición
+  READ/WRITE/PANEL y combinaciones rol×acción.
+- `tests/test_iam_audit_chain.py` (8): hash dependiente de campos, encadenado,
+  detección de manipulación de `hash`/`prev_hash`.
+- `tests/test_iam_security_use_cases.py` (17): 2FA (enable/confirmar/login con
+  challenge/backup codes) y API keys (crear/listar/revocar/rotar/resolver).
+- `tests/test_iam_security_integration.py` (11): endpoints 2FA/API keys vía
+  HTTP y auditoría.
+- `tests/test_iam_postgres_integration.py` (+4 opt-in): catálogo sembrado,
+  hash-chain en Postgres, API keys CRUD y roundtrip 2FA del usuario.
+
+### Verificación
+
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅
+- `uv run mypy --strict .` ✅ (385 archivos)
+- `uv run pytest -q` ✅ **801 passed, 35 deselected** (antes 565/31): +236 tests
+  (200 + 8 + 17 + 11 del módulo IAM).
+
+## 24. Fase H — paso 19: módulo Settings avanzado (persistencia, endpoints, límites)
+
+> **Fecha**: 2026-08-08
+> **Origen**: hasta este paso, la configuración global era solo el placeholder
+> ``EnvSettingsAdapter`` (variables de entorno + atributos pydantic) sin
+> persistencia, sin endpoints de administración y sin límites configurables por
+> servidor. Este paso completa el módulo Settings (Blueprint §3.13/§16.14,
+> TDD §15.7).
+
+### 1. Modelo de datos y catálogo
+
+- Tabla ``settings``: ``key`` (PK), ``value`` (JSONB), ``category``
+  (`storage`/`limits`/`defaults`/`system`), ``description``, ``updated_by``,
+  ``updated_at``.
+- Catálogo de 18 claves en `modules/settings/domain/defaults.py`
+  (``SETTING_DEFINITIONS``, ``DEFAULT_VALUES``):
+  - **storage**: `storage.base_path`, `storage.backup_path`, `storage.template_path`.
+  - **limits**: `limits.max_servers`, `limits.max_backups_per_server`,
+    `limits.max_world_size_mb`, `limits.default_cpu_cores`, `limits.default_ram_mb`,
+    `limits.default_disk_gb`.
+  - **defaults**: `defaults.image`, `defaults.tag`, `defaults.version`,
+    `defaults.port_pool_start`, `defaults.port_pool_end`, `defaults.timezone`.
+  - **system**: `system.maintenance_mode`, `system.log_level`,
+    `system.audit_retention_days`.
+
+### 2. Puerto, repositorios y resolución
+
+- `SettingsRepositoryPort` añadido a `kernel/ports/settings.py`
+  (get/set/set_many/delete/get_many/list_by_category/get_all/list_full).
+- `PostgresSettingsRepository` (upsert por clave, ``set_many`` atómico) y
+  ``InMemorySettingsRepository`` (para tests).
+- Resolución de cada clave en ``SettingsService``: **DB (cache)** →
+  **``EnvSettingsAdapter`` (fallback de entorno)** → **default del catálogo** →
+  default del argumento. ``EnvSettingsAdapter`` sigue funcionando como fallback.
+
+### 3. SettingsService
+
+- Implementa ``SettingsPort`` (lectura síncrona) + escritura async
+  (``set``/``set_many``/``reset``/``reload``), getters tipados
+  (``get_int``/``get_float``/``get_bool``/``get_path``) y validación por tipo
+  del catálogo (int/float/bool/str/path).
+- Auditoría: cada cambio registra un ``AuditEntry`` con acción
+  ``settings.update`` (reutiliza el audit tamper-evident del paso 18).
+- ``reload()`` es tolerante a tabla ausente (migración sin aplicar): la cache
+  queda vacía y la resolución cae al fallback env/defaults.
+
+### 4. Endpoints REST (admin)
+
+| Método | Ruta | Permiso | Efecto |
+|---|---|---|---|
+| GET | `/settings` | `settings.view` | Todos los settings |
+| GET | `/settings/category/{category}` | `settings.view` | Por categoría |
+| GET | `/settings/{key}` | `settings.view` | Un setting |
+| PUT | `/settings/{key}` | `settings.update` | Actualizar (valida + audita) |
+| PATCH | `/settings` | `settings.update` | Múltiples (atómico) |
+| DELETE | `/settings/{key}` | `settings.update` | Reset a default |
+
+### 5. Integración con otros módulos
+
+- `RuntimeSpecFactory`: `defaults.image`/`defaults.tag`/`defaults.timezone`/
+  `defaults.port_pool_start`/`defaults.port_pool_end`/`limits.default_ram_mb`/
+  `limits.default_cpu_cores`, con fallback a las claves legacy (`server.*`).
+- Configuration reader/facade y Template: `defaults.version` (fallback
+  `server.default_version`).
+- World import: `limits.max_world_size_mb` (fallback al antiguo
+  `world_max_import_bytes`).
+- Backup: `limits.max_backups_per_server` se aplica en `CreateBackupUseCase`.
+- Container: `storage.backup_path`/`storage.template_path` configuran
+  `LocalBackupStore` y `TemplateArchiveStore`; `reload()` en el lifespan.
+- Se mantiene el campo legacy `world_max_import_bytes` en `Settings` pydantic
+  (sin uso) por compatibilidad de config.
+
+### Archivos
+
+| Archivo | Cambio |
+|---|---|
+| `kernel/ports/settings.py` | +`SettingsRepositoryPort` |
+| `modules/settings/domain/defaults.py` | Catálogo de 18 claves con categoría/tipo/descripción |
+| `modules/settings/domain/errors.py` | `SettingNotFoundError`, `SettingValidationError`, `SettingCategoryError`, `MaintenanceModeError` |
+| `modules/settings/application/service.py` | `SettingsService` (lectura + escritura + tipos + auditoría) |
+| `modules/settings/infrastructure/models.py` | `SettingRow` |
+| `modules/settings/infrastructure/postgres_repository.py` | `PostgresSettingsRepository` |
+| `modules/settings/infrastructure/memory.py` | `InMemorySettingsRepository` |
+| `modules/settings/api/schemas.py` + `api/router.py` | Endpoints REST |
+| `modules/server/application/spec_factory.py` | Defaults nuevos con fallback legacy |
+| `modules/configuration/*`, `modules/template/*` | `defaults.version` con fallback |
+| `modules/world/api/router.py` | Límite desde `limits.max_world_size_mb` |
+| `modules/backup/application/use_cases.py` | `limits.max_backups_per_server` en create |
+| `bootstrap/container.py` | `settings_service` en Container, rutas configurables |
+| `bootstrap/main.py` | Router + `reload()` en lifespan |
+| `infrastructure/db/alembic/versions/0013_settings_table.py` | Tabla + siembra de defaults (depende de 0012) |
+
+### Tests
+
+- `tests/test_settings_service.py` (21): resolución DB→env→default, getters
+  tipados, validación, auditoría, get_all/get_category, compatibilidad
+  estructural.
+- `tests/test_settings_integration.py` (12): endpoints HTTP (authN, GET/PUT/
+  PATCH/DELETE, 403 viewer, validación 422), integración con `RuntimeSpecFactory`
+  y rutas de storage configurables.
+- `tests/test_settings_postgres_integration.py` (+2 opt-in): CRUD, set_many
+  atómico, upsert.
+- `tests/test_backup_use_cases.py` (+1): `limits.max_backups_per_server` se
+  aplica al crear.
+- `tests/test_api_integration.py`: límite de import 413 ahora vía
+  `limits.max_world_size_mb`; `make_container` construye el `SettingsService`
+  con repo en memoria + audit IAM.
+
+### Verificación
+
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅
+- `uv run mypy --strict .` ✅ (397 archivos)
+- `uv run pytest -q` ✅ **835 passed, 37 deselected** (antes 801/35): +34 tests
+  (21 + 12 + 1 del módulo Settings; +2 opt-in Postgres).
+
+## 25. Extensión — endpoint de recursos de servidor (CPU/RAM)
+
+> **Fecha**: 2026-08-08
+> **Origen**: el paso 19 configura valores por defecto de CPU/RAM para servidores
+> nuevos, pero no permitía modificar los ya creados. Esta extensión añade
+> `PUT /servers/{id}/resources` para actualizar CPU/RAM de un servidor existente
+> recreando el contenedor.
+
+### Alcance
+
+- `PUT /servers/{server_id}/resources` con body `{cpu_cores?, ram_mb?}` (ambos
+  opcionales; si uno no se envía se mantiene el actual).
+- Respuestas: `200` (actualizado), `422` (valores fuera de rango — la API valida
+  `ge=1/le=64` CPU y `ge=512/le=65536` RAM en el schema), `403` (sin
+  `server.update`), `404` (servidor inexistente), `409` (servidor en
+  `starting`/`stopping`/`removed` → `SERVER.BUSY`).
+- Si no hay cambios reales (mismos valores), responde `200` sin recrear.
+- Recrea el contenedor: si corría, para → `materialize` con el nuevo spec →
+  arranca (mismo mecanismo que `ChangeVersion`/`ApplyConfig`, `_recreate`).
+- Publica `SERVER.RESOURCES_CHANGED` (payload `{old, new}`).
+- Auditoría: IAM suscribe `server.resources_changed` con un
+  `ResourceChangeAuditHandler` que registra la acción `server.resources.update`
+  (resultado `success`, detalle `old`/`new`) en el audit tamper-evident del
+  paso 18.
+
+### Implementación
+
+| Archivo | Cambio |
+|---|---|
+| `modules/server/application/commands.py` | `UpdateResourcesCommand` (server_id, cpu_cores?, ram_mb?, actor_id?) |
+| `modules/server/domain/events.py` | `SERVER_RESOURCES_CHANGED` + `server_resources_changed(...)` |
+| `modules/server/domain/server.py` | `Server.change_resources(cpu_cores, ram_mb)` (copia defensiva del spec, devuelve si cambió) |
+| `modules/server/domain/errors.py` | `ServerResourcesValidationError` (`SERVER.RESOURCES_INVALID`) y `ServerBusyError` (`SERVER.BUSY`) |
+| `modules/server/application/use_cases.py` | `UpdateServerResourcesUseCase` (validar estado y cotas, `change_resources`, `_recreate`, evento) |
+| `modules/server/application/facade.py` | `update_resources(cmd)` |
+| `modules/server/api/schemas.py` | `UpdateResourcesRequest` + `ServerResourcesResponse` |
+| `modules/server/api/router.py` | `PUT /servers/{id}/resources` con `require_server_action("server.update")` |
+| `modules/iam/domain/permissions.py` + `0012`/`0014` | Permiso `server.update` en el catálogo y siembra (BBDD ya migradas) |
+| `modules/iam/application/handlers.py` + `facade.py` | `ResourceChangeAuditHandler` suscrito a `server.resources_changed` |
+
+### Notas
+
+- El topic derivado del evento es `server.resources_changed` (con guion bajo):
+  `event.type.lower()` convierte `SERVER.RESOURCES_CHANGED` así. La suscripción
+  de IAM usa ese topic exacto (hallazgo al integrar: el topic NO es
+  `server.resources.changed`).
+- `server.update` no estaba en el catálogo del paso 18; se añadió al catálogo y
+  a la migración 0014 (las BBDD con la 0012 ya aplicada reciben el permiso).
+
+### Tests
+
+- `tests/test_server_use_cases.py` (TestUpdateServerResources, 9): actualiza CPU
+  y RAM recreando el contenedor, no-op sin cambios, solo RAM, recrea y arranca si
+  corría, CPU < 1 / RAM < 512 rechazadas, `starting`/`removed` → `SERVER.BUSY`,
+  servidor inexistente.
+- `tests/test_api_integration.py` (TestServerResourcesApi, 7): 200, 422 (CPU/RAM
+  inválidas), 403 (viewer), 404, 401, y auditoría `server.resources.update`.
+
+### Verificación
+
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅
+- `uv run mypy --strict .` ✅ (398 archivos)
+- `uv run pytest -q` ✅ **854 passed, 37 deselected** (antes 835/37): +16 tests
+  (9 + 7 de la extensión de recursos).
+
+## 26. Fix — límite de RAM no se aplicaba en contenedores Docker
+
+> **Fecha**: 2026-08-08
+> **Origen**: al verificar `PUT /servers/{id}/resources` con `docker inspect`, la
+> CPU se aplicaba correctamente (`NanoCpus: 4000000000`), pero la RAM NO:
+> `Memory: 0` en lugar de `8589934592` bytes (8192 MB).
+
+### Causa raíz
+
+En `DockerRuntimeAdapter.materialize`, el `mem_limit` se leía de la clave
+`resources["memory"]`, pero el `RuntimeSpec` producido por `spec_factory` y por
+el endpoint de recursos guarda la RAM en `resources["memory_mb"]` (int en MB).
+Al no existir la clave `memory`, `mem_limit` quedaba en `None` y Docker creaba el
+contenedor sin límite de memoria.
+
+### Fix
+
+Nuevo helper `_mem_limit(resources)` en `docker.py` que convierte
+`memory_mb` (MB) a bytes (`MB * 1024 * 1024`) y lo pasa como `mem_limit`:
+
+```python
+def _mem_limit(resources: dict[str, Any]) -> str | int | None:
+    memory_mb = resources.get("memory_mb")
+    if memory_mb is not None:
+        return int(memory_mb) * 1024 * 1024
+    return resources.get("memory")
+```
+
+La clave legacy `resources["memory"]` se mantiene como fallback para no romper
+consumidores previos (el test antiguo de `materialize` usaba `{"memory": "2g"}`).
+
+### Verificación
+
+- `tests/test_runtime.py` (+2): `memory_mb=8192` → `mem_limit == 8192 * 1024 * 1024`
+  (y `nano_cpus` correcto); sin `memory_mb` → `mem_limit is None`. El test previo
+  de `{"memory": "2g"}` sigue pasando (sin regresión).
+- `docker inspect <container>` debe mostrar `"Memory": 8589934592` tras recrear
+  un servidor con 8192 MB (verificación manual pendiente de entorno Docker real).
+
+### Verificación automática
+
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅
+- `uv run mypy --strict .` ✅ (398 archivos)
+- `uv run pytest -q` ✅ **856 passed, 37 deselected** (antes 854/37): +2 tests
+  del fix de RAM.

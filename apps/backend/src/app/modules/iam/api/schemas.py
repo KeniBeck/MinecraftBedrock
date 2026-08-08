@@ -55,6 +55,17 @@ class TokenResponse(BaseModel):
     identity: IdentityResponse
 
 
+class LoginResponse(BaseModel):
+    """Respuesta de login: tokens O challenge de segundo factor."""
+
+    requires_2fa: bool = False
+    temp_token: str | None = None
+    access_token: str | None = None
+    refresh_token: str | None = None
+    expires_in: int | None = None
+    identity: IdentityResponse | None = None
+
+
 class UserResponse(BaseModel):
     id: str
     username: str
@@ -63,3 +74,59 @@ class UserResponse(BaseModel):
     roles: list[str] = Field(default_factory=list)
     created_at: datetime | None = None
     last_login_at: datetime | None = None
+
+
+# -- 2FA (Fase H paso 18) -------------------------------------------------------
+
+
+class EnableTwoFactorResponse(BaseModel):
+    secret: str
+    provisioning_uri: str
+    backup_codes: list[str]
+
+
+class ConfirmTwoFactorRequest(BaseModel):
+    code: str = Field(min_length=6, max_length=8)
+
+
+class VerifyTwoFactorLoginRequest(BaseModel):
+    temp_token: str = Field(min_length=1)
+    code: str = Field(min_length=6, max_length=8)
+
+
+class TwoFactorChallengeResponse(BaseModel):
+    requires_2fa: bool = True
+    temp_token: str
+
+
+class BackupCodesResponse(BaseModel):
+    backup_codes: list[str]
+
+
+# -- API keys (Fase H paso 18) --------------------------------------------------
+
+
+class ApiKeyRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    scopes: list[str] = Field(default_factory=list)
+
+
+class ApiKeyResponse(BaseModel):
+    id: str
+    name: str
+    scopes: list[str] = Field(default_factory=list)
+    created_at: datetime | None = None
+    last_used_at: datetime | None = None
+    expires_at: datetime | None = None
+
+
+class ApiKeyCreatedResponse(ApiKeyResponse):
+    material: str
+
+
+# -- auditoría (Fase H paso 18) --------------------------------------------------
+
+
+class AuditVerifyResponse(BaseModel):
+    valid: bool
+    errors: list[str] = Field(default_factory=list)

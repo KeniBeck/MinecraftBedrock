@@ -26,6 +26,7 @@ from app.modules.server.api.schemas import (
     ServerConnectionResponse,
     ServerResponse,
     StopServerRequest,
+    UpdateResourcesRequest,
 )
 from app.modules.server.application.commands import (
     ApplyConfigCommand,
@@ -35,6 +36,7 @@ from app.modules.server.application.commands import (
     RestartServerCommand,
     StartServerCommand,
     StopServerCommand,
+    UpdateResourcesCommand,
 )
 from app.modules.server.application.facade import ServerFacade
 from app.modules.server.application.results import ServerView
@@ -221,6 +223,28 @@ async def change_version(
         ChangeVersionCommand(
             server_id=server_id,
             version=body.version,
+            actor_id=identity.id,
+        )
+    )
+    return _response(view)
+
+
+@router.put(
+    "/servers/{server_id}/resources",
+    response_model=ServerResponse,
+    summary="Actualizar CPU/RAM de un servidor",
+)
+async def update_resources(
+    server_id: str,
+    request: Request,
+    body: UpdateResourcesRequest,
+    identity: Identity = Depends(require_server_action("server.update")),
+) -> ServerResponse:
+    view = await _facade(request).update_resources(
+        UpdateResourcesCommand(
+            server_id=server_id,
+            cpu_cores=body.cpu_cores,
+            ram_mb=body.ram_mb,
             actor_id=identity.id,
         )
     )

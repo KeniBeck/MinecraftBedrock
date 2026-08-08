@@ -70,6 +70,12 @@ class Settings(BaseSettings):
     notification_burst: int = 100
     notification_resume_limit: int = 1000
 
+    # IAM completo (Fase H paso 18): clave Fernet para secretos 2FA/backup codes,
+    # issuer del provisioning URI y TTL del temp token del segundo factor.
+    iam_encryption_key: str = "9Dfa2Y5t4kMX6k4oyar_EgtQ1cFcdPE8V_6I688Tu4k="
+    iam_totp_issuer: str = "BedrockPanel"
+    iam_temp_token_ttl_seconds: int = 300
+
 
 @lru_cache
 def get_settings() -> Settings:

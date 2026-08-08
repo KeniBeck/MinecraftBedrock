@@ -33,6 +33,20 @@ class ChangeVersionRequest(BaseModel):
     version: str = Field(min_length=1, max_length=64)
 
 
+class UpdateResourcesRequest(BaseModel):
+    """Actualiza CPU/RAM de un servidor (ambos opcionales; mínimo 1 CPU/512 MB)."""
+
+    cpu_cores: float | None = Field(default=None, ge=1, le=64)
+    ram_mb: int | None = Field(default=None, ge=512, le=65536)
+
+
+class ServerResourcesResponse(BaseModel):
+    """Recursos efectivos del servidor tras la actualización."""
+
+    cpu_cores: float
+    ram_mb: int
+
+
 class ServerConnectionResponse(BaseModel):
     host: str = Field(description="Host o dominio público donde escucha el servidor")
     port: int = Field(description="Puerto UDP IPv4 del juego en el host")

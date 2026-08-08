@@ -19,6 +19,7 @@ SERVER_STOPPED = "SERVER.STOPPED"
 SERVER_CRASHED = "SERVER.CRASHED"
 SERVER_REMOVED = "SERVER.REMOVED"
 SERVER_VERSION_CHANGED = "SERVER.VERSION_CHANGED"
+SERVER_RESOURCES_CHANGED = "SERVER.RESOURCES_CHANGED"
 
 SERVER_TOPIC_WILDCARD = "server.*"
 
@@ -46,4 +47,20 @@ def server_event(
         server_id=server_id,
         actor_id=actor_id,
         payload=payload or {},
+    )
+
+
+def server_resources_changed(
+    server_id: str,
+    *,
+    actor_id: str | None = None,
+    old_resources: dict[str, Any],
+    new_resources: dict[str, Any],
+) -> DomainEvent:
+    """Evento de cambio de recursos (extensión paso 19): old/new en el payload."""
+    return server_event(
+        SERVER_RESOURCES_CHANGED,
+        server_id,
+        actor_id=actor_id,
+        payload={"old": old_resources, "new": new_resources},
     )

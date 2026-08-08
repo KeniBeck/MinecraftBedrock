@@ -15,9 +15,15 @@ from app.modules.iam.application.commands import LoginCredentials
 from app.modules.iam.application.use_cases import IamDeps, LoginUseCase
 from app.modules.iam.domain.role import BuiltinRole
 from app.modules.iam.domain.user import User, UserStatus
+from app.modules.iam.infrastructure.iam_security import (
+    FernetSecretCipher,
+    PyotpTotpService,
+)
 from app.modules.iam.infrastructure.memory import (
+    InMemoryApiKeyStore,
     InMemoryAuditStore,
     InMemoryIamRepository,
+    InMemoryPermissionRepository,
     InMemorySessionStore,
 )
 from tests.conftest import FakeSettings, FakeTime, SequenceIds
@@ -26,6 +32,7 @@ from tests.test_iam_use_cases import NOW, FakePasswordHasher, FakeTokenService
 SRV = "srv-1"
 READ = "server.console.read"
 WRITE = "server.start"
+_FERNET_KEY = "9Dfa2Y5t4kMX6k4oyar_EgtQ1cFcdPE8V_6I688Tu4k="
 
 
 def identity(*roles: BuiltinRole, user_id: str = "u1") -> Identity:
@@ -63,8 +70,12 @@ async def build(
         ids=SequenceIds("x"),
         time=FakeTime(NOW),
         settings=FakeSettings({}),
+        permissions=InMemoryPermissionRepository(),
+        api_keys=InMemoryApiKeyStore(),
+        cipher=FernetSecretCipher(_FERNET_KEY),
+        totp=PyotpTotpService(),
     )
-    service = AccessControlService(LoginUseCase(deps), repository)
+    service = AccessControlService(LoginUseCase(deps), repository, deps.permissions)
     return service, repository
 
 

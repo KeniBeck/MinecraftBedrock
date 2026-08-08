@@ -75,3 +75,60 @@ class AssignMembershipCommand:
     server_id: str
     role: BuiltinRole
     actor_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EnableTwoFactorCommand:
+    """Inicia la habilitación de 2FA (genera secreto + backup codes)."""
+
+    user_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class ConfirmTwoFactorCommand:
+    """Confirma la habilitación verificando el código TOTP generado."""
+
+    user_id: str
+    code: str
+
+
+@dataclass(frozen=True, slots=True)
+class VerifyTwoFactorLoginCommand:
+    """Completa el login tras validar el segundo factor (temp token + código)."""
+
+    temp_token: str
+    code: str
+    ip: str | None = None
+    ua: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RegenerateBackupCodesCommand:
+    """Regenera los backup codes (requiere 2FA ya verificado)."""
+
+    user_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class CreateApiKeyCommand:
+    """Crea una API key para el usuario con un set de scopes."""
+
+    user_id: str
+    name: str
+    scopes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class RevokeApiKeyCommand:
+    """Revoca la API key del usuario."""
+
+    user_id: str
+    key_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class RotateApiKeyCommand:
+    """Rota el material de la API key (nuevo hash, mismo id/scopes)."""
+
+    user_id: str
+    key_id: str

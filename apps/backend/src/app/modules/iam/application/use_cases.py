@@ -30,12 +30,15 @@ from app.modules.iam.application.commands import (
     RefreshCommand,
 )
 from app.modules.iam.application.ports import (
+    ApiKeyStorePort,
     AuditEntry,
     AuditStorePort,
     PasswordHasher,
+    SecretCipherPort,
     Session,
     SessionStorePort,
     TokenService,
+    TotpServicePort,
 )
 from app.modules.iam.application.results import AuthResult, UserView
 from app.modules.iam.domain.errors import (
@@ -44,6 +47,7 @@ from app.modules.iam.domain.errors import (
     TokenExpiredError,
     TokenInvalidError,
     TokenRevokedError,
+    TwoFactorRequiredError,
     UserAlreadyExistsError,
     UserNotFoundError,
 )
@@ -54,7 +58,7 @@ from app.modules.iam.domain.events import (
     IAM_USER_ROLE_CHANGED,
     iam_event,
 )
-from app.modules.iam.domain.repository import IamRepositoryPort
+from app.modules.iam.domain.repository import IamRepositoryPort, PermissionRepositoryPort
 from app.modules.iam.domain.user import User, UserStatus
 
 
@@ -71,6 +75,10 @@ class IamDeps:
     ids: IdGeneratorPort
     time: TimeProviderPort
     settings: SettingsPort
+    permissions: PermissionRepositoryPort
+    api_keys: ApiKeyStorePort
+    cipher: SecretCipherPort
+    totp: TotpServicePort
 
 
 def to_identity(user: User) -> Identity:
@@ -160,6 +168,13 @@ class LoginUseCase:
             raise AccountSuspendedError(
                 f"Cuenta suspendida: {user.username}",
                 context={"username": user.username},
+            )
+
+        if user.totp_enabled:
+            temp_token = deps.tokens.create_temp_token(user.id)
+            raise TwoFactorRequiredError(
+                "La cuenta exige el segundo factor",
+                context={"temp_token": temp_token},
             )
 
         identity = to_identity(user)

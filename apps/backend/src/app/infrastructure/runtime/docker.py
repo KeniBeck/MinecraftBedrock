@@ -75,6 +75,20 @@ def _nano_cpus(cpus: float | None) -> int | None:
     return int(cpus * 1_000_000_000) if cpus is not None else None
 
 
+def _mem_limit(resources: dict[str, Any]) -> str | int | None:
+    """Límite de RAM en bytes para Docker (``mem_limit``).
+
+    El ``RuntimeSpec`` guarda la RAM en ``resources["memory_mb"]`` (int MB, el
+    formato del factory y del endpoint de recursos). Se convierte a bytes
+    (``MB * 1024 * 1024``). Se mantiene la clave legacy ``resources["memory"]``
+    (ya en bytes/string) como fallback para no romper consumidores previos.
+    """
+    memory_mb = resources.get("memory_mb")
+    if memory_mb is not None:
+        return int(memory_mb) * 1024 * 1024
+    return resources.get("memory")
+
+
 def _cpus_from_nano(nano: int | None) -> float | None:
     """Convierte nanoCPUs del HostConfig a fracción de CPUs."""
     return nano / 1_000_000_000 if nano else None
@@ -445,7 +459,7 @@ class DockerRuntimeAdapter:
             ports=spec.ports or None,
             volumes=spec.volumes or None,
             network=spec.network,
-            mem_limit=spec.resources.get("memory"),
+            mem_limit=_mem_limit(spec.resources),
             nano_cpus=_nano_cpus(spec.resources.get("cpus")),
             user=spec.user,
             labels=spec.labels or None,

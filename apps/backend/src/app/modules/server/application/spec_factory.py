@@ -99,8 +99,12 @@ def _discover_server_data_dir(base_path: str | Path, server_id: str, version: st
 
 def build_port_allocator(settings: SettingsPort) -> PortAllocator:
     """Construye el allocator desde ``SettingsPort`` (pool real, no vacío por defecto)."""
-    game_start = int(settings.get("server.port_pool.start", 19132))
-    game_end = int(settings.get("server.port_pool.end", 19181))
+    game_start = int(
+        settings.get("defaults.port_pool_start", settings.get("server.port_pool.start", 19132))
+    )
+    game_end = int(
+        settings.get("defaults.port_pool_end", settings.get("server.port_pool.end", 19181))
+    )
     rcon_start = int(settings.get("server.rcon_port_pool.start", 25632))
     rcon_end = int(settings.get("server.rcon_port_pool.end", 25681))
     return PortAllocator(
@@ -190,12 +194,17 @@ class RuntimeSpecFactory:
         occupied_ports: Collection[int] = (),
     ) -> RuntimeSpec:
         image = self._settings.get(
-            "server.image",
-            "itzg/minecraft-bedrock-server"
-            "@sha256:fd46bd30e7c729eacfeea81bca4a62e7c5957f387f1e377da4d03c66f9a76f3d",
+            "defaults.image",
+            self._settings.get(
+                "server.image",
+                "itzg/minecraft-bedrock-server"
+                "@sha256:fd46bd30e7c729eacfeea81bca4a62e7c5957f387f1e377da4d03c66f9a76f3d",
+            ),
         )
-        tag = self._settings.get("server.tag", "")
-        timezone = self._settings.get("server.timezone", "Etc/UTC")
+        tag = self._settings.get("defaults.tag", self._settings.get("server.tag", ""))
+        timezone = self._settings.get(
+            "defaults.timezone", self._settings.get("server.timezone", "Etc/UTC")
+        )
         base_path = self._settings.get("storage.base_path", "/var/lib/bedrockpanel")
         server_data_dir = _discover_server_data_dir(base_path, server_id, desired.version)
 
@@ -235,8 +244,18 @@ class RuntimeSpecFactory:
             },
             volumes=[f"{server_data_dir}:/data"],
             resources={
-                "memory_mb": int(self._settings.get("server.resources.memory_mb", 2048)),
-                "cpus": float(self._settings.get("server.resources.cpus", 2.0)),
+                "memory_mb": int(
+                    self._settings.get(
+                        "limits.default_ram_mb",
+                        self._settings.get("server.resources.memory_mb", 2048),
+                    )
+                ),
+                "cpus": float(
+                    self._settings.get(
+                        "limits.default_cpu_cores",
+                        self._settings.get("server.resources.cpus", 2.0),
+                    )
+                ),
             },
             network=None,
             user=self._settings.get("server.user", "root"),

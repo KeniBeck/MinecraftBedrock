@@ -1,16 +1,19 @@
-"""Servicio de control de acceso (Bluepring §4.5, technical-design §14.2).
+"""Servicio de control de acceso (Blueprint §4.5, technical-design §14.2).
 
-Implementación de ``AccessControlPort`` en la capa de aplicación: RBAC global +
-ACL por servidor, sin matriz de permisos por acción (eso es Fase H). La
-clasificación lectura/escritura es un conjunto explícito y documentado de
-acciones de lectura; el resto se trata como escritura.
+Implementación de ``AccessControlPort`` con matriz de permisos por acción
+(Fase H paso 18). La autorización se evalúa así:
 
-Jerarquía: super_admin(4) > admin(3) > operator(2) > viewer(1).
-- Recurso ``None`` (acción de panel): requiere admin o super_admin.
-- Recurso servidor: admin/super_admin globales tienen acceso a cualquier servidor;
-  operador/viewer solo a servidores con membresía, y el rol de la membresía es
-  autoritativo para ese servidor (least privilege): lectura ≥ viewer, escritura ≥
-  operator.
+1. Rol global ``super_admin`` → autorizado siempre.
+2. Rol global ``admin`` → autorizado siempre (gestión de cualquier recurso).
+3. Ámbito panel (``resource is None`` o ``"panel"``): la acción debe ser una
+   acción de panel (``PANEL_ACTIONS``) y estar en la matriz del rol global.
+   Como solo admin/super_admin poseen acciones de panel, esto equivale a
+   "requiere admin global" para el resto.
+4. Ámbito servidor (``resource`` = ``server:{id}`` o ``{server_id}``): el rol
+   de la membresía del usuario sobre ese servidor debe conceder la acción.
+
+La matriz se lee vía ``PermissionRepositoryPort`` (Postgres en producción,
+estática en memoria para tests); el dominio la define en ``permissions.py``.
 """
 
 from __future__ import annotations
@@ -21,44 +24,28 @@ from app.kernel.ports.access import AuthorizationDecision, Identity
 from app.modules.iam.application.commands import LoginCommand, LoginCredentials
 from app.modules.iam.application.use_cases import LoginUseCase
 from app.modules.iam.domain.errors import TokenInvalidError
-from app.modules.iam.domain.repository import IamRepositoryPort
-from app.modules.iam.domain.role import ROLE_LEVEL, BuiltinRole
+from app.modules.iam.domain.permissions import PANEL_ACTIONS, READ_ACTIONS
+from app.modules.iam.domain.repository import IamRepositoryPort, PermissionRepositoryPort
+from app.modules.iam.domain.role import BuiltinRole
+from app.modules.iam.infrastructure.memory import InMemoryPermissionRepository
 
-# Acciones de solo lectura conocidas. Sin matriz de permisos (Fase H): todo lo
-# que no está aquí se considera escritura.
-READ_ACTIONS: frozenset[str] = frozenset(
-    {
-        "server.view",
-        "server.status",
-        "server.list",
-        "server.console.read",
-        "server.status.read",
-        "world.list",
-        "world.view",
-        "world.export",
-        "backup.list",
-        "backup.view",
-        "backup.download",
-        "player.list",
-        "player.view",
-        "player.sessions",
-        "player.online",
-        "audit.view",
-        "iam.user.list",
-        "task.list",
-        "task.view",
-        "template.list",
-        "template.view",
-    }
-)
+# Re-export para compatibilidad (tests/consumidores previos importan READ_ACTIONS
+# desde ``application.access``).
+__all__ = ["READ_ACTIONS"]
 
 
 class AccessControlService:
-    """Decide autorizaciones (único punto, Bluepring §4.5)."""
+    """Decide autorizaciones (único punto, Blueprint §4.5)."""
 
-    def __init__(self, login: LoginUseCase, repository: IamRepositoryPort) -> None:
+    def __init__(
+        self,
+        login: LoginUseCase,
+        repository: IamRepositoryPort,
+        permissions: PermissionRepositoryPort | None = None,
+    ) -> None:
         self._login = login
         self._repository = repository
+        self._permissions = permissions or InMemoryPermissionRepository()
 
     async def authenticate(self, credentials: Any) -> Identity:
         if not isinstance(credentials, LoginCredentials):
@@ -79,68 +66,69 @@ class AccessControlService:
         action: str,
         resource: str | None = None,
     ) -> AuthorizationDecision:
-        global_level = max(
-            (ROLE_LEVEL.get(role, 0) for role in self._parse_roles(identity.roles)),
-            default=0,
-        )
-
-        if resource is None:
-            allowed = global_level >= ROLE_LEVEL[BuiltinRole.ADMIN]
-            return AuthorizationDecision(
-                allowed,
-                reason=(
-                    "rol global admin/super_admin"
-                    if allowed
-                    else "se requiere rol global admin o super_admin"
-                ),
-            )
-
-        # Admin/super_admin global: gestión de cualquier servidor (design §14.2),
-        # sin depender de membresías.
-        if global_level >= ROLE_LEVEL[BuiltinRole.ADMIN]:
-            return AuthorizationDecision(True, "admin/super_admin global")
-
-        # Operador/viewer: acceso solo a servidores asignados, y el rol de la
-        # membresía es autoritativo para ese servidor (least privilege). Sin
-        # membresía no hay acceso, aunque exista un rol global.
-        memberships = await self._repository.list_memberships(identity.id)
-        membership_level = max(
-            (
-                ROLE_LEVEL.get(membership.role, 0)
-                for membership in memberships
-                if membership.server_id == resource
-            ),
-            default=0,
-        )
-        if membership_level == 0:
+        if identity.is_api_key and action not in identity.scopes:
             return AuthorizationDecision(
                 False,
-                "sin membresía en el servidor",
+                f"la API key no tiene el scope {action}",
             )
 
-        if action in READ_ACTIONS:
-            allowed = membership_level >= ROLE_LEVEL[BuiltinRole.VIEWER]
+        global_roles = self._parse_roles(identity.roles)
+        if BuiltinRole.SUPER_ADMIN in global_roles:
+            return AuthorizationDecision(True, "super_admin global")
+        if BuiltinRole.ADMIN in global_roles:
+            return AuthorizationDecision(True, "admin global")
+
+        scope, server_id = self._normalize_resource(resource)
+        if scope == "panel":
+            return await self._decide_panel(global_roles, action)
+        return await self._decide_server(identity.id, server_id, action)
+
+    async def _decide_panel(
+        self, global_roles: set[BuiltinRole], action: str
+    ) -> AuthorizationDecision:
+        if action not in PANEL_ACTIONS:
             return AuthorizationDecision(
-                allowed,
-                reason=(
-                    "membresía viewer o superior"
-                    if allowed
-                    else "sin acceso de lectura al servidor"
-                ),
+                False,
+                "la acción no es de ámbito panel (se exige recurso de servidor)",
             )
+        for role in global_roles:
+            granted = await self._permissions_for(role)
+            if action in granted:
+                return AuthorizationDecision(True, f"permiso en rol global {role.value}")
+        return AuthorizationDecision(False, "se requiere rol global admin o super_admin")
 
-        allowed = membership_level >= ROLE_LEVEL[BuiltinRole.OPERATOR]
+    async def _decide_server(
+        self, user_id: str, server_id: str, action: str
+    ) -> AuthorizationDecision:
+        memberships = await self._repository.list_memberships(user_id)
+        membership = next((m for m in memberships if m.server_id == server_id), None)
+        if membership is None:
+            return AuthorizationDecision(False, "sin membresía en el servidor")
+        granted = await self._permissions_for(membership.role)
+        if action in granted:
+            return AuthorizationDecision(
+                True,
+                f"membresía {membership.role.value} concede {action}",
+            )
         return AuthorizationDecision(
-            allowed,
-            reason=(
-                "membresía operator o superior"
-                if allowed
-                else "se requiere operator/admin/super_admin para escritura"
-            ),
+            False,
+            f"la membresía {membership.role.value} no concede {action}",
         )
+
+    async def _permissions_for(self, role: BuiltinRole) -> frozenset[str]:
+        return await self._permissions.permissions_for_role(role)
 
     def subject(self, identity: Identity) -> Any:
         return {"id": identity.id, "username": identity.username, "roles": identity.roles}
+
+    @staticmethod
+    def _normalize_resource(resource: str | None) -> tuple[str, str]:
+        """Devuelve ``(scope, server_id)`` para panel/servidor."""
+        if resource is None or resource == "panel":
+            return "panel", ""
+        if resource.startswith("server:"):
+            return "server", resource[len("server:") :]
+        return "server", resource
 
     @staticmethod
     def _parse_roles(roles: tuple[str, ...]) -> set[BuiltinRole]:

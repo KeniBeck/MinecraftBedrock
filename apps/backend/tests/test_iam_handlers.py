@@ -28,6 +28,9 @@ class FailingAuditStore(AuditStorePort):
         del entry
         raise RuntimeError("audit roto")
 
+    async def verify(self) -> list[str]:
+        return []
+
 
 class TestIncidentAuditHandler:
     async def test_registra_incidente_con_servidor(self) -> None:

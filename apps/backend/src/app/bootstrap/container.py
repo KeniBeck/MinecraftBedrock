@@ -32,6 +32,7 @@ from app.infrastructure.runtime import (
 )
 from app.infrastructure.storage import LocalServerStorageResolver
 from app.kernel.ports.runtime import ServerRuntimePort
+from app.kernel.ports.settings import SettingsPort
 from app.modules.backup.application.facade import BackupFacade
 from app.modules.backup.application.use_cases import BackupDeps
 from app.modules.backup.infrastructure.postgres_repository import PostgresBackupRepository
@@ -52,6 +53,12 @@ from app.modules.console.infrastructure.stream_manager import ConsoleStreamManag
 from app.modules.iam.application.facade import IamFacade
 from app.modules.iam.application.use_cases import IamDeps
 from app.modules.iam.infrastructure.audit_store import PostgresAuditStore
+from app.modules.iam.infrastructure.iam_security import (
+    FernetSecretCipher,
+    PostgresApiKeyStore,
+    PostgresPermissionRepository,
+    PyotpTotpService,
+)
 from app.modules.iam.infrastructure.password import Argon2PasswordHasher
 from app.modules.iam.infrastructure.postgres_repository import PostgresIamRepository
 from app.modules.iam.infrastructure.sessions import PostgresSessionStore
@@ -89,6 +96,8 @@ from app.modules.server.application.spec_factory import (
 from app.modules.server.application.use_cases import ServerDeps
 from app.modules.server.domain.repository import ServerRepositoryPort
 from app.modules.server.infrastructure.postgres_repository import PostgresServerRepository
+from app.modules.settings.application.service import SettingsService
+from app.modules.settings.infrastructure.postgres_repository import PostgresSettingsRepository
 from app.modules.template.application.facade import TemplateFacade
 from app.modules.template.application.use_cases import TemplateDeps
 from app.modules.template.infrastructure.postgres_repository import PostgresTemplateRepository
@@ -97,6 +106,8 @@ from app.modules.template.infrastructure.world import WorldFacadeGateway
 from app.modules.world.application.facade import WorldFacade
 from app.modules.world.application.use_cases import WorldDeps
 from app.modules.world.infrastructure.postgres_repository import PostgresWorldRepository
+
+_DEV_FERNET_KEY = "9Dfa2Y5t4kMX6k4oyar_EgtQ1cFcdPE8V_6I688Tu4k="
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +131,7 @@ class Container:
     scheduler_facade: SchedulerFacade
     template_facade: TemplateFacade
     notification_facade: NotificationFacade
+    settings_service: SettingsService
     console_stream_reconciler: ConsoleStreamReconciler | None = None
     monitoring_poller: BackgroundPoller | None = None
     scheduler_poller: SchedulerPoller | None = None
@@ -148,9 +160,18 @@ def build_container() -> Container:
 
     event_bus = InProcessEventBus()
     server_repository = PostgresServerRepository(session_factory)
-    settings_port = EnvSettingsAdapter(settings)
+    settings_fallback = EnvSettingsAdapter(settings)
     ids = UuidIdGenerator()
     time = SystemTimeProvider()
+    iam_audit = PostgresAuditStore(session_factory)
+    settings_service = SettingsService(
+        PostgresSettingsRepository(session_factory),
+        settings_fallback,
+        audit=iam_audit,
+        ids=ids,
+        time=time,
+    )
+    settings_port: SettingsPort = settings_service
     port_allocator = build_port_allocator(settings_port)
     spec_factory = RuntimeSpecFactory(settings_port, port_allocator)
     configuration_repository = PostgresConfigurationRepository(session_factory)
@@ -223,7 +244,10 @@ def build_container() -> Container:
 
     iam_repository = PostgresIamRepository(session_factory)
     iam_sessions = PostgresSessionStore(session_factory)
-    iam_audit = PostgresAuditStore(session_factory)
+    iam_permissions = PostgresPermissionRepository(session_factory)
+    iam_api_keys = PostgresApiKeyStore(session_factory)
+    iam_cipher = FernetSecretCipher(str(settings_port.get("iam.encryption_key", _DEV_FERNET_KEY)))
+    iam_totp = PyotpTotpService(str(settings_port.get("iam.totp_issuer", "BedrockPanel")))
     iam_deps = IamDeps(
         repository=iam_repository,
         sessions=iam_sessions,
@@ -234,6 +258,10 @@ def build_container() -> Container:
         ids=ids,
         time=time,
         settings=settings_port,
+        permissions=iam_permissions,
+        api_keys=iam_api_keys,
+        cipher=iam_cipher,
+        totp=iam_totp,
     )
     iam_facade = IamFacade(iam_deps)
     iam_facade.register_handlers()
@@ -274,8 +302,13 @@ def build_container() -> Container:
     world_facade = WorldFacade(world_deps)
     world_facade.register_handlers()
 
-    storage_base = str(settings_port.get("storage.base_path", "/var/lib/bedrockpanel"))
-    backup_base = str(settings_port.get("backup.base_path", f"{storage_base}/backups"))
+    storage_base = str(settings_port.get("storage.base_path", "/var/lib/bedrockpanel/data"))
+    backup_base = str(
+        settings_port.get(
+            "storage.backup_path",
+            settings_port.get("backup.base_path", f"{storage_base}/backups"),
+        )
+    )
     backup_repository = PostgresBackupRepository(session_factory)
     backup_deps = BackupDeps(
         repository=backup_repository,
@@ -292,7 +325,7 @@ def build_container() -> Container:
     backup_facade.register_handlers()
 
     template_repository = PostgresTemplateRepository(session_factory)
-    template_root = f"{storage_base}/templates"
+    template_root = str(settings_port.get("storage.template_path", f"{storage_base}/templates"))
     template_deps = TemplateDeps(
         repository=template_repository,
         storage=LocalServerStorageResolver(spec_factory),
@@ -375,4 +408,5 @@ def build_container() -> Container:
         console_stream_reconciler=console_stream_reconciler,
         template_facade=template_facade,
         notification_facade=notification_facade,
+        settings_service=settings_service,
     )

@@ -19,6 +19,7 @@ from app.modules.server.application.commands import (
     RestartServerCommand,
     StartServerCommand,
     StopServerCommand,
+    UpdateResourcesCommand,
 )
 from app.modules.server.application.ports import ConfigurationReader, DesiredConfig
 from app.modules.server.application.spec_factory import RuntimeSpecFactory
@@ -34,10 +35,13 @@ from app.modules.server.application.use_cases import (
     ServerDeps,
     StartServerUseCase,
     StopServerUseCase,
+    UpdateServerResourcesUseCase,
 )
 from app.modules.server.domain.errors import (
+    ServerBusyError,
     ServerNotFoundError,
     ServerNotMaterializedError,
+    ServerResourcesValidationError,
     ServerStateError,
 )
 from app.modules.server.domain.events import (
@@ -45,6 +49,7 @@ from app.modules.server.domain.events import (
     SERVER_CRASHED,
     SERVER_CREATED,
     SERVER_REMOVED,
+    SERVER_RESOURCES_CHANGED,
     SERVER_STARTED,
     SERVER_STARTING,
     SERVER_STOPPED,
@@ -497,3 +502,141 @@ async def test_start_sin_artefacto_materializado() -> None:
     )
     with pytest.raises(ServerNotMaterializedError):
         await StartServerUseCase(deps).execute(StartServerCommand(server_id="srv-x"))
+
+
+class TestUpdateServerResources:
+    async def test_actualiza_cpu_y_ram_recrea_contenedor(self) -> None:
+        bus = InProcessEventBus()
+        recorder = Recorder(bus)
+        runtime = FakeRuntime()
+        deps = make_deps(runtime, FakeConfigurationReader(), bus)
+        view = await CreateServerUseCase(deps).execute(CreateServerCommand(name="Survival"))
+        runtime_id = view.runtime_id
+        assert runtime_id is not None
+
+        result = await UpdateServerResourcesUseCase(deps, OperationGuard()).execute(
+            UpdateResourcesCommand(server_id=view.id, cpu_cores=4, ram_mb=8192)
+        )
+
+        assert result.state is ServerState.CREATED
+        stored = await deps.repository.get(ServerId(view.id))
+        assert stored is not None
+        assert stored.spec.resources["cpus"] == 4.0
+        assert stored.spec.resources["memory_mb"] == 8192
+        assert runtime.materialized[-1] != runtime_id
+        assert SERVER_RESOURCES_CHANGED in recorder.types
+
+    async def test_sin_cambios_no_recrea(self) -> None:
+        bus = InProcessEventBus()
+        recorder = Recorder(bus)
+        runtime = FakeRuntime()
+        deps = make_deps(runtime, FakeConfigurationReader(), bus)
+        view = await CreateServerUseCase(deps).execute(CreateServerCommand(name="Survival"))
+        materialized_before = list(runtime.materialized)
+
+        result = await UpdateServerResourcesUseCase(deps, OperationGuard()).execute(
+            UpdateResourcesCommand(server_id=view.id)
+        )
+
+        assert result.state is ServerState.CREATED
+        assert runtime.materialized == materialized_before
+        assert SERVER_RESOURCES_CHANGED not in recorder.types
+
+    async def test_actualiza_solo_ram(self) -> None:
+        bus = InProcessEventBus()
+        runtime = FakeRuntime()
+        deps = make_deps(runtime, FakeConfigurationReader(), bus)
+        view = await CreateServerUseCase(deps).execute(CreateServerCommand(name="Survival"))
+
+        await UpdateServerResourcesUseCase(deps, OperationGuard()).execute(
+            UpdateResourcesCommand(server_id=view.id, ram_mb=4096)
+        )
+
+        stored = await deps.repository.get(ServerId(view.id))
+        assert stored is not None
+        assert stored.spec.resources["memory_mb"] == 4096
+
+    async def test_recrea_y_arranca_si_estaba_running(self) -> None:
+        bus = InProcessEventBus()
+        recorder = Recorder(bus)
+        runtime = FakeRuntime()
+        deps = make_deps(runtime, FakeConfigurationReader(), bus)
+        view = await CreateServerUseCase(deps).execute(CreateServerCommand(name="Survival"))
+        await StartServerUseCase(deps).execute(StartServerCommand(server_id=view.id))
+        view = await MarkStartedUseCase(deps).execute(view.id)
+        old_runtime = view.runtime_id
+
+        result = await UpdateServerResourcesUseCase(deps, OperationGuard()).execute(
+            UpdateResourcesCommand(server_id=view.id, cpu_cores=2, ram_mb=4096)
+        )
+
+        assert result.state is ServerState.STARTING
+        assert runtime.started[-1] != old_runtime
+        assert runtime.started[-1] == runtime.materialized[-1]
+        assert SERVER_STARTING in recorder.types
+
+    async def test_cpu_menor_que_1_rechazada(self) -> None:
+        bus = InProcessEventBus()
+        runtime = FakeRuntime()
+        deps = make_deps(runtime, FakeConfigurationReader(), bus)
+        view = await CreateServerUseCase(deps).execute(CreateServerCommand(name="Survival"))
+        with pytest.raises(ServerResourcesValidationError):
+            await UpdateServerResourcesUseCase(deps, OperationGuard()).execute(
+                UpdateResourcesCommand(server_id=view.id, cpu_cores=0.5)
+            )
+
+    async def test_ram_menor_que_512_rechazada(self) -> None:
+        bus = InProcessEventBus()
+        runtime = FakeRuntime()
+        deps = make_deps(runtime, FakeConfigurationReader(), bus)
+        view = await CreateServerUseCase(deps).execute(CreateServerCommand(name="Survival"))
+        with pytest.raises(ServerResourcesValidationError):
+            await UpdateServerResourcesUseCase(deps, OperationGuard()).execute(
+                UpdateResourcesCommand(server_id=view.id, ram_mb=256)
+            )
+
+    async def test_estado_starting_rechazado(self) -> None:
+        bus = InProcessEventBus()
+        runtime = FakeRuntime()
+        deps = make_deps(runtime, FakeConfigurationReader(), bus)
+        view = await CreateServerUseCase(deps).execute(CreateServerCommand(name="Survival"))
+        current = await deps.repository.get(ServerId(view.id))
+        assert current is not None
+        await deps.repository.save(
+            Server(
+                id=ServerId(view.id),
+                name="Survival",
+                spec=current.spec,
+                state=ServerState.STARTING,
+                created_at=NOW,
+                updated_at=NOW,
+                runtime_id=current.runtime_id,
+            )
+        )
+        with pytest.raises(ServerBusyError):
+            await UpdateServerResourcesUseCase(deps, OperationGuard()).execute(
+                UpdateResourcesCommand(server_id=view.id, ram_mb=4096)
+            )
+
+    async def test_estado_removed_rechazado(self) -> None:
+        bus = InProcessEventBus()
+        runtime = FakeRuntime()
+        deps = make_deps(runtime, FakeConfigurationReader(), bus)
+        view = await CreateServerUseCase(deps).execute(CreateServerCommand(name="Survival"))
+        stored = await deps.repository.get(ServerId(view.id))
+        assert stored is not None
+        stored.mark_removed()
+        await deps.repository.save(stored)
+        with pytest.raises(ServerBusyError):
+            await UpdateServerResourcesUseCase(deps, OperationGuard()).execute(
+                UpdateResourcesCommand(server_id=view.id, ram_mb=4096)
+            )
+
+    async def test_servidor_inexistente_404(self) -> None:
+        bus = InProcessEventBus()
+        runtime = FakeRuntime()
+        deps = make_deps(runtime, FakeConfigurationReader(), bus)
+        with pytest.raises(ServerNotFoundError):
+            await UpdateServerResourcesUseCase(deps, OperationGuard()).execute(
+                UpdateResourcesCommand(server_id="nope", ram_mb=4096)
+            )

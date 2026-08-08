@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Protocol
 
+from app.modules.iam.domain.permissions import PermissionCode
 from app.modules.iam.domain.role import BuiltinRole, ServerMembership
 from app.modules.iam.domain.user import User
 
@@ -38,3 +39,16 @@ class IamRepositoryPort(Protocol):
 
     async def touch_last_login(self, user_id: str, at: datetime) -> None:
         """Actualiza el timestamp del último login."""
+
+
+class PermissionRepositoryPort(Protocol):
+    """Matriz de permisos por acción (catalogo ``iam_permissions``/``iam_role_permissions``)."""
+
+    async def list_permissions(self) -> Sequence[PermissionCode]:
+        """Devuelve el catálogo completo de códigos de permiso."""
+
+    async def permissions_for_role(self, role: BuiltinRole) -> frozenset[str]:
+        """Devuelve los códigos de permiso que concede un rol (matriz sembrada)."""
+
+    async def seed_catalog(self) -> None:
+        """Sembra el catálogo base si no está (idempotente)."""

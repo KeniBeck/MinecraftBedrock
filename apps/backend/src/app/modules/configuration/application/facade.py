@@ -40,7 +40,11 @@ class ConfigurationFacade:
         profile = await self._repository.get_profile(server_id)
         if profile is None:
             return DesiredConfig(
-                version=str(self._settings.get("server.default_version", "LATEST")),
+                version=str(
+                    self._settings.get(
+                        "defaults.version", self._settings.get("server.default_version", "LATEST")
+                    )
+                ),
                 environment={},
                 config_rev=0,
             )
@@ -68,7 +72,11 @@ class ConfigurationFacade:
             profile = ConfigProfile(
                 server_id=server_id,
                 properties={},
-                version=str(self._settings.get("server.default_version", "LATEST")),
+                version=str(
+                    self._settings.get(
+                        "defaults.version", self._settings.get("server.default_version", "LATEST")
+                    )
+                ),
                 config_rev=0,
                 created_at=now,
                 updated_at=now,

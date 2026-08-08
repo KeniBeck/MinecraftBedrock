@@ -39,6 +39,9 @@ class PostgresIamRepository:
             status=user.status.value,
             created_at=user.created_at,
             last_login_at=user.last_login_at,
+            totp_secret=user.totp_secret,
+            totp_enabled=user.totp_enabled,
+            backup_codes=user.backup_codes,
         )
         update_values = {
             "username": stmt.excluded.username,
@@ -46,6 +49,9 @@ class PostgresIamRepository:
             "display_name": stmt.excluded.display_name,
             "status": stmt.excluded.status,
             "last_login_at": stmt.excluded.last_login_at,
+            "totp_secret": stmt.excluded.totp_secret,
+            "totp_enabled": stmt.excluded.totp_enabled,
+            "backup_codes": stmt.excluded.backup_codes,
         }
         stmt = stmt.on_conflict_do_update(index_elements=[IamUserRow.id], set_=update_values)
         async with self._session_factory() as session:
@@ -135,4 +141,7 @@ class PostgresIamRepository:
             created_at=row.created_at,
             last_login_at=row.last_login_at,
             roles=roles,
+            totp_secret=row.totp_secret,
+            totp_enabled=row.totp_enabled,
+            backup_codes=row.backup_codes,
         )

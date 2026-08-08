@@ -58,9 +58,12 @@ from app.modules.iam.application.commands import AssignRoleCommand, CreateUserCo
 from app.modules.iam.application.facade import IamFacade
 from app.modules.iam.application.use_cases import IamDeps
 from app.modules.iam.domain.role import BuiltinRole
+from app.modules.iam.infrastructure.iam_security import FernetSecretCipher, PyotpTotpService
 from app.modules.iam.infrastructure.memory import (
+    InMemoryApiKeyStore,
     InMemoryAuditStore,
     InMemoryIamRepository,
+    InMemoryPermissionRepository,
     InMemorySessionStore,
 )
 from app.modules.monitoring.application.facade import MonitoringFacade
@@ -85,6 +88,8 @@ from app.modules.server.application.facade import ServerFacade
 from app.modules.server.application.spec_factory import RuntimeSpecFactory
 from app.modules.server.application.use_cases import ServerDeps
 from app.modules.server.infrastructure.repository import InMemoryServerRepository
+from app.modules.settings.application.service import SettingsService
+from app.modules.settings.infrastructure.memory import InMemorySettingsRepository
 from app.modules.template.application.facade import TemplateFacade
 from app.modules.template.application.use_cases import TemplateDeps
 from app.modules.template.infrastructure.memory import InMemoryTemplateRepository
@@ -103,6 +108,8 @@ from tests.conftest import (
 )
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
+
+_FERNET_KEY = "9Dfa2Y5t4kMX6k4oyar_EgtQ1cFcdPE8V_6I688Tu4k="
 
 
 @pytest.fixture(autouse=True)
@@ -152,6 +159,20 @@ class FakeTokenService:
 
     def hash_token(self, raw: str) -> str:
         return f"sha256:{raw}"
+
+    def create_temp_token(self, user_id: str) -> str:
+        token = f"tmp-{user_id}-{self._n}"
+        self._n += 1
+        self._issued[token] = {"sub": user_id, "purpose": "2fa"}
+        return token
+
+    def decode_temp_token(self, token: str) -> str:
+        claims = self._issued.get(token)
+        if claims is None:
+            from app.modules.iam.domain.errors import TokenInvalidError
+
+            raise TokenInvalidError("temp token inválido")
+        return str(claims["sub"])
 
 
 class FakeProbe:
@@ -271,6 +292,8 @@ def make_container(storage_root: Path | None = None) -> Container:
     iam_repository = InMemoryIamRepository()
     iam_sessions = InMemorySessionStore()
     iam_audit = InMemoryAuditStore()
+    iam_permissions = InMemoryPermissionRepository()
+    iam_api_keys = InMemoryApiKeyStore()
     iam_deps = IamDeps(
         repository=iam_repository,
         sessions=iam_sessions,
@@ -281,6 +304,10 @@ def make_container(storage_root: Path | None = None) -> Container:
         ids=SequenceIds("user-1", "user-2", "session-1", "session-2"),
         time=time,
         settings=settings_port,
+        permissions=iam_permissions,
+        api_keys=iam_api_keys,
+        cipher=FernetSecretCipher(_FERNET_KEY),
+        totp=PyotpTotpService(),
     )
     iam_facade = IamFacade(iam_deps)
     iam_facade.register_handlers()
@@ -392,6 +419,15 @@ def make_container(storage_root: Path | None = None) -> Container:
     )
     bus.subscribe("*", notification_facade.dispatcher.handler())
 
+    settings_service = SettingsService(
+        InMemorySettingsRepository(),
+        settings_port,
+        audit=iam_audit,
+        ids=SequenceIds("set-1"),
+        time=time,
+    )
+    asyncio.run(settings_service.reload())
+
     return Container(
         settings=get_settings(),
         database=Database(
@@ -412,6 +448,7 @@ def make_container(storage_root: Path | None = None) -> Container:
         scheduler_facade=scheduler_facade,
         template_facade=template_facade,
         notification_facade=notification_facade,
+        settings_service=settings_service,
     )
 
 
@@ -832,11 +869,15 @@ class TestWorldApi:
         assert response.status_code == 404
         assert response.json()["detail"]["code"] == "WORLD.NOT_FOUND"
 
-    def test_import_excede_el_limite_413(self, client: TestClient, monkeypatch: Any) -> None:
+    def test_import_excede_el_limite_413(self, client: TestClient) -> None:
         auth = login(client, "root")
         server_id = create_server(client, auth)
         container = container_of(client)
-        monkeypatch.setattr(container.settings, "world_max_import_bytes", 4)
+
+        async def _shrink() -> None:
+            await container.settings_service.set("limits.max_world_size_mb", 0, updated_by="test")
+
+        asyncio.run(_shrink())
 
         response = client.post(
             f"/api/v1/servers/{server_id}/worlds/import",
@@ -1067,3 +1108,88 @@ class TestPlayerApi:
         )
 
         assert response.status_code == 403
+
+
+class TestServerResourcesApi:
+    def test_actualiza_recursos_200(self, client: TestClient) -> None:
+        auth = login(client, "root")
+        server_id = create_server(client, auth)
+
+        response = client.put(
+            f"/api/v1/servers/{server_id}/resources",
+            json={"cpu_cores": 4, "ram_mb": 8192},
+            headers=auth,
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["id"] == server_id
+
+    def test_cpu_invalida_400(self, client: TestClient) -> None:
+        auth = login(client, "root")
+        server_id = create_server(client, auth)
+
+        response = client.put(
+            f"/api/v1/servers/{server_id}/resources",
+            json={"cpu_cores": 0},
+            headers=auth,
+        )
+
+        assert response.status_code == 422
+
+    def test_ram_invalida_400(self, client: TestClient) -> None:
+        auth = login(client, "root")
+        server_id = create_server(client, auth)
+
+        response = client.put(
+            f"/api/v1/servers/{server_id}/resources",
+            json={"ram_mb": 100},
+            headers=auth,
+        )
+
+        assert response.status_code == 422
+
+    def test_sin_permiso_403(self, client: TestClient) -> None:
+        seed_viewer(container_of(client))
+        server_id = create_server(client, login(client, "root"))
+        auth = login(client, "lurker")
+
+        response = client.put(
+            f"/api/v1/servers/{server_id}/resources",
+            json={"ram_mb": 4096},
+            headers=auth,
+        )
+
+        assert response.status_code == 403
+
+    def test_servidor_inexistente_404(self, client: TestClient) -> None:
+        auth = login(client, "root")
+
+        response = client.put(
+            "/api/v1/servers/no-existe/resources",
+            json={"ram_mb": 4096},
+            headers=auth,
+        )
+
+        assert response.status_code == 404
+
+    def test_sin_autenticacion_401(self, client: TestClient) -> None:
+        response = client.put(
+            "/api/v1/servers/abc/resources",
+            json={"ram_mb": 4096},
+        )
+        assert response.status_code == 401
+
+    def test_audita_cambio(self, client: TestClient) -> None:
+        auth = login(client, "root")
+        server_id = create_server(client, auth)
+
+        client.put(
+            f"/api/v1/servers/{server_id}/resources",
+            json={"ram_mb": 4096},
+            headers=auth,
+        )
+
+        audit: Any = container_of(client).iam_facade.deps.audit
+        actions = [entry.action for entry in audit.entries]
+        assert "server.resources.update" in actions

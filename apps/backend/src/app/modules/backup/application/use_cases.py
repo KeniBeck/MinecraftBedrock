@@ -104,6 +104,21 @@ class CreateBackupUseCase:
                 context={"server_id": cmd.server_id, "world_name": world_name},
             )
 
+        max_backups = int(self._deps.settings.get("limits.max_backups_per_server", 10))
+        if max_backups > 0:
+            existing = await self._deps.repository.list_backups(
+                cmd.server_id, world_name=world_name, limit=10000
+            )
+            if len(existing) >= max_backups:
+                raise BackupValidationError(
+                    "Límite de backups alcanzado para este mundo",
+                    context={
+                        "server_id": cmd.server_id,
+                        "world_name": world_name,
+                        "max_backups": max_backups,
+                    },
+                )
+
         started_at = self._deps.time.now()
         backup_id = self._deps.ids.new_id()
         ref = f"{cmd.server_id}/{backup_id}.tar.zst"

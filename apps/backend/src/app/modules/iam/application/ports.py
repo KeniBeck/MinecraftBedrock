@@ -40,6 +40,12 @@ class TokenService(Protocol):
     def hash_token(self, raw: str) -> str:
         """Deriva el hash persistible de un token (sha256)."""
 
+    def create_temp_token(self, user_id: str) -> str:
+        """Emite un JWT de corta vida para completar el segundo factor (2FA)."""
+
+    def decode_temp_token(self, token: str) -> str:
+        """Valida el temp token 2FA y devuelve el ``user_id``."""
+
 
 @dataclass(frozen=True, slots=True)
 class Session:
@@ -70,6 +76,65 @@ class SessionStorePort(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class ApiKey:
+    """Clave de API persistida (solo su hash, nunca el material en claro)."""
+
+    id: str
+    user_id: str
+    name: str
+    key_hash: str
+    scopes: tuple[str, ...] = ()
+    last_used_at: datetime | None = None
+    created_at: datetime | None = None
+    expires_at: datetime | None = None
+
+
+class ApiKeyStorePort(Protocol):
+    """Persistencia de las API keys (hash del material, scopes, rotación)."""
+
+    async def create(self, key: ApiKey) -> None: ...
+
+    async def get_by_hash(self, key_hash: str) -> ApiKey | None: ...
+
+    async def list_for_user(self, user_id: str) -> list[ApiKey]: ...
+
+    async def revoke(self, key_id: str, user_id: str) -> None: ...
+
+    async def rotate(self, key_id: str, user_id: str, key_hash: str) -> None: ...
+
+    async def touch(self, key_id: str, at: datetime) -> None: ...
+
+
+class SecretCipherPort(Protocol):
+    """Cifra secretos sensibles en reposo (Fernet; 2FA/api keys)."""
+
+    def encrypt(self, plaintext: str) -> str:
+        """Devuelve el ciphertext (token de Fernet)."""
+
+    def decrypt(self, ciphertext: str) -> str:
+        """Devuelve el plaintext; lanza ``SecretCipherError`` si es inválido."""
+
+
+class TotpServicePort(Protocol):
+    """Verifica códigos TOTP y gestiona backup codes (Fase H paso 18)."""
+
+    def generate_secret(self) -> str:
+        """Genera un secreto base32 de 32 caracteres (``pyotp.random_base32``)."""
+
+    def provisioning_uri(self, secret: str, username: str) -> str:
+        """Devuelve ``otpauth://totp/...`` para el QR."""
+
+    def verify(self, secret: str, code: str) -> bool:
+        """Valida un código TOTP con ventana ±1 (``valid_window=1``)."""
+
+    def generate_backup_codes(self) -> tuple[str, ...]:
+        """Genera 10 backup codes de 8 caracteres hex (``secrets.token_hex(4)``)."""
+
+    def verify_backup_code(self, code: str, codes: tuple[str, ...]) -> bool:
+        """Comprueba si ``code`` está en la lista de backup codes."""
+
+
+@dataclass(frozen=True, slots=True)
 class AuditEntry:
     """Registro de auditoría (log básico, sin encadenado: Fase H)."""
 
@@ -87,9 +152,12 @@ class AuditEntry:
 
 
 class AuditStorePort(Protocol):
-    """Persistencia del audit log (append-only; sin tamper-evidence)."""
+    """Persistencia del audit log tamper-evident (cadena de hash SHA-256)."""
 
     async def record(self, entry: AuditEntry) -> None: ...
+
+    async def verify(self) -> list[str]:
+        """Verifica la cadena; devuelve errores (vacío = íntegra)."""
 
 
 # Re-export de errores para consumo de infraestructura (tokens).

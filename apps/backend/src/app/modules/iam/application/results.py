@@ -33,3 +33,32 @@ class AuthResult:
     refresh_token: str
     expires_in: int
     identity: Identity
+
+
+@dataclass(frozen=True, slots=True)
+class TwoFactorEnableResult:
+    """Secreto TOTP generado (se muestra una única vez) + backup codes."""
+
+    secret: str
+    provisioning_uri: str
+    backup_codes: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ApiKeyView:
+    """Vista pública de una API key (nunca expone el material)."""
+
+    id: str
+    name: str
+    scopes: tuple[str, ...]
+    created_at: datetime | None = None
+    last_used_at: datetime | None = None
+    expires_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ApiKeyCreated:
+    """API key creada: vista pública + material (se muestra una única vez)."""
+
+    key: ApiKeyView
+    material: str
