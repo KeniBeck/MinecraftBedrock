@@ -17,8 +17,8 @@
 | [ADR-001](#adr-001--calendarización-del-outbox-durable) | Calendarización del Outbox durable | Proposed |
 | [ADR-002](#adr-002--gateway-websocket-dentro-del-mvp) | Gateway WebSocket dentro del MVP | Accepted |
 | [ADR-003](#adr-003--enmascarado-de-last_ip) | Enmascarado de `last_ip` | Accepted |
-| [ADR-004](#adr-004--configprofile-deseado-aplicado-y-versión) | ConfigProfile: deseado/aplicado/versión | Proposed |
-| [ADR-005](#adr-005--catálogo-de-eventos-una-sola-fuente) | Catálogo de eventos: una sola fuente | Proposed |
+| [ADR-004](#adr-004--configprofile-deseado-aplicado-y-versión) | ConfigProfile: deseado/aplicado/versión | Accepted |
+| [ADR-005](#adr-005--catálogo-de-eventos-una-sola-fuente) | Catálogo de eventos: una sola fuente | Accepted |
 | [ADR-006](#adr-006--eliminar-el-kind-de-backup-auto-mvp) | Eliminar el kind de backup `auto-mvp` | Accepted |
 | [ADR-007](#adr-007--auditoría-como-sub-api-de-iam) | Auditoría como sub-API de IAM | Accepted |
 | [ADR-008](#adr-008--notación-del-mapa-de-dependencias) | Notación del mapa de dependencias | Accepted |
@@ -93,6 +93,11 @@ junto con las réplicas (TDD §7.1, §17). Las órdenes que requieran durabilida
   síncrona"; mover el outbox a Fase 2.
 - §4.6 `EventBusPort`: marcar `publish` durable (outbox) como garantía vigente desde Fase 2.
 - Checklist §16.1: añadir "publicación vía bus; durabilidad de órdenes vía job store en MVP".
+
+### Nota (2026-08-08)
+
+Diferido a Fase 2. No se implementa en el MVP; el bus en proceso es suficiente para el alcance
+actual. El estado del ADR se mantiene **Proposed** sin cambios.
 
 ---
 
@@ -228,8 +233,8 @@ inmutable, la implementación aplica el enmascarado sobre el campo existente sin
 
 ## ADR-004 — ConfigProfile: deseado/aplicado/versión
 
-- **Estado**: Proposed
-- **Fecha**: 2026-08-05
+- **Estado**: Accepted
+- **Fecha**: 2026-08-05 (Actualizado: 2026-08-08 — promovido a Accepted al implementarlo)
 - **Origen**: Architecture Review v1.0, hallazgo **M6**
 - **Documento(s) afectados**: `technical-design.md` §15.2, §15.9; `implementation-blueprint.md` §5.4
 
@@ -284,12 +289,18 @@ previsto y `config_history` como tabla prevista.
 - Checklist §16.8: añadir "detectar pending changes entre `properties` y `applied`".
 - TDD §15.2/§15.9: actualizar en la próxima versión.
 
+### Nota de implementación (2026-08-08)
+
+Implementado en la Fase D (paso 10). El modelo `ConfigProfile` incluye `applied`, `applied_at`,
+`version` y la tabla `config_history` para historial append-only. Pendiente de actualización del
+TDD en su próxima versión.
+
 ---
 
 ## ADR-005 — Catálogo de eventos: una sola fuente
 
-- **Estado**: Proposed
-- **Fecha**: 2026-08-05
+- **Estado**: Accepted
+- **Fecha**: 2026-08-05 (Actualizado: 2026-08-08 — promovido a Accepted como fuente operativa)
 - **Origen**: Architecture Review v1.0, hallazgo **B1**
 - **Documento(s) afectados**: `technical-design.md` §7.2; `implementation-blueprint.md` §9
 
@@ -341,6 +352,11 @@ verifica que todo evento publicado/consumido en código existe en el catálogo �
 - `implementation-blueprint.md` §9: permanece como canónico; se añade la nota de "fuente única".
 - §16.1: añadir el test de paridad del catálogo al checklist transversal.
 - TDD §7.2: pasar a resumen + referencia en la próxima versión.
+
+### Nota de implementación (2026-08-08)
+
+El Blueprint §9 es la fuente canónica operativa. El TDD §7.2 se reduce a referencia/resumen. El
+test de paridad en CI queda como deuda técnica no bloqueante.
 
 ---
 
