@@ -29,7 +29,10 @@ from app.modules.player.domain.events import (
     PLAYER_OPERATOR_CHANGED,
     PLAYER_OPERATOR_CHANGED_TOPIC,
 )
-from app.modules.player.infrastructure.memory import InMemoryPlayerRepository
+from app.modules.player.infrastructure.memory import (
+    InMemoryPlayerBanRepository,
+    InMemoryPlayerRepository,
+)
 from app.modules.server.application.results import ServerView, stub_connection
 from tests.conftest import FakeRuntime, FakeServerReader, FakeSettings, FakeTime, SequenceIds
 
@@ -67,6 +70,7 @@ def make_facade() -> PlayerFacade:
     )
     deps = PlayerDeps(
         repository=InMemoryPlayerRepository(),
+        ban_repository=InMemoryPlayerBanRepository(),
         console=console,
         bus=bus,
         ids=SequenceIds("s-1", "s-2"),

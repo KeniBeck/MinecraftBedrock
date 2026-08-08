@@ -37,3 +37,26 @@ class CommandAckResponse(BaseModel):
     priority: str
     seq: int
     at: datetime
+
+
+class GlobalBanRequest(BaseModel):
+    gamertag: str
+    xuid: str | None = None
+    reason: str | None = None
+    expires_at: datetime | None = None
+
+
+class GlobalBanResponse(BaseModel):
+    id: str
+    scope: str
+    gamertag: str
+    xuid: str | None
+    reason: str | None
+    banned_by: str
+    created_at: datetime
+    expires_at: datetime | None
+
+
+class BanPlayerRequest(BaseModel):
+    reason: str | None = None
+    expires_at: datetime | None = None

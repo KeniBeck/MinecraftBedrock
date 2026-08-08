@@ -26,6 +26,7 @@ import app.modules.configuration.infrastructure.models  # noqa: F401
 import app.modules.console.infrastructure.models  # noqa: F401
 import app.modules.iam.infrastructure.models  # noqa: F401
 import app.modules.player.infrastructure.models  # noqa: F401
+import app.modules.scheduler.infrastructure.models  # noqa: F401
 import app.modules.server.infrastructure.models  # noqa: F401
 import app.modules.world.infrastructure.models  # noqa: F401
 from app.infrastructure.db.base import Base
@@ -177,6 +178,9 @@ class FakeServerReader:
     async def get_server(self, server_id: str) -> ServerView | None:
         self.calls.append(server_id)
         return self._views.get(server_id)
+
+    async def list_servers(self) -> list[ServerView]:
+        return list(self._views.values())
 
 
 @pytest.fixture

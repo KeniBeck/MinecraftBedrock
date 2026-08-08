@@ -1,8 +1,9 @@
 """Handlers de eventos consumidos por el módulo Server (Blueprint §3.2).
 
-El módulo reacciona a ``CONFIG.CHANGED`` y ``WORLD.ACTIVATED`` reaplicando la
-config deseada vía ``ApplyConfigUseCase``. ``SERVER.CONFIG_CHANGED`` (auto-
-recreate) no se vuelve a rutear al propio Server para evitar bucles.
+El módulo reacciona a ``CONFIG.CHANGED``, ``WORLD.ACTIVATED`` y
+``PERMISSION.ALLOWLIST_TOGGLED`` reaplicando la config deseada vía
+``ApplyConfigUseCase``. ``SERVER.CONFIG_CHANGED`` (auto-recreate) no se vuelve
+a rutear al propio Server para evitar bucles.
 """
 
 from __future__ import annotations
@@ -57,6 +58,31 @@ class WorldActivatedHandler:
         )
 
 
+class AllowlistToggledHandler:
+    """``PERMISSION.ALLOWLIST_TOGGLED`` → applyConfig (ALLOW_LIST cambiado).
+
+    El payload no lleva ``config_rev``: se reaplica la config deseada sin
+    tocar la revisión aplicada. El ``enabled`` del toggle se propaga como
+    ``allow_list`` para que el spec renderice ``ALLOW_LIST=<true/false>``.
+    """
+
+    def __init__(self, apply_config: ApplyConfigUseCase) -> None:
+        self._apply_config = apply_config
+
+    async def __call__(self, event: DomainEvent) -> None:
+        server_id = event.server_id
+        if not server_id:
+            return
+        await self._apply_config.execute(
+            ApplyConfigCommand(
+                server_id=server_id,
+                config_rev=_optional_config_rev(event),
+                allow_list=_optional_allow_list(event),
+                actor_id=event.actor_id,
+            )
+        )
+
+
 def _optional_config_rev(event: DomainEvent) -> int | None:
     """Revisión del payload como ``int | None`` (``None`` = no aplicable)."""
     raw = event.payload.get("config_rev")
@@ -74,3 +100,13 @@ def _optional_level_name(event: DomainEvent) -> str | None:
     if raw is None:
         return None
     return str(raw)
+
+
+def _optional_allow_list(event: DomainEvent) -> bool | None:
+    """``enabled`` del toggle ALLOW_LIST como ``bool | None`` (``None`` = ausente)."""
+    raw = event.payload.get("enabled")
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        return raw
+    return str(raw).lower() in ("true", "1", "yes")

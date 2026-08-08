@@ -2,10 +2,11 @@
 
 Superficie pública: ``resolve_xuid(name)`` (gamertag → XUID cacheado),
 ``find_player(xuid)``, sesiones/presencia (``list_sessions``,
-``online_players``) y gestión vía Console (``ban``/``unban``/``kick``).
-Las operaciones de sesión/presencia se conducen por eventos (handlers) en el
-lado de escritura; la facade solo expone la consulta. ban/unban/kick viven en
-la capa de aplicación y se exponen aquí para el paso de API (§16).
+``online_players``), bans persistentes (globales y por servidor, ADR-011) y
+expulsión vía Console (``kick``). Las operaciones de sesión/presencia se
+conducen por eventos (handlers) en el lado de escritura; la facade solo expone
+la consulta. Los bans viven en la capa de aplicación y se exponen aquí para el
+paso de API (§16).
 """
 
 from __future__ import annotations
@@ -13,32 +14,39 @@ from __future__ import annotations
 from app.kernel.events.bus import EventBusPort
 from app.modules.console.application.results import CommandAck
 from app.modules.player.application.commands import (
-    BanPlayerCommand,
+    BanPlayerGloballyCommand,
+    BanPlayerOnServerCommand,
     KickPlayerCommand,
-    UnbanPlayerCommand,
+    UnbanPlayerGloballyCommand,
+    UnbanPlayerOnServerCommand,
 )
 from app.modules.player.application.handlers import (
     SERVER_STARTED_TOPIC,
+    BanEnforcementHandler,
     OperatorChangedHandler,
     PlayerJoinedHandler,
     PlayerLeftHandler,
     ServerStartedHandler,
 )
 from app.modules.player.application.results import (
+    GlobalBanView,
     PlayerView,
     PlaySessionView,
+    ServerBanView,
     player_to_view,
     session_to_view,
 )
 from app.modules.player.application.use_cases import (
-    BanPlayerUseCase,
+    BanPlayerGloballyUseCase,
+    BanPlayerOnServerUseCase,
     CleanPresenceUseCase,
     JoinPlayerUseCase,
     KickPlayerUseCase,
     LeavePlayerUseCase,
     PlayerDeps,
     ResolvePlayerUseCase,
-    UnbanPlayerUseCase,
+    UnbanPlayerGloballyUseCase,
+    UnbanPlayerOnServerUseCase,
 )
 from app.modules.player.domain.events import (
     PLAYER_JOINED_TOPIC,
@@ -56,9 +64,11 @@ class PlayerFacade:
         self._join = JoinPlayerUseCase(deps)
         self._leave = LeavePlayerUseCase(deps)
         self._clean = CleanPresenceUseCase(deps)
-        self._ban = BanPlayerUseCase(deps)
-        self._unban = UnbanPlayerUseCase(deps)
         self._kick = KickPlayerUseCase(deps)
+        self._ban_global = BanPlayerGloballyUseCase(deps)
+        self._unban_global = UnbanPlayerGloballyUseCase(deps)
+        self._ban_server = BanPlayerOnServerUseCase(deps)
+        self._unban_server = UnbanPlayerOnServerUseCase(deps)
 
     async def resolve_xuid(self, name: str) -> str | None:
         """Devuelve el XUID cacheado para un gamertag (o ``None`` si es desconocido)."""
@@ -80,11 +90,17 @@ class PlayerFacade:
         sessions = await self.deps.repository.list_open_sessions(server_id)
         return [session_to_view(session) for session in sessions]
 
-    async def ban(self, cmd: BanPlayerCommand) -> CommandAck:
-        return await self._ban.ban(cmd)
+    async def ban_globally(self, cmd: BanPlayerGloballyCommand) -> GlobalBanView:
+        return await self._ban_global.ban(cmd)
 
-    async def unban(self, cmd: UnbanPlayerCommand) -> CommandAck:
-        return await self._unban.unban(cmd)
+    async def unban_globally(self, cmd: UnbanPlayerGloballyCommand) -> None:
+        await self._unban_global.unban(cmd)
+
+    async def ban_on_server(self, cmd: BanPlayerOnServerCommand) -> ServerBanView:
+        return await self._ban_server.ban(cmd)
+
+    async def unban_on_server(self, cmd: UnbanPlayerOnServerCommand) -> None:
+        await self._unban_server.unban(cmd)
 
     async def kick(self, cmd: KickPlayerCommand) -> CommandAck:
         return await self._kick.kick(cmd)
@@ -93,6 +109,14 @@ class PlayerFacade:
         """Suscriptores del módulo sobre el bus (Blueprint §3.5)."""
         bus: EventBusPort = self.deps.bus
         bus.subscribe(PLAYER_JOINED_TOPIC, PlayerJoinedHandler(self._join))
+        self._ban_enforcement = BanEnforcementHandler(self.deps)
+        bus.subscribe(PLAYER_JOINED_TOPIC, self._ban_enforcement)
         bus.subscribe(PLAYER_LEFT_TOPIC, PlayerLeftHandler(self._leave))
         bus.subscribe(SERVER_STARTED_TOPIC, ServerStartedHandler(self._clean))
         bus.subscribe(PLAYER_OPERATOR_CHANGED_TOPIC, OperatorChangedHandler())
+
+    async def await_ban_enforcement(self) -> None:
+        """Espera a que terminen los kicks de enforcement en curso (tests)."""
+        handler = getattr(self, "_ban_enforcement", None)
+        if handler is not None:
+            await handler.wait_pending()

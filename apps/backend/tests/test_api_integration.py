@@ -45,6 +45,7 @@ from app.kernel.ports.status import ProbeResult
 from app.modules.backup.application.facade import BackupFacade
 from app.modules.backup.application.use_cases import BackupDeps
 from app.modules.backup.infrastructure.memory import InMemoryBackupRepository
+from app.modules.configuration.domain.config_profile import ConfigProfile
 from app.modules.console.application.facade import ConsoleFacade
 from app.modules.console.application.queue import CommandQueue
 from app.modules.console.application.streaming import ConsoleOutputRouter
@@ -65,14 +66,30 @@ from app.modules.iam.infrastructure.memory import (
 from app.modules.monitoring.application.facade import MonitoringFacade
 from app.modules.monitoring.application.polling import StatusPoller
 from app.modules.monitoring.infrastructure.memory import InMemoryMetricSampleStore
+from app.modules.notification.application.facade import NotificationFacade
+from app.modules.notification.infrastructure.memory import InMemoryEventLogRepository
+from app.modules.permission.application.facade import PermissionFacade
+from app.modules.permission.application.use_cases import PermissionDeps
+from app.modules.player.application import use_cases as player_use_cases
 from app.modules.player.application.facade import PlayerFacade
 from app.modules.player.application.use_cases import PlayerDeps
 from app.modules.player.domain.events import player_joined
-from app.modules.player.infrastructure.memory import InMemoryPlayerRepository
+from app.modules.player.infrastructure.memory import (
+    InMemoryPlayerBanRepository,
+    InMemoryPlayerRepository,
+)
+from app.modules.scheduler.application.facade import SchedulerFacade
+from app.modules.scheduler.application.use_cases import SchedulerDeps
+from app.modules.scheduler.infrastructure.memory import InMemorySchedulerRepository
 from app.modules.server.application.facade import ServerFacade
 from app.modules.server.application.spec_factory import RuntimeSpecFactory
 from app.modules.server.application.use_cases import ServerDeps
 from app.modules.server.infrastructure.repository import InMemoryServerRepository
+from app.modules.template.application.facade import TemplateFacade
+from app.modules.template.application.use_cases import TemplateDeps
+from app.modules.template.infrastructure.memory import InMemoryTemplateRepository
+from app.modules.template.infrastructure.store import TemplateArchiveStore
+from app.modules.template.infrastructure.world import WorldFacadeGateway
 from app.modules.world.application.commands import CreateWorldCommand
 from app.modules.world.application.facade import WorldFacade
 from app.modules.world.application.use_cases import WorldDeps
@@ -86,6 +103,13 @@ from tests.conftest import (
 )
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+def _kick_retry_rapido(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ventana de observación y backoff mínimos para no ralentizar los tests."""
+    monkeypatch.setattr(player_use_cases, "KICK_RETRY_BACKOFF_SECONDS", (0.001,) * 5)
+    monkeypatch.setattr(player_use_cases, "KICK_OBSERVE_WINDOW_SECONDS", 0.001)
 
 
 class FakePasswordHasher:
@@ -158,6 +182,46 @@ class TmpStorageResolver:
         return storage
 
 
+class FakeTemplateConfig:
+    """``ConfigurationGateway`` mínimo para la fachada Template en tests."""
+
+    def __init__(self) -> None:
+        self.properties: dict[str, dict[str, str]] = {}
+
+    async def get_profile(self, server_id: str) -> ConfigProfile | None:
+        properties = self.properties.get(server_id)
+        if properties is None:
+            return None
+        now = datetime.now()
+        return ConfigProfile(
+            server_id=server_id,
+            properties=properties,
+            version="1.20.0",
+            config_rev=1,
+            created_at=now,
+            updated_at=now,
+        )
+
+    async def update_properties(
+        self,
+        server_id: str,
+        properties: dict[str, str],
+        *,
+        actor_id: str | None = None,
+    ) -> ConfigProfile:
+        del actor_id
+        self.properties[server_id] = dict(properties)
+        now = datetime.now()
+        return ConfigProfile(
+            server_id=server_id,
+            properties=dict(properties),
+            version="1.20.0",
+            config_rev=1,
+            created_at=now,
+            updated_at=now,
+        )
+
+
 def make_container(storage_root: Path | None = None) -> Container:
     """Container de dobles: todos los ports en memoria + runtime fake."""
     settings_port = FakeSettings()
@@ -224,6 +288,7 @@ def make_container(storage_root: Path | None = None) -> Container:
     player_repository = InMemoryPlayerRepository()
     player_deps = PlayerDeps(
         repository=player_repository,
+        ban_repository=InMemoryPlayerBanRepository(),
         console=console_facade,
         bus=bus,
         ids=SequenceIds("session-1", "session-2", "session-3"),
@@ -234,6 +299,15 @@ def make_container(storage_root: Path | None = None) -> Container:
     player_facade.register_handlers()
 
     world_root = storage_root or Path(tempfile.mkdtemp(prefix="bedrockpanel-ws-"))
+    permission_deps = PermissionDeps(
+        storage=TmpStorageResolver(world_root),
+        console=console_facade,
+        server=server_facade,
+        bus=bus,
+    )
+    permission_facade = PermissionFacade(permission_deps)
+    permission_facade.register_handlers()
+
     world_deps = WorldDeps(
         repository=InMemoryWorldRepository(),
         storage=TmpStorageResolver(world_root),
@@ -284,6 +358,40 @@ def make_container(storage_root: Path | None = None) -> Container:
     )
     monitoring_facade = MonitoringFacade(status_poller, poll_interval=5.0)
 
+    scheduler_deps = SchedulerDeps(
+        repository=InMemorySchedulerRepository(),
+        bus=bus,
+        ids=SequenceIds("task-1"),
+        time=time,
+        settings=settings_port,
+        backup=backup_facade,
+        server=server_facade,
+    )
+    scheduler_facade = SchedulerFacade(scheduler_deps)
+    scheduler_facade.register_handlers()
+
+    template_root = Path(tempfile.mkdtemp(prefix="bedrockpanel-tpl-"))
+    template_deps = TemplateDeps(
+        repository=InMemoryTemplateRepository(),
+        storage=TmpStorageResolver(world_root),
+        world=WorldFacadeGateway(world_facade),
+        config=FakeTemplateConfig(),
+        archive=TemplateArchiveStore(template_root),
+        ids=SequenceIds("tpl-1"),
+        time=time,
+        settings=settings_port,
+    )
+    template_facade = TemplateFacade(template_deps)
+
+    noti_event_log = InMemoryEventLogRepository()
+    notification_facade = NotificationFacade.build(
+        access=iam_facade.access_control,
+        event_log=noti_event_log,
+        ids=SequenceIds("noti-1"),
+        time=time,
+    )
+    bus.subscribe("*", notification_facade.dispatcher.handler())
+
     return Container(
         settings=get_settings(),
         database=Database(
@@ -297,9 +405,13 @@ def make_container(storage_root: Path | None = None) -> Container:
         console_stream=console_stream,
         iam_facade=iam_facade,
         player_facade=player_facade,
+        permission_facade=permission_facade,
         world_facade=world_facade,
         backup_facade=backup_facade,
         monitoring_facade=monitoring_facade,
+        scheduler_facade=scheduler_facade,
+        template_facade=template_facade,
+        notification_facade=notification_facade,
     )
 
 
@@ -408,7 +520,12 @@ def seed_world_on_disk(container: Container, server_id: str, name: str) -> None:
 
 def seed_player(container: Container, server_id: str, xuid: str, name: str) -> None:
     """Registra identidad y sesión abierta publicando ``PLAYER.JOINED``."""
-    asyncio.run(container.event_bus.publish(player_joined(server_id, name, xuid)))
+
+    async def _seed() -> None:
+        await container.event_bus.publish(player_joined(server_id, name, xuid))
+        await container.player_facade.await_ban_enforcement()
+
+    asyncio.run(_seed())
 
 
 def create_backup(client: TestClient, auth: dict[str, str], server_id: str) -> str:
@@ -863,30 +980,90 @@ class TestPlayerApi:
         assert sessions.status_code == 200
         assert sessions.json()[0]["left_at"] is None
 
-    def test_ban_kick_unban_via_consola(self, client: TestClient) -> None:
+    def test_ban_y_unban_por_servidor(self, client: TestClient) -> None:
         auth = login(client, "root")
         server_id = create_server(client, auth)
-        seed_player(container_of(client), server_id, "XUID-1", "Steve")
+        container = container_of(client)
+        seed_player(container, server_id, "XUID-1", "Steve")
         client.post(f"/api/v1/servers/{server_id}/start", headers=auth)
-        asyncio.run(container_of(client).server_facade.mark_started(server_id))
+        asyncio.run(container.server_facade.mark_started(server_id))
 
-        banned = client.post(f"/api/v1/servers/{server_id}/players/XUID-1/ban", headers=auth)
-        assert banned.status_code == 202
-        assert banned.json()["command"] == "ban Steve"
+        banned = client.post(
+            f"/api/v1/servers/{server_id}/players/XUID-1/ban",
+            json={"reason": "cheats"},
+            headers=auth,
+        )
+        assert banned.status_code == 204
+
+        ban = asyncio.run(
+            container.player_facade.deps.ban_repository.get_server_ban_by_gamertag(
+                server_id, "Steve"
+            )
+        )
+        assert ban is not None
+        assert ban.reason == "cheats"
 
         kicked = client.post(f"/api/v1/servers/{server_id}/players/XUID-1/kick", headers=auth)
         assert kicked.status_code == 202
         assert kicked.json()["command"] == "kick Steve"
 
-        unbanned = client.post(f"/api/v1/servers/{server_id}/players/XUID-1/unban", headers=auth)
-        assert unbanned.status_code == 202
-        assert unbanned.json()["command"] == "unban XUID-1"
+        removed = client.delete(f"/api/v1/servers/{server_id}/players/XUID-1/ban", headers=auth)
+        assert removed.status_code == 204
+        assert (
+            asyncio.run(
+                container.player_facade.deps.ban_repository.get_server_ban_by_gamertag(
+                    server_id, "Steve"
+                )
+            )
+            is None
+        )
+
+    def test_ban_global_admin_y_forbidden_para_viewer(self, client: TestClient) -> None:
+        auth = login(client, "root")
+
+        created = client.post(
+            "/api/v1/players/bans/global",
+            json={"gamertag": "Steve", "xuid": "XUID-1", "reason": "spam"},
+            headers=auth,
+        )
+        assert created.status_code == 201
+        assert created.json()["scope"] == "global"
+        assert created.json()["gamertag"] == "Steve"
+        ban_id: str = created.json()["id"]
+
+        removed = client.delete(f"/api/v1/players/bans/global/{ban_id}", headers=auth)
+        assert removed.status_code == 204
+
+        seed_viewer(container_of(client))
+        forbidden = client.post(
+            "/api/v1/players/bans/global",
+            json={"gamertag": "Alex"},
+            headers=login(client, "lurker"),
+        )
+        assert forbidden.status_code == 403
+
+    def test_ban_por_servidor_jugador_desconocido_404(self, client: TestClient) -> None:
+        auth = login(client, "root")
+        server_id = create_server(client, auth)
+
+        response = client.post(
+            f"/api/v1/servers/{server_id}/players/XUID-999/ban",
+            json={"reason": "x"},
+            headers=auth,
+        )
+
+        assert response.status_code == 404
+        assert response.json()["detail"]["code"] == "PLAYER.NOT_FOUND"
 
     def test_viewer_no_puede_gestionar_jugadores(self, client: TestClient) -> None:
         seed_viewer(container_of(client))
         server_id = create_server(client, login(client, "root"))
         auth = login(client, "lurker")
 
-        response = client.post(f"/api/v1/servers/{server_id}/players/XUID-1/ban", headers=auth)
+        response = client.post(
+            f"/api/v1/servers/{server_id}/players/XUID-1/ban",
+            json={"reason": "x"},
+            headers=auth,
+        )
 
         assert response.status_code == 403

@@ -24,6 +24,7 @@ SERVER_TOPIC_WILDCARD = "server.*"
 
 CONFIG_CHANGED_TOPIC = "config.changed"
 WORLD_ACTIVATED_TOPIC = "world.activated"
+ALLOWLIST_TOGGLED_TOPIC = "permission.allowlist_toggled"
 
 
 def topic_for(event_type: str) -> str:

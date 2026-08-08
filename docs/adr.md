@@ -1,6 +1,6 @@
 # Architecture Decision Records — BedrockPanel
 
-> **Serie**: ADR-001 … ADR-010
+> **Serie**: ADR-001 … ADR-012
 > **Fecha**: 2026-08-05
 > **Origen**: Architecture Review v1.0
 > **Regla**: el `technical-design.md` (TDD) es **inmutable**. Los ADR registran problemas,
@@ -24,6 +24,8 @@
 | [ADR-008](#adr-008--notación-del-mapa-de-dependencias) | Notación del mapa de dependencias | Accepted |
 | [ADR-009](#adr-009--formato-unificado-de-allowlistjson) | Formato unificado de `allowlist.json` | Accepted |
 | [ADR-010](#adr-010--factoría-de-cliente-docker-en-infrastructure) | Factoría de cliente Docker en Infrastructure | Accepted |
+| [ADR-011](#adr-011--bans-persistidos-globales-y-por-servidor) | Bans persistentes: globales y por servidor | Accepted |
+| [ADR-012](#adr-012--discrepancia-de-identidad-player--tdd-155) | Discrepancia de identidad `Player` vs TDD §15.5 | Accepted |
 
 ---
 
@@ -622,6 +624,157 @@ nativo→`DockerError` no retryable y `OSError`→`DockerError` retryable.
   para incorporarse a §16 (bootstrap) en la próxima versión del TDD.
 - Fase B (Console/Backups): cualquier adaptador Docker futuro usará
   `DockerClientFactory` en lugar de crear clientes.
+
+---
+
+## ADR-011 — Bans persistentes: globales y por servidor
+
+> **Estado**: Accepted
+> **Fecha**: 2026-08-07
+> **Origen**: implementación del sistema de bans (Fase E paso 11, alcance ampliado)
+
+### Problema
+
+El ban del MVP era un **comando de consola sin persistencia** (`ban <name>` vía
+`ConsoleFacade`): se perdía al reiniciar el contenedor, no se podía consultar
+desde la API y no había forma de aplicar bans de panel-wide ni de expirarlos.
+
+### Contexto
+
+- La identidad del jugador es el **XUID** (`player_players` es identidad global,
+  sin `server_id`); el gamertag es un apodo mutable.
+- En modo offline/LAN el XUID reportado por BDS suele ser `0` o no confiable.
+- Existen dos alcances con sentido de negocio distinto: **ban global**
+  (decisión panel-wide, aplica en todos los servidores) y **ban por servidor**
+  (atado a `server_id`, sin colisionar con la identidad global).
+- El enforcement debe ser efectivo aunque el jugador ya esté conectado: expulsar
+  en el momento del ban si hay presencia, y también en el siguiente `PLAYER.JOINED`.
+
+### Alternativas consideradas
+
+1. **Campos de ban en `player_players`** (TDD §15.5): `banned`,
+   `ban_reason`, `ban_expires_at`. Rechazado: `player_players` es identidad
+   global por XUID sin `server_id`; meter un ban por servidor ahí exigiría una
+   columna `server_id` y duplicar filas, rompiendo la unicidad de identidad.
+   (Ver ADR-012.)
+2. **Ban global y por servidor en una sola tabla** con `scope`:
+   ahorra una tabla pero mezcla dos agregados con reglas distintas (unicidad,
+   índices, query por servidor).
+3. **Dos tablas** (`player_global_bans` y `player_server_bans`), cada una su
+   propio agregado (`GlobalBan`/`ServerBan`) y sus índices de unicidad.
+
+### Decisión
+
+Se adopta la **opción 3**: dos agregados y dos tablas.
+
+- `player_global_bans` (`id`, `xuid` nullable, `gamertag`, `reason`,
+  `banned_by`, `created_at`, `expires_at`) con unicidad sobre `lower(gamertag)`.
+- `player_server_bans` (mismos campos + `server_id`) con unicidad sobre
+  `(server_id, lower(gamertag))`.
+
+El **matching en `PLAYER.JOINED`** (`BanEnforcementHandler`) chequea primero el
+ban global y luego el por servidor; cuando el XUID es `0`/ausente hace fallback a
+`gamertag` **case-insensitive** (misma regla que la unicidad). Un ban es un "ban
+blando" en offline: disuasión, no seguridad real, porque el gamertag es
+mutable y no autentica. `expires_at` vencido = el ban no aplica. Al banear por
+servidor a un jugador con presencia en vivo se ejecuta el kick en el mismo
+request (`_kick_best_effort`, sin romper el request si el server no corre).
+
+### Justificación
+
+- Separa agregados con reglas de unicidad y vida propias.
+- No toca `player_players` (identidad global, ADR-012) ni `server_id` en ella.
+- El fallback gamertag case-insensitive reutiliza `normalize_gamertag`
+  (lower-case), coherente con los índices `uq_*`.
+
+### Consecuencias
+
+**Positivas**:
+- Bans durables, consultables y con expiración; enforcement en join y en ban
+  inmediato si hay presencia.
+- API REST de gestión: `POST /players/bans/global` (admin global),
+  `DELETE /players/bans/global/{ban_id}`, `POST/DELETE
+  /servers/{server_id}/players/{player_id}/ban` (operator+, ACL por servidor).
+- Eventos `PLAYER.BANNED`/`PLAYER.UNBANNED` publicados por los use cases.
+
+**Negativas**:
+- Dos tablas en vez de una (más superficie de migración, ADR-011 y ADR-012).
+- El matching por gamertag en offline es un "ban blando": no es seguridad real
+  si el jugador cambia de gamertag (advertencia documentada en la API y el
+  dominio `bans.py`).
+- El ban por servidor exige que el jugador esté en la caché del panel
+  (`player_players`): sin `PLAYER.JOINED` previo, el POST devuelve 404.
+
+### Impacto en el Blueprint y futuras implementaciones
+
+- `technical-design.md` (inmutable): el TDD §15.5 propone campos de ban en
+  `Player`; la implementación los mueve a agregados propios (programado para la
+  próxima versión del TDD, ver ADR-012).
+- Los pasos de API (§16) ya expuestos; el outbox durable (ADR-001) entregaría
+  `PLAYER.BANNED`/`PLAYER.UNBANNED` de forma fiable entre procesos.
+
+---
+
+## ADR-012 — Discrepancia de identidad `Player` vs TDD §15.5
+
+> **Estado**: Accepted
+> **Fecha**: 2026-08-07
+> **Origen**: hallazgo al diseñar el ban por servidor (dónde guardar el ban)
+
+### Problema
+
+El TDD §15.5 modela `Player` como **N:1 `Server`** con `server_id` y campos de
+ban en la propia entidad (`id, server_id, xuid, gamertag, …, banned,
+ban_reason, ban_expires_at`). La implementación real (`player_players`) es una
+**tabla de identidad global por XUID, sin `server_id`**: una fila por jugador
+que existe con independencia del servidor.
+
+### Contexto
+
+- El TDD asume que cada servidor tiene su propio `Player` (presencia,
+  playtime y estado de ban por servidor).
+- La implementación llegada hasta Fase E resuelve la identidad como **cache
+  global** (`player_players`, clave primaria `xuid`) y guarda la presencia en
+  `player_sessions` (con `server_id`), separando identidad y presencia.
+- Al necesitar un ban por servidor, plantear guardarlo en `player_players`
+  chocaba con esa decisión: o se añade `server_id` (duplicando la identidad) o
+  se usan columnas sin server_id (mezclando alcances).
+
+### Decisión
+
+Se **mantiene la implementación actual** (identidad global por XUID en
+`player_players`) y los bans por servidor viven en su propia tabla
+(`player_server_bans`, ADR-011), no en `player_players`. No se añade
+`server_id` a `player_players`; `player_players` queda como identidad global.
+
+### Justificación
+
+- Evita duplicar la fila de identidad por servidor (un jugador en 3 servidores
+  tendría 3 filas con el mismo XUID).
+- La presencia ya tiene su propio agregado (`PlaySession` con `server_id`);
+  el estado por servidor no pertenece a la identidad.
+- Cambiar la semántica de `player_players` para ajustarse al TDD sería
+  retrocompatible-rotura de datos en producción (FK de `player_sessions`,
+  queries existentes).
+
+### Consecuencias
+
+**Positivas**:
+- Identidad única y sin ambigüedad; los datos per-servidor viven en tablas con
+  `server_id`.
+
+**Negativas**:
+- `technical-design.md` §15.5 queda desactualizado respecto a la implementación
+  (identidad global vs N:1 `Server`). **TODO no bloqueante**: actualizar el TDD
+  en la próxima versión del documento (los ADR no modifican el TDD inmutable).
+
+### Impacto en el Blueprint y futuras implementaciones
+
+- La próxima versión del TDD debe alinear §15.5 con `player_players`
+  (identidad global, sin `server_id`) y mover los campos de ban a los agregados
+  `GlobalBan`/`ServerBan` (ADR-011).
+- Las fases futuras (historial por servidor, métricas por jugador por servidor)
+  deben usar `PlaySession`/`player_server_bans`, no `player_players`.
 
 ---
 

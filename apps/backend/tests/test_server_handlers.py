@@ -8,12 +8,14 @@ from app.infrastructure.events.bus import InProcessEventBus
 from app.kernel.events.event import DomainEvent
 from app.kernel.ports.runtime import RuntimeSpec, ServerState
 from app.modules.server.application.handlers import (
+    AllowlistToggledHandler,
     ConfigChangedHandler,
     WorldActivatedHandler,
 )
 from app.modules.server.application.spec_factory import RuntimeSpecFactory
 from app.modules.server.application.use_cases import ApplyConfigUseCase, OperationGuard, ServerDeps
 from app.modules.server.domain.events import (
+    ALLOWLIST_TOGGLED_TOPIC,
     CONFIG_CHANGED_TOPIC,
     WORLD_ACTIVATED_TOPIC,
 )
@@ -155,6 +157,61 @@ async def test_world_activated_creado_sin_name_mantiene_el_actual() -> None:
 
     server = await deps.repository.get_required(ServerId("srv-1"))
     assert server.spec.environment["LEVEL_NAME"] == "Actual"
+    assert server.applied_config_rev is None
+
+
+async def test_allowlist_toggled_inyecta_env_true_y_recrea() -> None:
+    """``PERMISSION.ALLOWLIST_TOGGLED`` propaga ``enabled`` como ``ALLOW_LIST=true``."""
+    bus = InProcessEventBus()
+    runtime = FakeRuntime()
+    config = FakeConfigurationReader(env={"MOTD": "viejo"})
+    apply_config, deps = make_harness(bus, config, runtime)
+    await seed(deps)
+    bus.subscribe(ALLOWLIST_TOGGLED_TOPIC, AllowlistToggledHandler(apply_config))
+
+    await bus.publish(
+        DomainEvent(
+            type="PERMISSION.ALLOWLIST_TOGGLED", server_id="srv-1", payload={"enabled": True}
+        )
+    )
+
+    server = await deps.repository.get_required(ServerId("srv-1"))
+    assert server.spec.environment["ALLOW_LIST"] == "true"
+    assert runtime.materialized, "el spec cambió → el contenedor debe recrearse"
+    assert server.applied_config_rev is None
+
+
+async def test_allowlist_toggled_false_inyecta_env_false() -> None:
+    bus = InProcessEventBus()
+    runtime = FakeRuntime()
+    config = FakeConfigurationReader(env={"ALLOW_LIST": "true"})
+    apply_config, deps = make_harness(bus, config, runtime)
+    await seed(deps)
+    bus.subscribe(ALLOWLIST_TOGGLED_TOPIC, AllowlistToggledHandler(apply_config))
+
+    await bus.publish(
+        DomainEvent(
+            type="PERMISSION.ALLOWLIST_TOGGLED", server_id="srv-1", payload={"enabled": False}
+        )
+    )
+
+    server = await deps.repository.get_required(ServerId("srv-1"))
+    assert server.spec.environment["ALLOW_LIST"] == "false"
+
+
+async def test_allowlist_toggled_sin_enabled_mantiene_el_actual() -> None:
+    """Sin ``enabled`` en el payload no se pisa el ``ALLOW_LIST`` existente."""
+    bus = InProcessEventBus()
+    runtime = FakeRuntime()
+    config = FakeConfigurationReader(env={"ALLOW_LIST": "true"})
+    apply_config, deps = make_harness(bus, config, runtime)
+    await seed(deps)
+    bus.subscribe(ALLOWLIST_TOGGLED_TOPIC, AllowlistToggledHandler(apply_config))
+
+    await bus.publish(DomainEvent(type="PERMISSION.ALLOWLIST_TOGGLED", server_id="srv-1"))
+
+    server = await deps.repository.get_required(ServerId("srv-1"))
+    assert server.spec.environment["ALLOW_LIST"] == "true"
     assert server.applied_config_rev is None
 
 

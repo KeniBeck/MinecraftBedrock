@@ -1,13 +1,14 @@
 """Tests de los use cases del módulo Player (Fase E paso 11).
 
 Cubre caché de identidad, sesiones join/leave, playtime, limpieza de presencia
-en ``SERVER.STARTED`` y ban/unban/kick vía la facade Console. Se usa una
-``ConsoleFacade`` real con dobles inyectados (mismo criterio que los tests de
-Console).
+en ``SERVER.STARTED``, kick vía la facade Console y los bans persistentes
+(globales y por servidor, ADR-011) con sus eventos. Se usa una ``ConsoleFacade``
+real con dobles inyectados (mismo criterio que los tests de Console).
 """
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -15,39 +16,64 @@ import pytest
 from app.infrastructure.events.bus import InProcessEventBus
 from app.kernel.events.event import DomainEvent
 from app.kernel.ports.runtime import ServerState
+from app.modules.console.application.commands import SendCommand
 from app.modules.console.application.facade import ConsoleFacade
 from app.modules.console.application.queue import CommandQueue
+from app.modules.console.application.results import CommandAck, ConsoleObservation
 from app.modules.console.application.streaming import ConsoleOutputRouter
 from app.modules.console.application.use_cases import ConsoleDeps
+from app.modules.console.domain.command import CommandPriority
 from app.modules.console.infrastructure.buffer import InMemoryConsoleLogStore
+from app.modules.player.application import use_cases as player_use_cases
 from app.modules.player.application.commands import (
-    BanPlayerCommand,
+    BanPlayerGloballyCommand,
+    BanPlayerOnServerCommand,
     KickPlayerCommand,
-    UnbanPlayerCommand,
+    UnbanPlayerGloballyCommand,
+    UnbanPlayerOnServerCommand,
 )
 from app.modules.player.application.use_cases import (
-    BanPlayerUseCase,
+    BanPlayerGloballyUseCase,
+    BanPlayerOnServerUseCase,
     CleanPresenceUseCase,
     JoinPlayerUseCase,
     KickPlayerUseCase,
     LeavePlayerUseCase,
     PlayerDeps,
     ResolvePlayerUseCase,
-    UnbanPlayerUseCase,
+    UnbanPlayerGloballyUseCase,
+    UnbanPlayerOnServerUseCase,
+    kick_with_retry,
 )
-from app.modules.player.domain.errors import PlayerNotFoundError, PlayerValidationError
+from app.modules.player.domain.errors import (
+    PlayerBanNotFoundError,
+    PlayerNotFoundError,
+    PlayerValidationError,
+)
 from app.modules.player.domain.events import (
     PLAYER_BANNED,
     PLAYER_BANNED_TOPIC,
+    PLAYER_UNBANNED,
+    PLAYER_UNBANNED_TOPIC,
 )
 from app.modules.player.domain.session import SessionEndReason
-from app.modules.player.infrastructure.memory import InMemoryPlayerRepository
+from app.modules.player.infrastructure.memory import (
+    InMemoryPlayerBanRepository,
+    InMemoryPlayerRepository,
+)
 from app.modules.server.application.results import ServerView, stub_connection
 from tests.conftest import FakeRuntime, FakeServerReader, FakeSettings, SequenceIds
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 XUID = "2535467050498296"
 NAME = "Steve"
+
+
+@pytest.fixture(autouse=True)
+def _kick_retry_rapido(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ventana de observación y backoff mínimos para no ralentizar los tests."""
+    monkeypatch.setattr(player_use_cases, "KICK_RETRY_BACKOFF_SECONDS", (0.001,) * 5)
+    monkeypatch.setattr(player_use_cases, "KICK_OBSERVE_WINDOW_SECONDS", 0.001)
 
 
 class Clock:
@@ -63,7 +89,7 @@ class Clock:
         self._now += timedelta(seconds=seconds)
 
 
-def make_console(bus: InProcessEventBus, clock: Clock) -> ConsoleFacade:
+def make_console(bus: InProcessEventBus, clock: Clock, runtime: FakeRuntime) -> ConsoleFacade:
     view = ServerView(
         id="srv-1",
         name="Survival",
@@ -77,7 +103,7 @@ def make_console(bus: InProcessEventBus, clock: Clock) -> ConsoleFacade:
     )
     deps = ConsoleDeps(
         server=FakeServerReader(views={"srv-1": view}),
-        runtime=FakeRuntime(),
+        runtime=runtime,
         bus=bus,
         time=clock,
         settings=FakeSettings(),
@@ -95,10 +121,12 @@ class Fixture:
     def __init__(self) -> None:
         self.bus = InProcessEventBus()
         self.clock = Clock()
+        self.runtime = FakeRuntime()
         self.repository = InMemoryPlayerRepository()
         self.deps = PlayerDeps(
             repository=self.repository,
-            console=make_console(self.bus, self.clock),
+            ban_repository=InMemoryPlayerBanRepository(),
+            console=make_console(self.bus, self.clock, self.runtime),
             bus=self.bus,
             ids=SequenceIds("s-1", "s-2", "s-3"),
             time=self.clock,
@@ -238,43 +266,163 @@ async def test_clean_no_afecta_a_otros_servidores(fx: Fixture) -> None:
     assert remaining is not None
 
 
-# -- bans / unban / kick (vía facade Console) ----------------------------------
+# -- bans globales / por servidor (persistidos, ADR-011) ---------------------
 
 
-async def test_ban_envia_comando_y_publica_player_banned(fx: Fixture) -> None:
-    await ResolvePlayerUseCase(fx.deps).cache(XUID, NAME)
+async def test_ban_global_persiste_y_publica_player_banned(fx: Fixture) -> None:
     banned: list[DomainEvent] = []
     fx.bus.subscribe(PLAYER_BANNED_TOPIC, banned.append)
 
-    ack = await BanPlayerUseCase(fx.deps).ban(
-        BanPlayerCommand(server_id="srv-1", xuid=XUID, actor_id="admin-1")
+    view = await BanPlayerGloballyUseCase(fx.deps).ban(
+        BanPlayerGloballyCommand(
+            gamertag="   Steve  ", xuid=XUID, reason="spam", actor_id="admin-1"
+        )
     )
 
-    assert ack.command == f"ban {NAME}"
+    assert view.gamertag == "Steve"
+    assert view.scope == "global"
+    assert view.xuid == XUID
+    stored = await fx.deps.ban_repository.get_global_ban(view.id)
+    assert stored is not None and stored.gamertag == "Steve"
     assert len(banned) == 1
     assert banned[0].type == PLAYER_BANNED
     assert banned[0].payload == {
-        "server_id": "srv-1",
+        "scope": "global",
+        "server_id": None,
         "xuid": XUID,
-        "name": NAME,
-        "command": f"ban {NAME}",
+        "gamertag": "Steve",
+        "reason": "spam",
     }
     assert banned[0].actor_id == "admin-1"
 
 
-async def test_ban_de_jugador_desconocido_levanta_not_found(fx: Fixture) -> None:
-    with pytest.raises(PlayerNotFoundError):
-        await BanPlayerUseCase(fx.deps).ban(
-            BanPlayerCommand(server_id="srv-1", xuid="9999999999999999")
+async def test_ban_global_sin_gamertag_rechazado(fx: Fixture) -> None:
+    with pytest.raises(PlayerValidationError, match="gamertag requerido"):
+        await BanPlayerGloballyUseCase(fx.deps).ban(BanPlayerGloballyCommand(gamertag=" "))
+
+
+async def test_ban_global_actualiza_existente_por_gamertag(fx: Fixture) -> None:
+    first = await BanPlayerGloballyUseCase(fx.deps).ban(
+        BanPlayerGloballyCommand(gamertag="Steve", xuid=XUID, reason="spam")
+    )
+
+    second = await BanPlayerGloballyUseCase(fx.deps).ban(
+        BanPlayerGloballyCommand(gamertag="steve", reason="otra razón")
+    )
+
+    assert second.id == first.id  # misma fila (unicidad por gamertag lower-case)
+
+
+async def test_unban_global_elimina_y_publica_player_unbanned(fx: Fixture) -> None:
+    view = await BanPlayerGloballyUseCase(fx.deps).ban(
+        BanPlayerGloballyCommand(gamertag="Steve", xuid=XUID, reason="spam")
+    )
+    unbanned: list[DomainEvent] = []
+    fx.bus.subscribe(PLAYER_UNBANNED_TOPIC, unbanned.append)
+
+    await UnbanPlayerGloballyUseCase(fx.deps).unban(
+        UnbanPlayerGloballyCommand(ban_id=view.id, actor_id="admin-1")
+    )
+
+    assert await fx.deps.ban_repository.get_global_ban(view.id) is None
+    assert len(unbanned) == 1
+    assert unbanned[0].type == PLAYER_UNBANNED
+    assert unbanned[0].payload["scope"] == "global"
+    assert unbanned[0].payload["ban_id"] == view.id
+    assert unbanned[0].actor_id == "admin-1"
+
+
+async def test_unban_global_no_encontrado(fx: Fixture) -> None:
+    with pytest.raises(PlayerBanNotFoundError):
+        await UnbanPlayerGloballyUseCase(fx.deps).unban(
+            UnbanPlayerGloballyCommand(ban_id="no-existe")
         )
 
 
-async def test_unban_envia_comando_por_xuid(fx: Fixture) -> None:
+async def test_ban_por_servidor_persiste_y_expulsa_si_online(fx: Fixture) -> None:
+    await ResolvePlayerUseCase(fx.deps).cache(XUID, NAME)
+    await JoinPlayerUseCase(fx.deps).join("srv-1", XUID, NAME)
+    banned: list[DomainEvent] = []
+    fx.bus.subscribe(PLAYER_BANNED_TOPIC, banned.append)
+
+    view = await BanPlayerOnServerUseCase(fx.deps).ban(
+        BanPlayerOnServerCommand(
+            server_id="srv-1",
+            player_id=XUID,
+            reason="cheats",
+            actor_id="admin-1",
+        )
+    )
+
+    assert view.scope == "server"
+    assert view.server_id == "srv-1"
+    stored = await fx.deps.ban_repository.get_server_ban("srv-1", view.id)
+    assert stored is not None and stored.gamertag == NAME
+    assert banned[0].type == PLAYER_BANNED
+    assert banned[0].payload["scope"] == "server"
+    assert banned[0].payload["server_id"] == "srv-1"
+    assert banned[0].payload["gamertag"] == NAME
+    kicks = [data for _, data in fx.runtime.stdin_writes]
+    assert kicks == ["kick Steve cheats\n"]
+
+
+async def test_ban_por_servidor_sin_reason_usa_el_motivo_por_defecto(fx: Fixture) -> None:
+    await ResolvePlayerUseCase(fx.deps).cache(XUID, NAME)
+    await JoinPlayerUseCase(fx.deps).join("srv-1", XUID, NAME)
+
+    await BanPlayerOnServerUseCase(fx.deps).ban(
+        BanPlayerOnServerCommand(server_id="srv-1", player_id=XUID, actor_id="admin-1")
+    )
+
+    kicks = [data for _, data in fx.runtime.stdin_writes]
+    assert kicks == ["kick Steve Baneado del servidor\n"]
+
+
+async def test_ban_por_servidor_no_expulsa_si_no_esta_online(fx: Fixture) -> None:
     await ResolvePlayerUseCase(fx.deps).cache(XUID, NAME)
 
-    ack = await UnbanPlayerUseCase(fx.deps).unban(UnbanPlayerCommand(server_id="srv-1", xuid=XUID))
+    view = await BanPlayerOnServerUseCase(fx.deps).ban(
+        BanPlayerOnServerCommand(server_id="srv-1", player_id=XUID, reason="cheats")
+    )
 
-    assert ack.command == f"unban {XUID}"
+    stored = await fx.deps.ban_repository.get_server_ban("srv-1", view.id)
+    assert stored is not None
+    assert fx.runtime.stdin_writes == []
+
+
+async def test_ban_por_servidor_de_jugador_desconocido(fx: Fixture) -> None:
+    with pytest.raises(PlayerNotFoundError):
+        await BanPlayerOnServerUseCase(fx.deps).ban(
+            BanPlayerOnServerCommand(server_id="srv-1", player_id="9999999999999999")
+        )
+
+
+async def test_unban_por_servidor_elimina_y_publica(fx: Fixture) -> None:
+    await ResolvePlayerUseCase(fx.deps).cache(XUID, NAME)
+    view = await BanPlayerOnServerUseCase(fx.deps).ban(
+        BanPlayerOnServerCommand(server_id="srv-1", player_id=XUID, reason="cheats")
+    )
+    unbanned: list[DomainEvent] = []
+    fx.bus.subscribe(PLAYER_UNBANNED_TOPIC, unbanned.append)
+
+    await UnbanPlayerOnServerUseCase(fx.deps).unban(
+        UnbanPlayerOnServerCommand(server_id="srv-1", player_id=XUID, actor_id="admin-1")
+    )
+
+    assert await fx.deps.ban_repository.get_server_ban("srv-1", view.id) is None
+    assert len(unbanned) == 1
+    assert unbanned[0].type == PLAYER_UNBANNED
+    assert unbanned[0].payload["scope"] == "server"
+    assert unbanned[0].payload["server_id"] == "srv-1"
+    assert unbanned[0].payload["ban_id"] == view.id
+
+
+async def test_unban_por_servidor_sin_ban_no_encontrado(fx: Fixture) -> None:
+    await ResolvePlayerUseCase(fx.deps).cache(XUID, NAME)
+    with pytest.raises(PlayerBanNotFoundError):
+        await UnbanPlayerOnServerUseCase(fx.deps).unban(
+            UnbanPlayerOnServerCommand(server_id="srv-1", player_id=XUID)
+        )
 
 
 async def test_kick_envia_comando_por_nombre(fx: Fixture) -> None:
@@ -285,6 +433,96 @@ async def test_kick_envia_comando_por_nombre(fx: Fixture) -> None:
     assert ack.command == f"kick {NAME}"
 
 
-async def test_unban_rechaza_xuid_vacio(fx: Fixture) -> None:
+async def test_kick_rechaza_xuid_vacio(fx: Fixture) -> None:
     with pytest.raises(PlayerValidationError):
-        await UnbanPlayerUseCase(fx.deps).unban(UnbanPlayerCommand(server_id="srv-1", xuid=""))
+        await KickPlayerUseCase(fx.deps).kick(KickPlayerCommand(server_id="srv-1", xuid=""))
+
+
+async def test_kick_with_retry_tope_de_intentos(
+    fx: Fixture, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Todos los intentos fallan → se agotan los ``KICK_MAX_ATTEMPTS`` y se loguea el fallo."""
+    await ResolvePlayerUseCase(fx.deps).cache(XUID, NAME)
+    await JoinPlayerUseCase(fx.deps).join("srv-1", XUID, NAME)
+    fallos = [
+        ConsoleObservation(
+            ack=CommandAck(
+                server_id="srv-1",
+                command=f"kick {NAME} spam",
+                priority=CommandPriority.NORMAL,
+                seq=i,
+                at=NOW,
+            ),
+            lines=("No targets matched selector",),
+        )
+        for i in range(1, 4)
+    ]
+
+    class _ConsolaFallona(ConsoleFacade):
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+
+        async def send_command_and_observe(
+            self, cmd: SendCommand, *, window_s: float
+        ) -> ConsoleObservation:
+            del window_s
+            self.sent.append(cmd.command)
+            return fallos[len(self.sent) - 1]
+
+    consola = _ConsolaFallona()
+    deps = PlayerDeps(
+        repository=fx.repository,
+        ban_repository=fx.deps.ban_repository,
+        console=consola,
+        bus=fx.bus,
+        ids=fx.deps.ids,
+        time=fx.clock,
+        settings=fx.deps.settings,
+    )
+    with caplog.at_level(logging.WARNING, logger="app.modules.player.application.use_cases"):
+        await kick_with_retry(deps, "srv-1", XUID, NAME, "spam", None)
+
+    assert consola.sent == [f"kick {NAME} spam"] * 3
+    assert "player.ban_kick_failed" in caplog.text
+
+
+async def test_kick_with_retry_corta_si_el_jugador_se_desconecta(fx: Fixture) -> None:
+    """Tras el primer fallo el jugador deja de estar online → el retry se corta."""
+    await ResolvePlayerUseCase(fx.deps).cache(XUID, NAME)
+    await JoinPlayerUseCase(fx.deps).join("srv-1", XUID, NAME)
+
+    class _ConsolaConDesconexion(ConsoleFacade):
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+
+        async def send_command_and_observe(
+            self, cmd: SendCommand, *, window_s: float
+        ) -> ConsoleObservation:
+            del window_s
+            self.sent.append(cmd.command)
+            if len(self.sent) == 1:
+                await LeavePlayerUseCase(fx.deps).leave("srv-1", XUID, NAME)
+            return ConsoleObservation(
+                ack=CommandAck(
+                    server_id="srv-1",
+                    command=cmd.command,
+                    priority=cmd.priority,
+                    seq=len(self.sent),
+                    at=NOW,
+                ),
+                lines=("No targets matched selector",),
+            )
+
+    consola = _ConsolaConDesconexion()
+    deps = PlayerDeps(
+        repository=fx.repository,
+        ban_repository=fx.deps.ban_repository,
+        console=consola,
+        bus=fx.bus,
+        ids=fx.deps.ids,
+        time=fx.clock,
+        settings=fx.deps.settings,
+    )
+    await kick_with_retry(deps, "srv-1", XUID, NAME, "spam", None)
+
+    assert consola.sent == [f"kick {NAME} spam"]

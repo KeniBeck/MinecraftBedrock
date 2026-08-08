@@ -331,6 +331,15 @@ class ApplyConfigUseCase:
                     environment={**desired.environment, "LEVEL_NAME": cmd.level_name},
                     config_rev=desired.config_rev,
                 )
+            if cmd.allow_list is not None:
+                desired = DesiredConfig(
+                    version=desired.version,
+                    environment={
+                        **desired.environment,
+                        "ALLOW_LIST": "true" if cmd.allow_list else "false",
+                    },
+                    config_rev=desired.config_rev,
+                )
             occupied = await _occupied_ports(deps.repository, exclude=server.id.value)
             new_spec = deps.spec_factory.render(
                 server.id.value,

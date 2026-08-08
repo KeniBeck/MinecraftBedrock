@@ -1,7 +1,8 @@
-"""Pruebas de integración del adaptador Docker (FASE A).
+"""Pruebas de integración del adaptador Docker multi-servidor (FASE A).
 
 Solo se ejecutan con ``uv run pytest -m integration`` y requieren un daemon
-Docker disponible. Usan un contenedor real ``alpine`` como sujeto de prueba.
+Docker disponible. Usan contenedores reales ``alpine`` como sujetos de prueba,
+uno por ``server_id`` ficticio, y comprueban que dos servers coexisten.
 """
 
 from __future__ import annotations
@@ -16,74 +17,89 @@ from app.infrastructure.runtime import (
     DockerRuntimeAdapter,
     DockerRuntimeSettings,
 )
-from app.kernel.ports.runtime import RuntimeState
+from app.kernel.ports.runtime import RuntimeSpec, RuntimeState
 
 pytestmark = pytest.mark.integration
 
-CONTAINER_NAME = "bedrock-panel-integration-test"
 IMAGE = "alpine:3.20"
+PREFIX = "bedrock-panel-integration"
+
+
+def _spec(server_id: str) -> RuntimeSpec:
+    return RuntimeSpec(
+        image=IMAGE,
+        tag="latest",
+        environment={"EULA": "TRUE"},
+        labels={"bedrockpanel.server_id": server_id},
+        stdin_open=True,
+        tty=False,
+    )
 
 
 @pytest.fixture(scope="module")
-def adapter() -> DockerRuntimeAdapter:
+def client() -> docker.DockerClient:
+    client = docker.from_env()
     try:
-        client = docker.from_env()
         client.ping()
         client.images.pull(IMAGE)
     except Exception as exc:
         pytest.skip(f"Docker no disponible o sin acceso a la imagen: {exc}")
-    settings = DockerRuntimeSettings(
-        container_name=CONTAINER_NAME,
-        image=IMAGE,
-        world_volume="",
-        data_volume="",
-        ports={},
-        memory_limit=None,
-        cpu_limit=None,
-        restart_policy="no",
-        docker_timeout=60,
-    )
+    return client
+
+
+@pytest.fixture(scope="module")
+def adapter(client: docker.DockerClient) -> DockerRuntimeAdapter:
     return DockerRuntimeAdapter(
-        settings,
+        DockerRuntimeSettings(container_prefix=PREFIX, docker_timeout=60),
         docker_client_factory=DockerFromEnvClientFactory(timeout=60),
     )
 
 
 @pytest.fixture(autouse=True)
 def cleanup(adapter: DockerRuntimeAdapter) -> Iterator[None]:
-    if adapter.exists():
-        adapter.remove()
+    for server_id in ("it-1", "it-2"):
+        runtime_id = f"{PREFIX}-{server_id}"
+        if adapter.exists(runtime_id):
+            adapter.remove(runtime_id)
     yield
-    if adapter.exists():
-        adapter.remove()
+    for server_id in ("it-1", "it-2"):
+        runtime_id = f"{PREFIX}-{server_id}"
+        if adapter.exists(runtime_id):
+            adapter.remove(runtime_id)
 
 
-def test_full_lifecycle(adapter: DockerRuntimeAdapter) -> None:
-    adapter.create_if_missing()
-    assert adapter.exists() is True
+def test_dos_servidores_coexisten(
+    client: docker.DockerClient, adapter: DockerRuntimeAdapter
+) -> None:
+    id_a = adapter.materialize(_spec("it-1"))
+    id_b = adapter.materialize(_spec("it-2"))
+    assert id_a == f"{PREFIX}-it-1"
+    assert id_b == f"{PREFIX}-it-2"
 
-    created_status = adapter.status()
-    assert created_status.running is False
-    assert created_status.status == RuntimeState.CREATED
+    real_names = {c.name for c in client.containers.list(all=True) if c.name in {id_a, id_b}}
+    assert real_names == {id_a, id_b}
 
-    adapter.start()
-    assert adapter.is_running() is True
-    adapter.wait_for(condition="running", timeout=60)
+    adapter.start(id_a)
+    assert adapter.is_running(id_a) is True
+    # it-2 no se arrancó; sigue parado (independiente).
+    assert adapter.is_running(id_b) is False
 
-    running_status = adapter.status()
-    assert running_status.running is True
-    assert running_status.container_name == CONTAINER_NAME
-    assert running_status.image == IMAGE
+    adapter.stop(id_a)
+    adapter.remove(id_a)
+    assert not adapter.exists(id_a)
+    # it-2 existe aunque it-1 se borrara.
+    assert adapter.exists(id_b) is True
 
-    logs = adapter.logs()
-    assert isinstance(logs, str)
 
-    adapter.stop(grace=10)
-    assert adapter.is_running() is False
+def test_materialize_mismo_server_reemplaza_el_suyo(
+    adapter: DockerRuntimeAdapter,
+) -> None:
+    runtime_id = f"{PREFIX}-it-1"
+    first = adapter.materialize(_spec("it-1"))
+    status_created = adapter.status(first)
+    assert status_created.status == RuntimeState.CREATED
+    assert first == runtime_id
 
-    adapter.restart(grace=10)
-    assert adapter.is_running() is True
-
-    adapter.stop(grace=10)
-    adapter.remove()
-    assert adapter.exists() is False
+    second = adapter.materialize(_spec("it-1"))
+    assert second == runtime_id
+    assert adapter.exists(runtime_id) is True

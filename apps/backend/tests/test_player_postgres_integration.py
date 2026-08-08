@@ -12,9 +12,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from app.modules.player.domain.bans import GlobalBan, ServerBan
 from app.modules.player.domain.player import Player
 from app.modules.player.domain.session import PlaySession, SessionEndReason
-from app.modules.player.infrastructure.postgres_repository import PostgresPlayerRepository
+from app.modules.player.infrastructure.postgres_repository import (
+    PostgresPlayerBanRepository,
+    PostgresPlayerRepository,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -145,3 +149,62 @@ async def test_list_sessions_por_jugador(
 
     assert [s.id for s in sessions] == ["ps-list-2", "ps-list-1", "ps-list-0"]
     assert await repo.list_sessions("no-existe") == []
+
+
+async def test_bans_globales_roundtrip_y_lookups(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    repo = PostgresPlayerBanRepository(db_session_factory)
+    ban = GlobalBan(
+        id="gb-1",
+        xuid=XUID,
+        gamertag="Steve",
+        reason="spam",
+        banned_by="admin-1",
+        created_at=NOW,
+    )
+    await repo.save_global_ban(ban)
+
+    by_id = await repo.get_global_ban("gb-1")
+    assert by_id is not None and by_id.gamertag == "Steve"
+    assert await repo.get_active_global_ban_by_xuid(XUID) is not None
+    assert await repo.get_active_global_ban_by_gamertag("steve") is not None  # case-insensitive
+    assert await repo.get_active_global_ban_by_gamertag("alex") is None
+
+    expired = GlobalBan(
+        id="gb-2",
+        gamertag="Alex",
+        reason="spam",
+        banned_by="admin-1",
+        created_at=NOW,
+        expires_at=NOW - timedelta(minutes=1),
+    )
+    await repo.save_global_ban(expired)
+    assert await repo.get_active_global_ban_by_gamertag("Alex") is None
+
+    assert await repo.delete_global_ban("gb-1") is True
+    assert await repo.get_global_ban("gb-1") is None
+
+
+async def test_bans_por_servidor_roundtrip_y_lookups(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    repo = PostgresPlayerBanRepository(db_session_factory)
+    ban = ServerBan(
+        id="sb-1",
+        server_id="srv-it-1",
+        xuid=XUID,
+        gamertag="Steve",
+        reason="cheats",
+        banned_by="admin-1",
+        created_at=NOW,
+    )
+    await repo.save_server_ban(ban)
+
+    assert await repo.get_server_ban("srv-it-1", "sb-1") is not None
+    assert await repo.get_active_server_ban_by_xuid("srv-it-1", XUID) is not None
+    assert await repo.get_active_server_ban_by_gamertag("srv-it-1", "steve") is not None
+    assert await repo.get_active_server_ban_by_xuid("srv-it-2", XUID) is None  # otro server
+
+    assert await repo.delete_server_ban("srv-it-1", "sb-1") is True
+    assert await repo.delete_server_ban("srv-it-1", "sb-1") is False

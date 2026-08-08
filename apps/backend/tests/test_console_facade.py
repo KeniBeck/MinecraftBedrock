@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
 from app.infrastructure.events.bus import InProcessEventBus
@@ -95,6 +96,26 @@ async def test_subscribe_via_facade_recibe_en_vivo() -> None:
             break
 
     assert lines == ["vieja-0", "nueva-1"]
+
+
+async def test_send_command_and_observe_captura_salida_en_ventana() -> None:
+    facade, bus, _, store = make_facade()
+    log = await store.get("srv-1")
+    log.append("vieja-0")
+
+    async def _emitir_error() -> None:
+        await asyncio.sleep(0.01)
+        await bus.publish(console_output("srv-1", "No targets matched selector", 1))
+
+    task = asyncio.create_task(_emitir_error())
+    observation = await facade.send_command_and_observe(
+        SendCommand(server_id="srv-1", command="kick Steve", priority=CommandPriority.HIGH),
+        window_s=0.5,
+    )
+    await task
+
+    assert observation.ack.command == "kick Steve"
+    assert observation.lines == ("No targets matched selector",)
 
 
 async def test_task_started_activa_la_facade() -> None:

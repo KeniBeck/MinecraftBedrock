@@ -21,6 +21,20 @@ class CommandAck:
 
 
 @dataclass(frozen=True, slots=True)
+class ConsoleObservation:
+    """Comando enviado + líneas de salida observadas en la ventana posterior.
+
+    ``send_command`` solo confirma la escritura en stdin (acuse), no el resultado
+    del comando. Para comandos cuyo resultado importa (p. ej. el ``kick``), esta
+    vista añade las líneas de consola que llegan en los ``window_s`` siguientes:
+    el llamador decide si indican éxito o error (Console no interpreta negocio).
+    """
+
+    ack: CommandAck
+    lines: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class BufferView:
     """Proyección del buffer de logs para consumidores."""
 

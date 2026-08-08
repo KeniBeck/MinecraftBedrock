@@ -19,3 +19,9 @@ class PlayerNotFoundError(NotFoundError):
     """El jugador no existe en la caché del panel (``xuid`` desconocido)."""
 
     code = "PLAYER.NOT_FOUND"
+
+
+class PlayerBanNotFoundError(NotFoundError):
+    """El ban (global o por servidor) no existe en el panel."""
+
+    code = "PLAYER.BAN_NOT_FOUND"

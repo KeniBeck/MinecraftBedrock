@@ -1375,3 +1375,1005 @@ la API (Blueprint §4.7).
 - Reproducción del bug en tests sin Docker: mundo con metadata y `size_bytes`
   desactualizado → `sync` → `size_bytes` = real del disco (confirmado en
   `world_metadata` del repositorio y en la respuesta de `sync`).
+
+---
+
+## 8. Fix `CONSOLE.STDIN_WRITE` — `SocketIO` no expone `.makefile()`
+
+> **Fecha**: 2026-08-07
+> **Issue**: Al enviar comandos via `POST /servers/{id}/players/{xuid}/ban`, el
+> endpoint fallaba con error `CONSOLE.STDIN_WRITE`. El contenedor Docker estaba
+> sano y corriendo.
+
+### Causa raíz
+`container.attach_socket()` en docker-py devuelve un `socket.SocketIO`, **no**
+un `socket.socket` real. `SocketIO` no expone el método `.makefile("w")`, por lo
+que `send_stdin` en `DockerRuntimeAdapter` lanzaba un `AttributeError`. Este era
+capturado por `_map_docker_errors`, traducido a `DockerError`, y luego envuelto
+como `StdinWriteError(CONSOLE.STDIN_WRITE)` en `CommandQueue`.
+
+### Fix
+- **Archivo**: `apps/backend/src/app/infrastructure/runtime/docker.py:541-552`
+- **Cambio**: Se reemplazó el bloque `socket.makefile("w")` / `.write()` /
+  `.flush()` / `.close()` por acceso directo al socket subyacente via
+  `socket._sock` (con fallback al propio `socket` si no tiene `_sock`) y
+  `raw.sendall(data.encode("utf-8"))`.
+
+```python
+# Antes
+stream = socket.makefile("w")
+stream.write(data)
+stream.flush()
+stream.close()
+
+# Después
+raw = socket._sock if hasattr(socket, "_sock") else socket
+raw.sendall(data.encode("utf-8"))
+```
+
+### Verificación
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅
+- `uv run mypy --strict .` ✅
+- `uv run pytest -q` ✅ **421 passed, 28 deselected**
+
+### Nota posterior (2026-08-07)
+El fix inicial evitó el `AttributeError` pero no cerraba correctamente la
+conexión HTTP subyacente del wrapper `SocketIO` de docker-py, lo que provocaba
+`ValueError: I/O operation on closed file` y que el comando nunca llegara al
+proceso del contenedor. Se confirmó que `finally: socket.close()` (sobre el
+wrapper `SocketIO` original, no solo sobre `_sock`) ya estaba presente y en la
+posición correcta envolviendo todo el bloque `try`. La estructura actual es
+correcta: `try: sendall → finally: socket.close()`.
+
+### Nota adicional (2026-08-07) — `stream: 1`
+Faltaba el parámetro `"stream": 1` en los `params` de `attach_socket()`. Sin
+él la API de Docker podía no dejar la conexión en modo hijacked bidireccional,
+haciendo que `sendall()` no lanzara error pero el dato nunca llegara al
+proceso del contenedor como una línea de stdin real.
+
+```python
+# Antes
+params={"stdin": 1, "stdout": 0, "stderr": 0}
+
+# Después
+params={"stdin": 1, "stdout": 0, "stderr": 0, "stream": 1}
+```
+
+### Verificación
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅
+- `uv run mypy --strict .` ✅
+- `uv run pytest -q` ✅ **421 passed, 28 deselected**
+
+---
+
+## 9. Módulo Permission — implementación completa (Blueprint §3.6)
+
+> **Fecha**: 2026-08-07
+> **Alcance**: Paso 14 del blueprint. Allowlist, niveles de permiso
+> (operator/member/visitor), APIs HTTP y PUB/SUB de eventos.
+
+### Archivos creados
+
+| Archivo | Contenido |
+|---|---|
+| `modules/permission/domain/entities.py` | `AllowlistEntry`, `PermissionEntry`, `PermissionLevel` Enum |
+| `modules/permission/domain/errors.py` | `PermissionValidationError`, `PermissionNotFoundError` |
+| `modules/permission/domain/events.py` | `player_operator_changed()` factory + constantes |
+| `modules/permission/application/ports.py` | `PermissionStorageResolver` (Protocol) |
+| `modules/permission/application/use_cases.py` | `add_to_allowlist`, `remove_from_allowlist`, `list_allowlist`, `set_permission_level`, `remove_permission`, `list_permissions` |
+| `modules/permission/application/facade.py` | `PermissionFacade` |
+| `modules/permission/application/handlers.py` | `AllowlistXuidResolver` (consume `PLAYER.JOINED`) |
+| `modules/permission/api/schemas.py` | `AllowlistEntryResponse`, `SetPermissionRequest`, etc. |
+| `modules/permission/api/router.py` | Endpoints bajo `/servers/{id}/permissions` |
+| `tests/test_permission_use_cases.py` | 23 tests unitarios |
+
+### Archivos modificados
+
+| Archivo | Cambio |
+|---|---|
+| `bootstrap/container.py` | `Container` + `permission_facade`; wiring de `PermissionDeps` |
+| `bootstrap/main.py` | Registro del router de Permission |
+| `tests/test_api_integration.py` | `permission_facade` en `make_container` |
+
+### Funcionalidades
+
+- **Allowlist**: CRUD sobre `allowlist.json` vía `ServerStoragePort` + comando
+  `allowlist add/remove` vía Console cuando el servidor corre.
+- **Permisos**: CRUD sobre `permissions.json` + comandos `op`/`deop`.
+- **Eventos**: `PLAYER.OPERATOR_CHANGED` publicado en `set_permission_level` y
+  `remove_permission`.
+- **Handler**: `PLAYER.JOINED` → autocompleta XUID en entradas de allowlist
+  pendientes (defensivo, solo loguea si falla).
+- **API REST**: endpoints con auth (`permission.write`/`permission.read`):
+  `POST/DELETE/GET /allowlist`, `PUT/DELETE /operators/{xuid}`.
+
+### Verificación
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅
+- `uv run mypy --strict .` ✅ (310 archivos)
+- `uv run pytest -q` ✅ **444 passed, 28 deselected** (antes 421/28): +23 tests.
+
+---
+
+## 10. Exposición del toggle ALLOW_LIST en Permission
+
+> **Fecha**: 2026-08-07
+> **Alcance**: Endpoint para activar/desactivar la allowlist (`ALLOW_LIST`) y
+> recrear el contenedor vía evento `PERMISSION.ALLOWLIST_TOGGLED`.
+
+### Decisión de diseño
+El mecanismo de `CONFIG.CHANGED` no es reutilizable de forma directa: el
+`ConfigChangedHandler` reaplica la config deseada que lee de Configuration, y
+Permission **no persiste** en Configuration (no tiene su facade de escritura);
+la env `ALLOW_LIST` no llegaría al spec. Se añade el evento simple
+`PERMISSION.ALLOWLIST_TOGGLED` con payload `{server_id, enabled}` y se replica
+el patrón de `WORLD.ACTIVATED`/`LEVEL_NAME`: el handler de Server pasa
+`allow_list: bool | None` al `ApplyConfigCommand` y el use case inyecta
+`ALLOW_LIST=<true/false>` en el spec antes de renderizar (recreación incluida
+si el spec cambió).
+
+### Archivos modificados
+
+| Archivo | Cambio |
+|---|---|
+| `modules/permission/domain/events.py` | `ALLOWLIST_TOGGLED`, `ALLOWLIST_TOGGLED_TOPIC` + factory `allowlist_toggled()` |
+| `modules/permission/application/use_cases.py` | `set_allowlist_enabled()` publica el evento (con `actor_id`) |
+| `modules/permission/application/facade.py` | `PermissionFacade.set_allowlist_enabled` |
+| `modules/permission/api/schemas.py` | `SetAllowlistEnabledRequest {enabled: bool}` |
+| `modules/permission/api/router.py` | `PUT /servers/{server_id}/permissions/allowlist-enabled` (204, auth `permission.write`/operator+) |
+| `modules/server/application/commands.py` | `ApplyConfigCommand.allow_list: bool | None` |
+| `modules/server/application/handlers.py` | `AllowlistToggledHandler` + `_optional_allow_list()` |
+| `modules/server/application/use_cases.py` | `ApplyConfigUseCase` inyecta `ALLOW_LIST=<true/false>` |
+| `modules/server/domain/events.py` | `ALLOWLIST_TOGGLED_TOPIC = "permission.allowlist_toggled"` |
+| `modules/server/application/facade.py` | Suscripción del `AllowlistToggledHandler` |
+| `tests/test_permission_use_cases.py` | +2 tests del use case |
+| `tests/test_server_handlers.py` | +3 tests del handler |
+
+### Funcionalidades
+
+- **Endpoint** `PUT /servers/{server_id}/permissions/allowlist-enabled` con
+  body `{"enabled": true}` (mismo auth `permission.write`, operator+).
+- **Evento** `PERMISSION.ALLOWLIST_TOGGLED` (`{server_id, enabled}`) publicado
+  por Permission y consumido por Server para recrear el contenedor.
+- **Spec**: `ALLOW_LIST=true/false` inyectado antes de renderizar, mismo patrón
+  que `LEVEL_NAME` (sin tocar `config_rev`).
+
+### Verificación
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅
+- `uv run mypy --strict .` ✅ (310 archivos)
+- `uv run pytest -q` ✅ **449 passed, 28 deselected** (antes 444/28): +5 tests.
+
+---
+
+## 11. Sistema de bans persistentes — globales y por servidor (ADR-011)
+
+> **Fecha**: 2026-08-07
+> **Alcance**: Reemplaza el ban/unban de solo-consola (sin persistencia) por
+> bans durables en `player_global_bans`/`player_server_bans`, con enforcement en
+> `PLAYER.JOINED` y kick inmediato al banear a un jugador online. Migración
+> Alembic `0008_player_ban_tables`.
+
+### Decisión de diseño
+
+- **Dos agregados, dos tablas** (ADR-011): `GlobalBan`/`player_global_bans`
+  (decisión panel-wide, unicidad sobre `lower(gamertag)`) y
+  `ServerBan`/`player_server_bans` (atado a `server_id`, unicidad sobre
+  `(server_id, lower(gamertag))`). **`player_players` no se toca**: es
+  identidad global por XUID sin `server_id` (discrepancia con TDD §15.5
+  documentada en ADR-012).
+- **Enforcement**: `BanEnforcementHandler` en `PLAYER.JOINED` chequea global
+  primero (xuid fiable, fallback gamertag case-insensitive cuando el XUID es
+  `0`/ausente — "ban blando" en offline), luego por servidor; respeta
+  `expires_at` vencido. El kick va por el mismo puerto Console que usan
+  `Backup`/`Permission` (`SendCommand` → `ConsoleFacade`).
+- **Kick inmediato**: el `POST /servers/{server_id}/players/{player_id}/ban`
+  expulsa en el mismo request si hay `PlaySession` abierta
+  (`_kick_best_effort`, no rompe el request si el server no corre).
+- **Endpoints**: `POST /players/bans/global` + `DELETE /players/bans/global/{ban_id}`
+  (admin global, `require_action("player.ban.global")`) y
+  `POST/DELETE /servers/{server_id}/players/{player_id}/ban`
+  (operator+, ACL por servidor, `permission.write`). El viejo `POST .../ban` y
+  `POST .../unban` (solo-consola) quedan **removidos/reemplazados**; `/kick`
+  se mantiene igual.
+- **Eventos**: `PLAYER.BANNED`/`PLAYER.UNBANNED` (topics `player.banned`/
+  `player.unbanned`) publicados por los use cases al crear/quitar un ban.
+
+### Archivos creados
+
+| Archivo | Contenido |
+|---|---|
+| `infrastructure/db/alembic/versions/0008_player_ban_tables.py` | Crea `player_global_bans` y `player_server_bans` + índices de unicidad |
+| `modules/player/domain/bans.py` | `GlobalBan`, `ServerBan`, `BanScope`, `normalize_gamertag`, `is_valid_xuid`, `kick_command` |
+| `tests/test_player_ban_enforcement.py` | 8 tests del enforcement (xuid, fallback, case-insensitive, vencido, por servidor, precedencia) |
+
+### Archivos modificados
+
+| Archivo | Cambio |
+|---|---|
+| `modules/player/domain/events.py` | `PLAYER.UNBANNED` + factories `player_banned`/`player_unbanned` (payload scope + identidad) |
+| `modules/player/domain/repository.py` | `PlayerBanRepositoryPort` (global + por servidor) |
+| `modules/player/application/commands.py` | `BanPlayerGloballyCommand`, `UnbanPlayerGloballyCommand`, `BanPlayerOnServerCommand`, `UnbanPlayerOnServerCommand` |
+| `modules/player/application/use_cases.py` | `BanPlayerGloballyUseCase`, `UnbanPlayerGloballyUseCase`, `BanPlayerOnServerUseCase`, `UnbanPlayerOnServerUseCase` + `_is_online`/`_kick_best_effort` |
+| `modules/player/application/handlers.py` | `BanEnforcementHandler` (enforcement en `PLAYER.JOINED`) |
+| `modules/player/application/facade.py` | Facade de bans + suscripción del `BanEnforcementHandler` |
+| `modules/player/application/results.py` | `GlobalBanView`, `ServerBanView` + proyecciones |
+| `modules/player/api/router.py` | Endpoints de bans globales y por servidor; remueve `POST /ban` y `POST /unban` de consola |
+| `modules/player/api/schemas.py` | `GlobalBanRequest`, `GlobalBanResponse`, `BanPlayerRequest` |
+| `modules/player/infrastructure/models.py` | `GlobalBanRow`, `ServerBanRow` + índices `uq_*` |
+| `modules/player/infrastructure/postgres_repository.py` | `PostgresPlayerBanRepository` (upsert + delete con rowcount) |
+| `modules/player/infrastructure/serialization.py` | Proyecciones de bans row ↔ entidad |
+| `modules/player/infrastructure/memory.py` | `InMemoryPlayerBanRepository` (test) |
+| `bootstrap/container.py` | Wiring de `PostgresPlayerBanRepository` + `ban_repository` en `PlayerDeps` |
+| `tests/test_player_use_cases.py` | +8 tests de use cases de bans (persistencia, eventos, kick inmediato) |
+| `tests/test_api_integration.py` | Tests de endpoints de ban (204/404/403, admin global vs viewer) |
+
+### Verificación
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅
+- `uv run mypy --strict .` ✅ (313 archivos)
+- `uv run pytest -q` ✅ **466 passed, 30 deselected** (antes 449/28): +17 tests.
+
+---
+
+## 12. Race condition en el kick — reintento con backoff si BDS aún no tiene al jugador
+
+> **Fecha**: 2026-08-07
+> **Origen**: **prueba manual real**, no tests. Al banear a un jugador que se
+> acaba de conectar, BDS tardaba ~5s entre `Player connected` y `Player Spawned`
+> (handshake/descarga de resource packs). El `kick` enviado en `PLAYER.JOINED`
+> fallaba con `No targets matched selector` porque el jugador aún no es un
+> target seleccionable, y **no había reintento**: el jugador se quedaba dentro.
+> Reproducido en dos conexiones distintas (primera conexión del server y una
+> reconexión), comportamiento consistente.
+
+### Decisión de diseño
+
+- **Console no expone el resultado de un comando**: `send_command` solo devuelve
+  un acuse de escritura en stdin (`CommandAck`). Se añade
+  `ConsoleFacade.send_command_and_observe(cmd, *, window_s)` que envía el comando
+  y observa la salida de consola en la ventana siguiente (`ConsoleObservation`:
+  acuse + líneas). Console sigue sin interpretar negocio: devuelve las líneas
+  crudas y quien consume decide.
+- **Reintento en Player** (`kick_with_retry` en `modules/player/application/use_cases.py`):
+  envía `kick <gamertag> [reason]`, observa la salida `window_s`; si aparece el
+  patrón de error (`no targets matched selector` / `could not find player`,
+  case-insensitive) reintenta con backoff corto `(0.5, 1.0, 1.5, 2.0, 2.0)s`
+  hasta agotar `len(backoff) + 1` intentos. Si la ventana cierra sin error → se
+  confirma éxito y se detiene (no se reintenta a ciegas ni en bucle infinito).
+- **Fallo visible**: al agotar los intentos se loguea estructurado
+  `player.ban_kick_failed` con `server_id`, `gamertag`, `reason`, `attempts`,
+  `command` — en vez de fallar en silencio.
+- **Aplicado en los tres flujos de kick** que comparten la lógica de envío:
+  `BanEnforcementHandler` (PLAYER.JOINED), `BanPlayerOnServerUseCase` (kick
+  inmediato al banear a un online, `_kick_best_effort`) y `KickPlayerUseCase`
+  (kick manual `POST .../kick`).
+
+### Archivos modificados
+
+| Archivo | Cambio |
+|---|---|
+| `modules/console/application/results.py` | `ConsoleObservation` (ack + líneas observadas) |
+| `modules/console/application/facade.py` | `send_command_and_observe(cmd, *, window_s)` |
+| `modules/player/application/use_cases.py` | `kick_with_retry` + constantes de backoff/patrones; `KickPlayerUseCase.kick` y `_kick_best_effort` usan el reintento |
+| `modules/player/application/handlers.py` | `BanEnforcementHandler._enforce` usa `kick_with_retry` |
+| `tests/test_player_kick_retry.py` | Nuevo: reintento-then-success, sin error sin reintento, agotamiento + log |
+| `tests/test_console_facade.py` | +1 test de `send_command_and_observe` (captura salida en la ventana) |
+| `tests/test_player_ban_enforcement.py` | Fixture autouse: ventana/backoff mínimos para no ralentizar |
+| `tests/test_player_use_cases.py` | Ídem |
+| `tests/test_api_integration.py` | Ídem |
+
+### Verificación
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅
+- `uv run mypy --strict .` ✅ (314 archivos)
+- `uv run pytest -q` ✅ **470 passed, 30 deselected** (antes 466/30): +4 tests.
+
+---
+
+## 13. Self-deadlock del enforcement + enforcement fantasma al arrancar el stream
+
+> **Fecha**: 2026-08-07
+> **Origen**: **prueba real**, no tests. Dos bugs encontrados juntos en
+> producción:
+> - **Bug A — enforcement fantasma**: al reiniciar el servidor, el stream
+>   arrancaba con `tail="all"`, que rejugaba el historial completo del contenedor
+>   (incluidas líneas viejas de `Player connected` de la sesión anterior). Cada
+>   línea rejugada disparaba un `PLAYER.JOINED` fantasma → `BanEnforcementHandler`
+>   → kick a un jugador que no estaba realmente conectado en el contenedor nuevo
+>   ("No targets matched selector").
+> - **Bug B — el retry no corría**: en la conexión real solo se enviaba 1 kick
+>   y se logueaba `player.ban_kick_confirmed` a pesar del error de BDS.
+
+### Causa raíz (única, la que el prompt sospechaba)
+
+La detección de éxito/error **sí** mira `observation.lines`, pero **la ventana de
+observación nunca podía ver la salida**: `BanEnforcementHandler` corre inline
+dentro de la cadena de `bus.publish(console_output(...))` de
+`ConsoleLogStream.consume` (el `PLAYER.JOINED` lo publica `PlayerJoinDetector`,
+que es un handler de `CONSOLE.OUTPUT`). Cuando `send_command_and_observe` espera
+la respuesta del kick, el consumidor del stream está **bloqueado en el mismo
+`bus.publish`** y no puede leer la respuesta desde la cola del worker → la
+ventana siempre queda vacía → `_kick_output_failed` siempre `False` → "confirmed"
+→ sin reintento. Esto explica el "confirmed a pesar del error" de ambos bugs.
+
+### Fix
+
+- **`BanEnforcementHandler`** (`modules/player/application/handlers.py`): el kick
+  se ejecuta en un **task de fondo** (`asyncio.create_task`) con tracking de
+  tareas pendientes (`wait_pending`). El `PLAYER.JOINED` se procesa inline (abre
+  sesión) pero el kick ya no bloquea al consumidor del stream: la respuesta de
+  BDS llega a la ventana de observación y el retry corre.
+- **`PlayerFacade`**: guarda la referencia al handler y expone
+  `await_ban_enforcement()` para tests (espera los kicks en curso).
+- **`DockerRuntimeAdapter.stream_logs`** (`infrastructure/runtime/docker.py`):
+  `tail="all"` → `tail=0`. El stream arranca **solo con líneas nuevas**, sin
+  rejugar el historial del contenedor tras un stop/start. Elimina el
+  `PLAYER.JOINED` fantasma (Bug A) y la duplicación de líneas en el buffer.
+
+### Archivos modificados
+
+| Archivo | Cambio |
+|---|---|
+| `modules/player/application/handlers.py` | Enforcement en task de fondo + `wait_pending` |
+| `modules/player/application/facade.py` | Guarda el handler + `await_ban_enforcement()` |
+| `infrastructure/runtime/docker.py` | `stream_logs` con `tail=0` (sin replay de historial) |
+| `tests/test_player_enforcement_deadlock.py` | **Nuevo**: reproduce el self-deadlock con el flujo real (stream task + detector + enforcement); falla antes del fix y pasa después |
+| `tests/test_player_ban_enforcement.py` | Harness espera el enforcement pendiente tras `join()` |
+| `tests/test_player_kick_retry.py` | Ídem |
+| `tests/test_api_integration.py` | `seed_player` espera el enforcement pendiente |
+| `tests/test_runtime.py` | `stream_logs` ahora usa `tail=0` |
+
+### Verificación
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅
+- `uv run mypy --strict .` ✅ (315 archivos)
+- `uv run pytest -q` ✅ **472 passed, 30 deselected** (antes 470/30): +2 tests.
+
+**El test nuevo reproduce el bug**: con el handler inline (pre-fix) el
+`test_player_enforcement_deadlock.py` falla (solo 1 kick, la ventana de
+observación se queda vacía por el self-deadlock); con el fix pasa (el enforcement
+observa el error y reintenta). Verificado ejecutando la suite con el handler
+revertido.
+
+---
+
+## 14. Retry infinito en el auto-kick del enforcement de bans
+
+> **Fecha**: 2026-08-07
+> **Origen**: **prueba real**, no tests. En los logs aparecía
+> `player.ban_kick_failed` seguido de `player.ban_enforced` repitiéndose cada
+> 10-30s indefinidamente, incluso **minutos después** de que el jugador baneado
+> se desconectara (BDS logueaba `Player disconnected`, sin reconexión posterior).
+> Cada intento fallido generaba `No targets matched selector` en BDS y una
+> excepción `ValueError: I/O operation on closed file` del lado del panel
+> (acumulación de sockets HTTP mal cerrados).
+
+### Causa raíz
+
+`kick_with_retry` reintentaba el kick tras un fallo **sin verificar si el
+jugador seguía conectado** y con un tope demasiado alto (6 intentos): aunque el
+jugador ya no estuviera en `player_sessions` (sesión cerrada con `left_at`), el
+loop seguía enviando `kick` contra un target inexistente. Con el enforcement
+re-disparándose sobre `PLAYER.JOINED` repetidos, el ciclo completo se repetía
+cada ~10s (6 intentos × ventana de observación + backoff) indefinidamente. La
+acumulación de sockets no era una ruta distinta: el kick usa el único path
+corregido (`ConsoleFacade.send_command` → `SendCommandUseCase` →
+`CommandQueue` → `DockerRuntimeAdapter.send_stdin`, que ya tiene `stream: 1` y
+`finally: socket.close()`, change-log §8); eran los cientos de `attach_socket`
+abiertos por los reintentos sin fin los que se acumulaban.
+
+### Fix
+
+- **`kick_with_retry`** (`modules/player/application/use_cases.py`):
+  - **Antes de cada reintento** se verifica el estado real de conexión del
+    jugador (`player_sessions` con `left_at IS NULL` para ese servidor, vía
+    `_is_online`). Si ya se desconectó → se corta el retry y se loguea
+    `player.ban_kick_aborted` (info), sin más envíos.
+  - **Tope de intentos**: `KICK_MAX_ATTEMPTS = 3` (antes
+    `len(KICK_RETRY_BACKOFF_SECONDS) + 1 = 6`) con backoff — no un loop sin fin.
+  - Ahora recibe el `xuid` para poder comprobar la presencia (los callers pasan
+    `player.xuid` / `cmd.player_id`).
+- **`BanEnforcementHandler._enforce`** (`modules/player/application/handlers.py`):
+  verifica `_is_online` antes de intentar el kick; si el jugador ya no está
+  conectado loguea `player.ban_skip_offline` y no expulsa (nada que expulsar).
+- **Socket**: confirmado que el kick usa el mismo `send_stdin` corregido (§8);
+  sin cambios de ruta. El tope de intentos y el corte por desconexión eliminan
+  la acumulación de sockets.
+
+### Archivos modificados
+
+| Archivo | Cambio |
+|---|---|
+| `modules/player/application/use_cases.py` | `kick_with_retry`: verifica presencia antes de cada reintento + `KICK_MAX_ATTEMPTS=3`; `_kick_best_effort`/`KickPlayerUseCase` pasan `xuid` |
+| `modules/player/application/handlers.py` | `_enforce` verifica `_is_online` antes de expulsar |
+| `tests/test_player_kick_retry.py` | Test: retry se corta si el jugador se desconecta; agotamiento ajustado a 3 |
+| `tests/test_player_use_cases.py` | +2 tests de `kick_with_retry`: tope de intentos y corte por desconexión |
+| `tests/test_player_enforcement_deadlock.py` | Agotamiento ajustado a `KICK_MAX_ATTEMPTS` |
+
+### Verificación
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅
+- `uv run mypy --strict .` ✅ (315 archivos)
+- `uv run pytest -q` ✅ **475 passed, 30 deselected** (antes 472/30): +3 tests.
+
+Los tests nuevos confirman que el retry se detiene al detectar que el jugador ya
+no está conectado (1 solo kick) y que hay un tope de intentos (3).
+
+---
+
+## 15. Módulo Scheduler (Fase G) — tareas programadas recurrentes (§3.9)
+
+> **Fecha**: 2026-08-07
+> **Ámbito**: módulo completo `modules/scheduler` (dominio, aplicación, infra,
+> API, migración) + wiring + tests. Ya existían consumidores esperando estos
+> eventos: `TaskStartedHandler` de Console (paso 7) escucha `TASK.STARTED` con
+> comandos en el payload (defensivo) y el gatillo programado de Backup (paso 13)
+> quedó diferido explícitamente a este paso.
+
+### Reutilización y decisiones
+
+- **Cron parsing**: `croniter>=6` añadida a `pyproject.toml` (no existía una
+  librería de cron; no se reinventa el parser). `application/cron.next_after`
+  valida la expresión y calcula la próxima ocurrencia timezone-aware (UTC).
+- **El "reloj"**: se reutiliza el **patrón** del `BackgroundPoller` de Monitoring
+  (paso 9): `SchedulerPoller` (bucle asíncrono en `infrastructure/poller.py`)
+  llama a `facade.tick()` cada `scheduler.poll_interval_seconds`; se arranca en
+  el lifespan junto al poller de Monitoring. Los tests no arrancan el bucle
+  (llaman a `tick` directamente), mismo criterio que Monitoring.
+- **Política de reinicio ante `SERVER.CRASHED`**: verificado que ni Monitoring
+  ni Server reintentan un arranque tras crash (Server solo registra
+  `mark_crashed`). Por tanto **sí** le corresponde a Scheduler decidir cuándo
+  reintentar: `ServerCrashedHandler` adelanta la próxima ejecución de las tareas
+  `restart` activas del servidor a `ahora + scheduler.crash_retry_seconds`.
+- **Ejecutores**: Scheduler no reimplementa lo que ya hacen (matriz §1.3): los
+  facades Server/Backup/Console actúan vía puertos estructurales
+  (`application/ports.py`). Las tareas `command` publican `TASK.STARTED` con
+  `{"server_id", "commands"}` (el handler de Console lo consume); `backup` →
+  `create_backup`; `restart` → `restart`.
+
+### Entregables
+
+- **Dominio** (`domain/`): `ScheduleTask` (id, tipo, cron, payload, estado,
+  `next_run_at`, historial de reintentos `failures`/`max_retries`/
+  `backoff_seconds`), tipos/estados `StrEnum`, errores `TASK.*`
+  (`TASK.NOT_FOUND`, `TASK.INVALID_PAYLOAD`, `TASK.INVALID_STATE`), eventos y
+  puerto de repositorio.
+- **Aplicación** (`application/`): CRUD (`Create/Update/Delete`), `RunTask`,
+  y `SchedulerEngine` (el reloj: `tick` ejecuta lo vencido y publica
+  `TASK.STARTED`/`COMPLETED`). Handlers consumidos:
+  `TaskFailedHandler` (`TASK.FAILED` → retry con backoff exponencial, tope
+  `max_retries`), `ScheduledBackupFailedHandler` (`BACKUP.FAILED` → reconcilia
+  `last_result`, no reintenta), `ServerCrashedHandler`.
+- **Eventos**: publica `TASK.SCHEDULED/STARTED/COMPLETED/FAILED/CANCELLED`;
+  consume `TASK.FAILED` (sus propios reintentos), `BACKUP.FAILED`,
+  `SERVER.CRASHED`.
+- **Infraestructura**: `SchedulerTaskRow` (`scheduler_tasks`), memoria, Postgres
+  (upsert), serialización, `SchedulerPoller`.
+- **API**: CRUD en `/servers/{id}/schedule/tasks` (+ `POST .../{task_id}/run`).
+  `task.list`/`task.view` entran en `READ_ACTIONS` (lectura viewer+); el resto
+  es escritura (operator+).
+- **Migración**: `0009_scheduler_tables` (`down_revision=0008_player_ban_tables`;
+  alembic head única). `conftest.py` registra los modelos del módulo.
+- **Wiring**: `container.py` (facade + poller), `main.py` (router + poller en el
+  lifespan), `config.py` (`scheduler.*`), `SchedulerDeps` inyecta Server/Backup
+  y el reloj.
+
+### La señal `TASK.STARTED` → Console
+
+El flujo que estaba "esperando": una tarea programada `command` dispara
+`TASK.STARTED` con `commands`; el `TaskStartedHandler` de Console (paso 7) lo
+escucha y encola los comandos. Confirmado por test: el payload publicado incluye
+`server_id` y la lista de comandos del contrato.
+
+### Archivos modificados/añadidos (resumen)
+
+| Archivo | Cambio |
+|---|---|
+| `pyproject.toml` | `+ croniter>=6` (y `types-croniter` en dev) |
+| `modules/scheduler/domain/{task,events,errors,repository}.py` | Dominio |
+| `modules/scheduler/application/{commands,results,ports,cron,use_cases,facade,handlers}.py` | Aplicación |
+| `modules/scheduler/infrastructure/{models,memory,postgres_repository,serialization,poller}.py` | Infraestructura |
+| `modules/scheduler/api/{schemas,router}.py` | API HTTP |
+| `infrastructure/db/.../0009_scheduler_tables.py` | Migración (`scheduler_tasks`) |
+| `bootstrap/{config,container,main}.py`, `bootstrap/errors.py` | Wiring + settings |
+| `modules/iam/.../access.py` | `READ_ACTIONS` += `task.list/view` |
+| `tests/conftest.py`, `tests/test_api_integration.py` | Modelos + Container del test |
+| `tests/test_scheduler.py` | **22 tests** del módulo |
+| `docs/change-log.md` | Esta entrada |
+
+### Verificación
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅ (335 archivos)
+- `uv run mypy --strict .` ✅ (335 archivos)
+- `uv run pytest -q` ✅ **497 passed, 30 deselected** (antes 475/30): **+22 tests**.
+- `uv run alembic heads` → `0009_scheduler_tables (head)` (cadena lineal).
+
+Los tests confirman: CRUD + validación de cron/payload, el reloj ejecuta por tipo
+(command/backup/restart), `run_now` manual, reintento con backoff y tope
+`max_retries`, desactivación/reactivación, y los tres handlers consumidos
+(`TASK.FAILED`, `BACKUP.FAILED`, `SERVER.CRASHED`).
+
+---
+
+## 16. Kick inmediato en el ban global cuando el jugador está online
+
+> **Fecha**: 2026-08-07
+> **Origen**: **prueba real**, no tests. Un jugador con un ban **global** y una
+> sesión abierta seguía jugando hasta reconectarse: el enforcement solo corre en
+> `PLAYER.JOINED`, que no se dispara para quien ya está dentro. El descrito por
+> servidor (`ban_on_server`) ya expulsaba al instante (§12, `_kick_best_effort`),
+> pero el **global** (`BanPlayerGloballyUseCase.ban`) solo persistía el estado y
+> publicaba `PLAYER.BANNED`; el kick quedaba diferido a la siguiente entrada.
+
+### Causa raíz
+
+El `BanPlayerGloballyUseCase.ban` no expulsaba en vivo: a diferencia del ban por
+servidor (que sabe el `server_id` y usa `_is_online` + `_kick_best_effort`), el
+ban global no tiene ámbito de servidor y no había forma de localizar la sesión
+abierta del jugador en repositorio: `get_open_session`/`list_open_sessions` son
+por servidor y `list_sessions` devuelve historial (no solo abiertas).
+
+### Fix
+
+- **Dominio** (`domain/repository.py`): nuevo método de puerto
+  `list_open_sessions_by_xuid(xuid)` → sesiones abiertas del jugador en cualquier
+  servidor (`left_at` nulo).
+- **Infra**: implementado en `InMemoryPlayerRepository` y
+  `PostgresPlayerRepository` (único query por `xuid` + `left_at IS NULL`).
+- **`BanPlayerGloballyUseCase.ban`** (`application/use_cases.py`): tras persistir
+  el ban, si se conoce el `xuid` localiza las sesiones abiertas y expulsa al
+  jugador de cada servidor vía `_kick_best_effort` (mismo kick best-effort que el
+  ban por servidor — el ban ya está persistido, un fallo de un servidor no rompe
+  el request ni impide expulsar del resto). Si el jugador está offline (`xuid`
+  ausente o sin sesión abierta) no expulsa nada y el `BanEnforcementHandler` en
+  `PLAYER.JOINED` cubre futuras entradas (comportamiento actual).
+
+### Archivos modificados
+
+| Archivo | Cambio |
+|---|---|
+| `modules/player/domain/repository.py` | Puerto + `list_open_sessions_by_xuid(xuid)` |
+| `modules/player/infrastructure/memory.py` | Implementación del nuevo método |
+| `modules/player/infrastructure/postgres_repository.py` | Implementación del nuevo método |
+| `modules/player/application/use_cases.py` | `_kick_global_sessions` + kick inmediato en `ban_globally` (cuando `xuid` conocido) |
+| `tests/test_player_global_ban_immediate_kick.py` | **Nuevo**: kick inmediato al banear a un online; desde cada sesión abierta; offline no expulsa |
+
+### Verificación
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅
+- `uv run mypy --strict .` ✅ (336 archivos)
+- `uv run pytest -q` ✅ **500 passed, 30 deselected** (antes 497/30): +3 tests.
+
+Los tests nuevos confirman: ban global expulsa al instante a un jugador online
+(`kick Steve spam`), lo expulsa de cada servidor con sesión abierta, y no intenta
+nada cuando el jugador está offline (lo cubre `PLAYER.JOINED`). El ban por
+servidor ya expulsaba al instante (§12) — sin cambios en esa ruta.
+
+---
+
+## 17. Reconciliar streams de Console al arrancar el panel
+
+> **Fecha**: 2026-08-07
+> **Origen**: **prueba real**, no tests. Tras un restart del backend, el stream
+> de un servidor `running` dejaba de capturar líneas nuevas: una reconexión real
+> de un jugador nunca llegó a `console_lines` aunque el stream seguía sumando
+> otras líneas del contenedor. Identificado antes (§19) y diferido; aquí se
+> difiere el cierre: reconciliación al arranque.
+
+### Causa raíz
+
+Los streams se arrancan **solo** vía el evento `SERVER.STARTED`
+(`ConsoleStreamManager`). Al reiniciar el panel, los servidores que ya estaban
+`running` no vuelven a emitir `SERVER.STARTED` (el contenedor no se reinició),
+así que nadie arranca su consumidor de logs y las líneas nuevas quedan sin
+consumidor, aunque el resto del ciclo de vida del servidor siga bien.
+
+### Fix
+
+- **Reconciler** (`modules/console/infrastructure/reconcile.py`): nuevo
+  `ConsoleStreamReconciler.reconcile()`. Consulta los servidores con estado
+  persistido `running`, y para cada uno verifica contra el runtime real
+  (`get_state(...) == running`) que el contenedor sigue corriendo; solo
+  entonces arranca su stream vía `ConsoleStreamManager.ensure_stream` (mismo
+  efecto que un recién llegado `SERVER.STARTED`). Si el contenedor real ya no
+  corre, **no fuerza nada**: lo reconcilia el próximo ciclo del poller de
+  Monitoreo (evita condiciones de carrera con la reconciliación).
+- **`ConsoleStreamManager`** (`modules/console/infrastructure/stream_manager.py`):
+  se extrae `ensure_stream(server_id)` público e idempotente reutilizado tanto
+  por `SERVER.STARTED` como por el reconciler.
+- **Ports**: `ServerConsoleReader` gana `list_servers()` (lectura). `FakeServerReader`
+  de conftest lo implementa.
+- **Wiring**: `Container` expone `console_stream_reconciler`; el lifespan de
+  `main.py` lo ejecuta al arrancar, antes de levantar los pollers.
+
+### Archivos modificados
+
+| Archivo | Cambio |
+|---|---|
+| `modules/console/application/ports.py` | `ServerConsoleReader.list_servers()` |
+| `modules/console/infrastructure/stream_manager.py` | `ensure_stream()` público, reutilizado por `SERVER.STARTED` |
+| `modules/console/infrastructure/reconcile.py` | **Nuevo** `ConsoleStreamReconciler` |
+| `bootstrap/container.py` | `console_stream_reconciler` en el `Container` |
+| `bootstrap/main.py` | `reconcile()` al inicio del lifespan |
+| `tests/conftest.py` | `FakeServerReader.list_servers()` |
+| `tests/test_console_stream_reconcile.py` | **Nuevo**: 4 tests del reconciler |
+
+---
+
+## 18. Motivo (reason) en el kick del ban por servidor
+
+> **Fecha**: 2026-08-07
+> **Origen**: prueba real manual (celular). El ban global ya muestra un diálogo
+> con el motivo en el cliente Bedrock; el ban por servidor mandaba el kick sin
+> razón, dejando solo pantalla negra.
+
+### Causa raíz
+
+`ban_on_server`/`_kick_best_effort` sí enrutan `reason` hacia `kick_command`
+(que produce `kick <name> [reason]`), pero cuando el payload del ban llega sin
+`reason` (`BanPlayerOnServerCommand.reason = None`) el comando quedaba como
+`kick <name>` → el cliente no mostraba motivo.
+
+### Fix
+
+- **`BanPlayerOnServerUseCase.ban`** (`modules/player/application/use_cases.py`):
+  el kick del ban por servidor usa `cmd.reason or SERVER_BAN_KICK_DEFAULT_REASON`
+  (`"Baneado del servidor"`) para que el comando siempre lleve motivo. El ban
+  global no cambia (`kick_command` y el resto de rutas intactos).
+
+### Archivos modificados
+
+| Archivo | Cambio |
+|---|---|
+| `modules/player/application/use_cases.py` | constante `SERVER_BAN_KICK_DEFAULT_REASON` + fallback en `ban_on_server` |
+| `tests/test_player_use_cases.py` | Test: kick del ban por servidor sin reason usa el motivo por defecto |
+
+### Verificación (ambas tareas)
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅
+- `uv run mypy --strict .` ✅ (338 archivos)
+- `uv run pytest -q` ✅ **505 passed, 30 deselected** (antes 500/30): +5 tests
+  (4 reconciler + 1 reason por defecto).
+
+Los tests nuevos confirman: el reconciler arranca el stream de un servidor
+> running real, lo omite si el contenedor no corre y es idempotente; y el ban
+> por servidor incluye el motivo en el comando de kick ("Baneado del servidor").
+> Tarea 1 y Tarea 2 se prueban en el sistema real por el usuario (restart del
+> panel y celular, respectivamente).
+
+## 19. Fase G — paso 16: módulo Template (`módulo Template`)
+
+> **Fecha**: 2026-08-07
+> **Origen**: planificación de fases (paso 16 del blueprint). Segundo módulo
+> síncrono del proyecto (junto a Scheduler, aunque este conserva eventos);
+> véase hallazgo B5 del blueprint.
+
+### Qué añade
+
+Plantillas ``.mctemplate`` (zip): capturar el estado de un servidor (mundo
+activo + config) y reproducirlo (aplicarlo) sobre otro servidor existente,
+más listar/consultar/eliminar. Es un módulo **síncrono** (request/response, sin
+que publique ni consuma eventos).
+
+### Decisiones de implementación
+
+- **Formato zip** para el artefacto (mismo enfoque que ``.mcworld`` de World,
+  no zstd de Backup). Cada miembro se valida por nombre exacto contra el
+  conjunto esperado (`manifest.json`, `world_name.txt`, `config.json`,
+  `world.mcworld`): artefacto malformado o con path traversal → `TEMPLATE.CORRUPT`.
+- **Reuso de storage**: `ServerStorageResolver`/`LocalServerStorage` leen el
+  mundo activo (`world_snapshot`) y lo restauran (`write_snapshot` validando
+  `level.dat`); el artefacto vive en `{storage.base_path}/templates`
+  (`{template_id}.mctemplate`) heredando la misma validación de rutas.
+- **Mundo activo**: se determina consultando **World** (`WorldGateway` port →
+  adapter sobre `WorldFacade.list_worlds`, filtrando `activated=true`), **no**
+  desde Configuration. Configuration está vacía de origen (no existe API REST de
+  Configuration todavía, deuda del paso 10) y el mundo activo real se gestiona
+  en World (`world_metadata.activated`) e inyecta al RuntimeSpec vía
+  `WORLD.ACTIVATED` (§25). El blueprint §3.11 declara World entre las deps de
+  Template ("reutiliza Server + World + Configuration"); el patrón de puerto
+  estructural sobre otra facade replica el que ya usa Scheduler.
+- **Config**: `ConfigurationGateway` (adapter = `ConfigurationFacade`) para leer
+  el perfil al capturar y reaplicar `level-name=<mundo destino>` al reproducir.
+- **Síncrono**: `TemplateFacade` expone capture/apply/list/get/delete y
+  `default_template() -> None` (satisface el protocolo `TemplateReader` que
+  predefine Server para creación futura; aún sin uso).
+- **Errores**: `TEMPLATE.NOT_FOUND` 404 · `TEMPLATE.VALIDATION`/`TEMPLATE.CORRUPT`
+  422 · `TEMPLATE.EXISTS` 409 (mundo destino ocupado).
+- **Auth**: endpoints reutilizan `require_server_action`; `template.list`/
+  `template.view` en `READ_ACTIONS`; el resto es escritura (operator+).
+- **Sin FK** a `server_servers` (contextos acotados, igual que Backup/
+  Scheduler/Player).
+
+### Archivos creados/modificados
+
+| Archivo | Cambio |
+|---|---|
+| `modules/template/domain/{template,errors,repository}.py` | Entidad, errores, port del repositorio |
+| `modules/template/application/{commands,results,ports,use_cases,facade}.py` | Capa aplicación (síncrona); puerto `WorldGateway` |
+| `modules/template/infrastructure/{archive,store,world,models,serialization,memory,postgres_repository}.py` | Artefacto zip, store + adapter `WorldFacadeGateway` con validación de rutas, repo Postgres/en memoria |
+| `modules/template/api/{schemas,router}.py` | Vertical slice HTTP |
+| `infrastructure/db/alembic/versions/0010_template_tables.py` | Tabla `template_templates` (unique `name`) |
+| `bootstrap/container.py` | Scaffold `TemplateDeps` (con `world=WorldFacadeGateway(world_facade)`) + `TemplateFacade` en el `Container` |
+| `bootstrap/main.py` | Registro del router `template_router` |
+| `modules/iam/application/access.py` | `template.list`, `template.view` en `READ_ACTIONS` |
+| `tests/test_template_use_cases.py` | Suite del módulo (archive, capturar, aplicar, listar, borrar); mundo activo vía `FakeWorldGateway` |
+| `tests/test_api_integration.py` | Container de dobles + `template_facade` |
+
+### Verificación
+
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅
+- `uv run mypy --strict .` ✅ (357 archivos)
+- `uv run pytest -q` ✅ **527 passed, 30 deselected** (antes 526/30): mundo
+  activo resuelto desde World (+1 test).
+
+## 20. Fin de FASE A single-container — `DockerRuntimeAdapter` multi-servidor
+
+> **Fecha**: 2026-08-08
+> **Origen**: prueba real con `Template.apply`. El adaptador Docker gestionaba
+> un único contenedor físico (FASE A) y nunca se generalizó, aunque
+> `ServerRuntimePort` ya estaba diseñado para `runtime_id` por servidor.
+
+### Síntoma
+
+`docker inspect bedrock-panel-server` mostraba un bind mount fijo
+(`/home/andresdev/Services/minecraft-bedrock/data:/data`) sin `server_id`,
+que no coincidía con el patrón `{storage.base_path}/{server_id}:/data` que
+arma `RuntimeSpecFactory.render()`. Un `apply` de plantilla escribía el mundo
+en el storage correcto (`{base_path}/{server_id}/worlds/...`), pero el
+contenedor realmente corriendo seguía siendo el viejo (volumen fijo, distinto,
+invisible para la API). **No era un bug de Template**: era que el runtime jamás
+recreaba el contenedor con el volumen de ESE `server_id`.
+
+### Causa raíz
+
+- `materialize(spec)` usaba `self._settings.container_name` (fijo, ignorando el
+  `server_id` del spec) y, si existía el contenedor de ese nombre, lo borraba y
+  recreaba → materializar CUALQUIER servidor destruía el contenedor de CUALQUIER
+  otro que estuviera corriendo (solo podía haber uno de verdad).
+- `_validate_runtime_id(runtime_id)` rechazaba todo `runtime_id` que no
+  coincidiera con el único nombre fijo → el propio código impedía operar sobre
+  más de un contenedor por diseño.
+
+### Fix
+
+- **Nombrado por servidor**: el nombre real del contenedor es
+  `{container_prefix}-{server_id}`, y **coincide con el `runtime_id`** que
+  `materialize` devuelve y persiste el módulo Server. El `server_id` sale
+  del label `bedrockpanel.server_id` que deja `RuntimeSpecFactory.render()`.
+- **Todos los métodos** resuelven su contenedor por `runtime_id`
+  (`client.containers.get(runtime_id)`); se eliminó `_validate_runtime_id`
+  como guardia restrictiva. Si llega `None`, `_require_runtime_id` lanza un
+  error claro (multi-servidor: no "hay" un contenedor que adivinar).
+- **`materialize`** borra/recrea solo el contenedor de ESE `server_id`; dos
+  servers distintos coexisten. Dos servers = dos contenedores Docker.
+- **Se eliminó código huérfano de FASE A**: `create_if_missing`, `_volumes`,
+  `_remove_volumes`. El flujo real de creación siempre iba por `materialize` con
+  un `RuntimeSpec` (imagen/puertos/volúmenes por server), así que
+  `create_if_missing` y los campos `image`/`network`/`ports`/`memory_limit`/
+  `cpu_limit`/`restart_policy`/`data_volume`/`world_volume` de
+  `DockerRuntimeSettings` quedaron obsoletos: se eliminaron. Quedan
+  `container_prefix` (renombrado desde `container_name`) y `docker_timeout`.
+  `remove(delete_data=True)` ya no borra volúmenes Docker (el bind mount
+  `{base_path}/{server_id}` lo limpia la capa de storage, no el runtime).
+
+### Archivos modificados
+
+| Archivo | Cambio |
+|---|---|
+| `infrastructure/runtime/docker.py` | Adaptador N-servidores: `_container_name`, `_get_container(runtime_id)`, `_require_runtime_id`, `materialize` por server_id; quitados `_validate_runtime_id`, `create_if_missing`, `_volumes`, `_remove_volumes` |
+| `infrastructure/runtime/settings.py` | `container_name`→`container_prefix`; quitados `image`/`network`/`ports`/`memory_limit`/`cpu_limit`/`restart_policy`/`data_volume`/`world_volume` |
+| `infrastructure/runtime/__init__.py` | Docstring multi-servidor |
+| `tests/test_runtime.py` | Reescrito con fake `{runtime_id: contenedor}`; tests coexisten dos servers, parar/borrar uno no toca al otro, replace del mismo server |
+| `tests/test_runtime_integration.py` | `materialize`/`runtime_id` por server + coexistencia real |
+| `tests/test_api_integration.py` | Construcción del adaptador con settings reducidas (compatible) |
+
+### Verificación
+
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅
+- `uv run mypy --strict .` ✅ (357 archivos)
+- `uv run pytest -q` ✅ **524 passed, 31 deselected** (antes 527/30): -7 tests
+  huérfanos de `create_if_missing`/`_remove_volumes` borrados + tests
+  N-servidores sumados; la integración (deselected) de runtime ahora son 2
+  tests.
+
+### Limpieza manual del contenedor huérfano (host de Deyler)
+
+El contenedor real `bedrock-panel-server` quedó con el volumen fijo del dev-setup
+original. Debe pararse/borrarse manualmente (sin `delete_data`, su volumen es un
+bind mount fijo que el panel no gestiona):
+
+```bash
+docker stop bedrock-panel-server && docker rm bedrock-panel-server
+```
+
+El próximo `start`/`materialize` de cada `Server` real creará su propio
+contenedor limpio con el nombre (`bedrock-panel-{server_id}`) y el volumen
+(`{storage.base_path}/{server_id}:/data`) correctos.
+
+**Nota sobre el server `1295e5ef-08e6-452a-94bd-4f697129426b`**: NO existe una
+carpeta propia en `/var/lib/bedrockpanel/` para ese `server_id` (el host solo
+tiene los dirs de otros servers y `templates/`). Dado que nunca pasó por
+`materialize()` con un volumen correcto, ese servidor en particular puede
+necesitar **recrearse desde cero** tras el fix (su mundo real vivía en el bind
+mount fijo del contenedor viejo, que se queda sin mapear). Vale la pena
+verificarlo en el sistema real antes de borrar nada.
+
+### Relación con síntoma de esta sesión
+
+- **Template.apply** (bug fantasma que desencadenó esto): confirmado que el
+  código de Template escribió el mundo en el storage correcto; el contenedor
+  erra el mapeado por ser el viejo fijo. Con este fix el runtime recrea el
+  contenedor [del servidor] con el volumen acertado.
+- **Concurrency/reconcile/streams**: sin regresión funcional; `stream_logs`,
+  `get_state`, `send_stdin`, `wait_for` ya pasaban `runtime_id` (el módulo
+  Console/Server siempre lo tiene persistido tras `materialize`).
+
+## 21. Corrección — `_candidate_data_dirs` mezclaba el storage de todos los servers
+
+> **Fecha**: 2026-08-08
+> **Origen**: prueba manual con dos servers (`v1`, `v2`). Al arrancarlos,
+> ambos terminaron con el MISMO bind mount
+> (`/home/andresdev/Services/minecraft-bedrock/data`), y `v1` entró en
+> "Level corruption detected, disconnecting clients and shutting down server"
+> al conectar un jugador: dos procesos BDS escribiendo la misma LevelDB a la
+> vez.
+
+### Causa raíz
+
+`_candidate_data_dirs(base_path, server_id)` generaba candidatos SIN
+`server_id` en la ruta:
+
+```python
+candidates = [base / server_id, base]          # base sin server_id
+
+for start in start_points:
+    for path in [start, *start.parents]:
+        if path.name == "data":
+            candidates.append(path)             # sin server_id
+        else:
+            candidates.append(path / "data")    # sin server_id
+            candidates.append(path / server_id)
+            candidates.append(path / "data" / server_id)
+```
+
+`_discover_server_data_dir` devuelve el primer candidato que exista y ya tenga
+el binario Bedrock. Como el repo conserva `data/bedrock_server-1.26.40.8` de
+pruebas viejas, cualquier candidato genérico (el `base` pelado, o cualquier
+`path/"data"` que resuelva a esa carpeta) "gana" para CUALQUIER servidor nuevo
+porque ya tiene el binario. Resultado: todos los servers que pasaban por ese
+candidato apuntaban al mismo volumen físico, tanto el del contenedor
+(`render()`) como el storage de `World` (`data_dir()`), porque ambos delegan en
+la misma función.
+
+### Fix
+
+Todo candidato debe terminar SIEMPRE en `/{server_id}`; nunca se reutiliza una
+carpeta compartida sin el `server_id` en la ruta. El atajo de dev de "reusar el
+binario ya descargado" sigue existiendo, pero es por servidor:
+
+```python
+def _candidate_data_dirs(base_path: str | Path, server_id: str) -> list[Path]:
+    base = Path(base_path)
+    candidates: list[Path] = [base / server_id]
+
+    start_points = [Path(__file__).resolve(), Path.cwd(), base]
+    for start in start_points:
+        for path in [start, *start.parents]:
+            if path.name == "data":
+                candidates.append(path / server_id)
+            else:
+                candidates.append(path / "data" / server_id)
+    return candidates
+```
+
+Si ningún candidato tiene todavía el binario (server nuevo de verdad), cae al
+default de `_discover_server_data_dir` (`Path(base_path) / server_id`), que ya
+estaba bien.
+
+### Impacto de datos existente
+
+En el host de Deyler, `v1`, `v2` y probablemente otros servers creados hoy
+comparten el bind mount corrupto `/home/andresdev/Services/minecraft-bedrock/
+data`. Después del fix, cada uno apunta a `{storage.base_path}/{server_id}`,
+una carpeta que NO existe todavía para ninguno (descargarán el binario de nuevo
+desde cero; el mundo de `v1` quedó corrupto). **No hay nada que migrar
+automáticamente ni vale la pena intentarlo**: los servers de prueba de hoy
+deben recrearse limpios (parar/borrar contenedor + el volumen viejo compartido,
+recrear desde el panel).
+
+### Archivos modificados
+
+| Archivo | Cambio |
+|---|---|
+| `modules/server/application/spec_factory.py` | `_candidate_data_dirs` solo genera candidatos que terminan en `/{server_id}` |
+| `tests/test_server_use_cases.py` | Tests de binario local movidos a `data/{server_id}/`; nuevos `test_candidate_data_dirs_siempre_incluye_server_id` y `test_render_v1_v2_no_comparten_volumen` |
+
+### Verificación
+
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅
+- `uv run mypy --strict .` ✅ (357 archivos)
+- `uv run pytest -q` ✅ **526 passed, 31 deselected** (antes 524/31): +2 tests
+  del fix (invariante de candidatos + volúmenes distintos para `v1`/`v2`).
+
+## 22. Fase H — paso 17: módulo Notification y gateway WebSocket (`/ws`)
+
+> **Fecha**: 2026-08-08
+> **Origen**: el frontend necesitaba un único canal en tiempo real para eventos
+> de todos los dominios (servidor, consola, mundo, backup, tarea, IAM/AUTH,
+> sistema) con reenvío de eventos perdidos tras reconexión. Se sustituye el
+> concepto de "WS mínimo por servidor" por un gateway único (Blueprint §3.12,
+> TDD §13) sin romper los WS por servidor ya existentes.
+
+### Alcance
+
+- `GET /ws` acepta la conexión, valida el token (query `?token=` o header
+  `Authorization`, vía `ws_identity`) y cierra con `4401` si no autentica.
+- Mensajes JSON del cliente: `subscribe`, `unsubscribe`, `resume`, `pong`.
+  Un mensaje malformado cierra con `4408`; una acción desconocida responde
+  `NOTI.UNKNOWN_ACTION`; una suscripción inválida, `NOTI.INVALID_SUBSCRIPTION`.
+- Canales: `global`, `server:{id}` y `user:{id}`. La suscripción a
+  `server:{id}` se autoriza con IAM `AccessControlPort.authorize`
+  (`server.view`, RBAC global + membresía); `global` y `user:{id}` (propio)
+  están abiertos.
+- `seq` global monótono asignado en publicación (secuencia Postgres
+  `noti_event_seq`; en memoria, contador) y persistido en el `EventLog`
+  append-only. `resume(last_seq, channels)` reenvía `seq > last_seq` por
+  canal, ordenado, hasta `notification.resume_limit` (1000); si el backlog
+  excede, responde `NOTI.RESUME_TOO_LARGE`.
+- Buffer de salida por conexión (máx. 1000): eventos de consola usan
+  `drop-oldest`; los críticos (`SERVER.*`, `BACKUP.*`, `WORLD.*`, `TASK.*`)
+  marcan la conexión para cerrar (backpressure, TDD §13.2).
+- Rate limiting por conexión: token-bucket desde
+  `notification.rate_per_second` (100.0) y `notification.burst` (100).
+
+### Implementación
+
+| Archivo | Contenido |
+|---|---|
+| `modules/notification/domain/events.py` | Constantes de scope, `InvalidSubscriptionError`, `parse_channel` |
+| `modules/notification/domain/subscription.py` | `Channel`, `ChannelAuthorizer` (decide vía `AccessControlPort`) |
+| `modules/notification/domain/repository.py` | `EventLogEntry`, `EventLogRepositoryPort` (`next_seq`/`append`/`get_events_since`/`latest_seq`) |
+| `modules/notification/application/connection_manager.py` | `ClientConnection` (buffer + `enqueue` con política drop/critical), `ConnectionManager` |
+| `modules/notification/application/rate_limiter.py` | Token bucket (`RateLimitConfig`, `TokenBucketRateLimiter`) |
+| `modules/notification/application/event_dispatcher.py` | `EventDispatcher` (asigna `seq`, persiste, difunde), `resolve_channels`, `serialize_envelope` |
+| `modules/notification/application/resume_handler.py` | `ResumeHandler` (mezcla por `seq` con `limit`/`exceeded`) |
+| `modules/notification/application/facade.py` | `NotificationFacade` (open/close, subscribe/unsubscribe, resume) |
+| `modules/notification/infrastructure/models.py` | `NotificationEventLogRow` (índice `(scope, server_id, seq)`) |
+| `modules/notification/infrastructure/memory.py` | `InMemoryEventLogRepository` (contador, filtrado+orden, `seed`/`clear` para tests) |
+| `modules/notification/infrastructure/postgres_event_log_repository.py` | `PostgresEventLogRepository` (`nextval` de `noti_event_seq`, append-only) |
+| `modules/notification/api/router.py` | `@router.websocket("/ws")` + tareas `_pump`/`_sender`, handlers |
+| `infrastructure/db/alembic/versions/0011_noti_event_log.py` | Migración de la tabla `noti_event_log` (depende de `0010_template_tables`) |
+| `infrastructure/events/bus.py` | Soporte de suscripción `"*"` (wildcard) al `InProcessEventBus` |
+| `bootstrap/container.py` / `bootstrap/main.py` / `bootstrap/config.py` | Wiring del facade, inclusión del router y nuevos settings `notification_*` |
+
+### Decisiones
+
+- `seq` único y global (secuencia única) en vez de por canal: simplifica el
+  resume por `seq` (TDD §13.4); el filtro por canal se aplica después de
+  consultar el `EventLog`.
+- Enrutado: `server_id` presente → `server:{id}`; si no, el scope del
+  `event_type` (SERVER/CONSOLE/WORLD/PLAYER/BACKUP/TASK/CONFIG → `server`,
+  IAM/AUTH → `user:{actor_id}`, resto → `global`).
+- `EventDispatcher.handler()` envuelve la publicación en `try/except`: un
+  fallo del `EventLog` nunca rompe el bus (se loguea y continúa).
+- El único cambio al bus existente es el wildcard `"*"`; no se modifica la TDD.
+- Las suscripciones y buffers son en memoria por conexión (se pierden al
+  desconectar → `resume`); la persistencia es solo el `EventLog`.
+
+### Tests
+
+- `tests/test_notification_connection_manager.py` (7): buffer, drop-oldest,
+  cierre por evento crítico, suscripciones, broadcast por canal(es).
+- `tests/test_notification_rate_limiter.py` (4): token-bucket (gasto, recarga,
+  burst, consumo completo).
+- `tests/test_notification_event_dispatcher.py` (8): enrutado a canal, `seq`
+  en `EventLog`, broadcast, `resolve_channels` y resiliencia del bus.
+- `tests/test_notification_resume.py` (5): reenvío por `seq`, filtro por
+  servidor, límite/`exceeded`, mezcla multi-canal, `last_seq` actual.
+- `tests/test_notification_subscription.py` (7): nombres canónicos, canales
+  inválidos, autorización global/user propio/ajeno/server con y sin membresía.
+- `tests/test_notification_ws_integration.py` (8): handshake 4401 (sin token /
+  inválido), subscribe global, rechazo sin membresía, super_admin puede,
+  JSON inválido → 4408, resume con y sin `last_seq`.
+- El `make_container` de `tests/test_api_integration.py` construye el
+  `NotificationFacade` con `InMemoryEventLogRepository` y registra el wildcard.
+
+### Verificación
+
+- `uv run ruff check .` ✅ · `uv run ruff format --check .` ✅
+- `uv run mypy --strict .` ✅ (376 archivos)
+- `uv run pytest -q` ✅ **565 passed, 31 deselected** (antes 526/31): +39 tests
+  del módulo Notification (7 + 4 + 8 + 5 + 7 + 8).

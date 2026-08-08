@@ -4,9 +4,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.modules.player.domain.bans import GlobalBan, ServerBan
 from app.modules.player.domain.player import Player
 from app.modules.player.domain.session import PlaySession, SessionEndReason
-from app.modules.player.infrastructure.models import PlayerRow, PlaySessionRow
+from app.modules.player.infrastructure.models import (
+    GlobalBanRow,
+    PlayerRow,
+    PlaySessionRow,
+    ServerBanRow,
+)
 
 
 def player_to_row(player: Player) -> dict[str, Any]:
@@ -58,4 +64,58 @@ def session_from_row(row: PlaySessionRow) -> PlaySession:
         left_at=row.left_at,
         reason=SessionEndReason(row.reason) if row.reason is not None else None,
         playtime_seconds=row.playtime_seconds,
+    )
+
+
+def global_ban_to_row(ban: GlobalBan) -> dict[str, Any]:
+    """Proyección de ``GlobalBan`` a los campos de ``GlobalBanRow``."""
+    return {
+        "id": ban.id,
+        "xuid": ban.xuid,
+        "gamertag": ban.gamertag,
+        "reason": ban.reason,
+        "banned_by": ban.banned_by,
+        "created_at": ban.created_at,
+        "expires_at": ban.expires_at,
+    }
+
+
+def global_ban_from_row(row: GlobalBanRow) -> GlobalBan:
+    """Reconstruye ``GlobalBan`` desde una fila."""
+    return GlobalBan(
+        id=row.id,
+        xuid=row.xuid,
+        gamertag=row.gamertag,
+        reason=row.reason,
+        banned_by=row.banned_by,
+        created_at=row.created_at,
+        expires_at=row.expires_at,
+    )
+
+
+def server_ban_to_row(ban: ServerBan) -> dict[str, Any]:
+    """Proyección de ``ServerBan`` a los campos de ``ServerBanRow``."""
+    return {
+        "id": ban.id,
+        "server_id": ban.server_id,
+        "xuid": ban.xuid,
+        "gamertag": ban.gamertag,
+        "reason": ban.reason,
+        "banned_by": ban.banned_by,
+        "created_at": ban.created_at,
+        "expires_at": ban.expires_at,
+    }
+
+
+def server_ban_from_row(row: ServerBanRow) -> ServerBan:
+    """Reconstruye ``ServerBan`` desde una fila."""
+    return ServerBan(
+        id=row.id,
+        server_id=row.server_id,
+        xuid=row.xuid,
+        gamertag=row.gamertag,
+        reason=row.reason,
+        banned_by=row.banned_by,
+        created_at=row.created_at,
+        expires_at=row.expires_at,
     )

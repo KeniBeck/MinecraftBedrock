@@ -59,6 +59,17 @@ class Settings(BaseSettings):
     monitoring_poll_interval_seconds: float = 5.0
     monitoring_probe_timeout: float = 2.0
 
+    # Scheduler (Fase G paso 15): intervalo del reloj, ventana para reconciliar
+    # fallos de backup y backoff mínimo de la política de reinicio tras crash.
+    scheduler_poll_interval_seconds: float = 5.0
+    scheduler_reconcile_window_seconds: float = 30.0
+    scheduler_crash_retry_seconds: float = 60.0
+
+    # Notification (Fase H paso 17): cuotas del gateway WebSocket.
+    notification_rate_per_second: float = 100.0
+    notification_burst: int = 100
+    notification_resume_limit: int = 1000
+
 
 @lru_cache
 def get_settings() -> Settings:

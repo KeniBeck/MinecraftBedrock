@@ -1,7 +1,8 @@
-"""Adaptadores de runtime (FASE A).
+"""Adaptadores de runtime (FASE A, multi-servidor).
 
-``DockerRuntimeAdapter`` implementa ``ServerRuntimePort`` sobre un único
-contenedor Docker; los DTOs normalizados se exponen sin tipos del SDK. La
+``DockerRuntimeAdapter`` implementa ``ServerRuntimePort`` con un contenedor por
+servidor (nombre ``{container_prefix}-{server_id}``, que coincide con el
+``runtime_id``); los DTOs normalizados se exponen sin tipos del SDK. La
 construcción del cliente Docker queda encapsulada en ``DockerClientFactory``.
 """
 

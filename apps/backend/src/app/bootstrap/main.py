@@ -23,20 +23,29 @@ from app.modules.backup.api.router import router as backup_router
 from app.modules.console.api.router import router as console_router
 from app.modules.iam.api.router import router as iam_router
 from app.modules.monitoring.api.router import router as monitoring_router
+from app.modules.notification.api.router import router as notification_router
+from app.modules.permission.api.router import router as permission_router
 from app.modules.player.api.router import router as player_router
+from app.modules.scheduler.api.router import router as scheduler_router
 from app.modules.server.api.router import router as server_router
+from app.modules.template.api.router import router as template_router
 from app.modules.world.api.router import router as world_router
 
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-    poller = app.state.container.monitoring_poller
-    if poller is not None:
+    monitor = app.state.container.monitoring_poller
+    scheduler = app.state.container.scheduler_poller
+    pollers = [poller for poller in (monitor, scheduler) if poller is not None]
+    reconciler = app.state.container.console_stream_reconciler
+    if reconciler is not None:
+        await reconciler.reconcile()
+    for poller in pollers:
         await poller.start()
     try:
         yield
     finally:
-        if poller is not None:
+        for poller in pollers:
             await poller.stop()
         await app.state.container.database.dispose()
 
@@ -67,7 +76,11 @@ def create_app(container: Container | None = None) -> FastAPI:
     app.include_router(monitoring_router, prefix=api_prefix)
     app.include_router(world_router, prefix=api_prefix)
     app.include_router(player_router, prefix=api_prefix)
+    app.include_router(permission_router, prefix=api_prefix)
     app.include_router(backup_router, prefix=api_prefix)
+    app.include_router(scheduler_router, prefix=api_prefix)
+    app.include_router(template_router, prefix=api_prefix)
+    app.include_router(notification_router, prefix=api_prefix)
 
     _register_root(app)
     return app

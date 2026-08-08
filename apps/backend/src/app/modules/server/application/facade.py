@@ -14,6 +14,7 @@ from app.modules.server.application.commands import (
     StopServerCommand,
 )
 from app.modules.server.application.handlers import (
+    AllowlistToggledHandler,
     ConfigChangedHandler,
     WorldActivatedHandler,
 )
@@ -35,6 +36,7 @@ from app.modules.server.application.use_cases import (
     StopServerUseCase,
 )
 from app.modules.server.domain.events import (
+    ALLOWLIST_TOGGLED_TOPIC,
     CONFIG_CHANGED_TOPIC,
     WORLD_ACTIVATED_TOPIC,
 )
@@ -115,3 +117,6 @@ class ServerFacade:
         """Suscriptores del módulo sobre el bus (Blueprint §3.2)."""
         self.deps.bus.subscribe(CONFIG_CHANGED_TOPIC, ConfigChangedHandler(self._apply_config))
         self.deps.bus.subscribe(WORLD_ACTIVATED_TOPIC, WorldActivatedHandler(self._apply_config))
+        self.deps.bus.subscribe(
+            ALLOWLIST_TOGGLED_TOPIC, AllowlistToggledHandler(self._apply_config)
+        )

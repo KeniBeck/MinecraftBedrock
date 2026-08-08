@@ -1,13 +1,22 @@
 """Adaptador Docker de ``ServerRuntimePort`` (Blueprint §4.1, FASE A).
 
-Gestiona un **único** contenedor Minecraft Bedrock mediante Docker SDK for
-Python (docker-py). No se usa ``subprocess`` ni comandos docker por shell.
+Gestiona **un contenedor por servidor** mediante Docker SDK for Python
+(docker-py). No se usa ``subprocess`` ni comandos docker por shell.
 
-- El nombre del contenedor sale de ``DockerRuntimeSettings.container_name``;
-  no hay valores hardcodeados.
-- Implementa los métodos de ``ServerRuntimePort`` (§4.1) de forma estructural
-  (no hereda el Protocol; ver change-log). Los ``runtime_id`` son opcionales y,
-  si se omiten o coinciden con el contenedor gestionado, se opera sobre él.
+- En FASE A el adaptador manipulaba un único contenedor
+  (``DockerRuntimeSettings.container_name``). Se generalizó (fin de FASE A
+  single-container): cada ``server_id`` tiene su propio contenedor cuyo nombre
+  es ``{container_prefix}-{server_id}`` (prefijo de
+  ``DockerRuntimeSettings.container_prefix``). Ese nombre **es** el
+  ``runtime_id`` que se devuelve de ``materialize`` y que el módulo Server
+  persiste y pasa a cada método.
+- Cada método resuelve el contenedor por ``runtime_id`` vía
+  ``client.containers.get(runtime_id)``; ya no hay "el" contenedor gestionado.
+  ``NotFound`` se traduce a ``ContainerNotFoundError``.
+- ``materialize`` extrae el ``server_id`` del label
+  ``bedrockpanel.server_id`` (que siembre deja ``RuntimeSpecFactory.render``).
+- El volumen ``{storage.base_path}/{server_id}:/data`` y los puertos ya vienen
+  correctamente por servidor en el ``RuntimeSpec`` (no roto en el runtime).
 - **No crea clientes Docker**: la construcción queda encapsulada en
   ``DockerClientFactory`` (inyectado por DI); el adaptador solo lo consulta.
 - Toda excepción del SDK o del transporte se traduce a errores del kernel
@@ -44,7 +53,7 @@ logger = get_logger(__name__)
 P = ParamSpec("P")
 R = TypeVar("R")
 
-_IMAGE_LOOKUP_OPERATIONS = frozenset({"create_if_missing", "materialize"})
+_IMAGE_LOOKUP_OPERATIONS = frozenset({"materialize"})
 
 _DOCKER_STATE_TO_RUNTIME: dict[str, RuntimeState] = {
     "created": RuntimeState.CREATED,
@@ -69,14 +78,6 @@ def _nano_cpus(cpus: float | None) -> int | None:
 def _cpus_from_nano(nano: int | None) -> float | None:
     """Convierte nanoCPUs del HostConfig a fracción de CPUs."""
     return nano / 1_000_000_000 if nano else None
-
-
-def _restart_policy(policy: str) -> dict[str, Any]:
-    """Normaliza ``restart_policy`` (p. ej. ``on-failure:3``) al formato Docker."""
-    if ":" in policy:
-        name, count = policy.split(":", 1)
-        return {"Name": name, "MaximumRetryCount": int(count)}
-    return {"Name": policy}
 
 
 def _parse_env(env: list[str]) -> dict[str, str]:
@@ -228,11 +229,12 @@ def _map_docker_errors(func: Callable[P, R]) -> Callable[P, R]:  # noqa: UP047 �
 
 
 class DockerRuntimeAdapter:
-    """Adaptador runtime sobre un único contenedor Docker (FASE A).
+    """Adaptador runtime Docker con un contenedor por servidor.
 
-    No hereda ``ServerRuntimePort`` (los Protocol son estructurales); los
-    métodos con ``runtime_id`` lo aceptan opcional: si se omite o coincide con
-    el contenedor gestionado por Settings, se opera sobre él.
+    No hereda ``ServerRuntimePort`` (los Protocol son estructurales). El nombre
+    real del contenedor es ``{container_prefix}-{server_id}`` y **coincide** con
+    el ``runtime_id`` que devuelve ``materialize`` y que el módulo Server
+    persiste. Cada método resuelve su contenedor a partir de ese ``runtime_id``.
     """
 
     def __init__(
@@ -250,48 +252,36 @@ class DockerRuntimeAdapter:
             self._docker_client = self._docker_client_factory.create()
         return self._docker_client
 
-    def _container(self) -> Any:
-        client = self._client()
+    @staticmethod
+    def _container_name(server_id: str, settings: DockerRuntimeSettings) -> str:
+        """Nombre real del contenedor de un servidor."""
+        return f"{settings.container_prefix}-{server_id}"
+
+    def _get_container(self, runtime_id: str) -> Any:
+        """Resuelve el contenedor por ``runtime_id`` (NotFound → kernel)."""
         try:
-            return client.containers.get(self._settings.container_name)
+            return self._client().containers.get(runtime_id)
         except NotFound as exc:
             raise ContainerNotFoundError(
-                f"El contenedor '{self._settings.container_name}' no existe",
-                context={"container_name": self._settings.container_name},
+                f"El contenedor '{runtime_id}' no existe",
+                context={"runtime_id": runtime_id},
             ) from exc
 
-    def _validate_runtime_id(self, runtime_id: str | None) -> None:
-        if runtime_id is not None and runtime_id != self._settings.container_name:
-            raise ContainerNotFoundError(
-                f"El runtime '{runtime_id}' no corresponde al contenedor gestionado",
-                context={
-                    "runtime_id": runtime_id,
-                    "container_name": self._settings.container_name,
-                },
+    @staticmethod
+    def _require_runtime_id(runtime_id: str | None) -> str:
+        if runtime_id is None:
+            raise DockerError(
+                "runtime_id requerido: el adaptador es multi-servidor y no hay "
+                "'un' contenedor gestionado",
+                context={"operation": "resolve"},
             )
+        return runtime_id
 
-    def _volumes(self) -> list[str]:
-        volumes: list[str] = []
-        if self._settings.data_volume:
-            volumes.append(f"{self._settings.data_volume}:/data")
-        if self._settings.world_volume:
-            volumes.append(f"{self._settings.world_volume}:/data/worlds")
-        return volumes
-
-    def _remove_volumes(self) -> None:
-        client = self._client()
-        for volume_name in (self._settings.data_volume, self._settings.world_volume):
-            if not volume_name:
-                continue
-            try:
-                client.volumes.get(volume_name).remove(force=True)
-            except NotFound:
-                continue
-
-    def exists(self) -> bool:
-        """Comprueba si el contenedor gestionado existe (FASE A)."""
+    def exists(self, runtime_id: str | None = None) -> bool:
+        """Comprueba si el contenedor del ``runtime_id`` existe."""
+        runtime_id = self._require_runtime_id(runtime_id)
         try:
-            self._client().containers.get(self._settings.container_name)
+            self._client().containers.get(runtime_id)
         except NotFound:
             return False
         except DockerException as exc:
@@ -318,121 +308,101 @@ class DockerRuntimeAdapter:
 
     def is_running(self, runtime_id: str | None = None) -> bool:
         """Devuelve ``True`` solo si el contenedor existe y está ejecutándose."""
-        self._validate_runtime_id(runtime_id)
-        if not self.exists():
+        runtime_id = self._require_runtime_id(runtime_id)
+        if not self.exists(runtime_id):
             return False
-        return self.status().running
-
-    @_map_docker_errors
-    def create_if_missing(self) -> None:
-        """Crea el contenedor (con Settings) si aún no existe (FASE A)."""
-        if self.exists():
-            return
-        client = self._client()
-        name = self._settings.container_name
-        started = time.perf_counter()
-        logger.info("runtime.create", extra={"container": name, "phase": "begin"})
-        client.containers.create(
-            self._settings.image,
-            name=name,
-            ports=self._settings.ports or None,
-            volumes=self._volumes() or None,
-            network=self._settings.network,
-            restart_policy=_restart_policy(self._settings.restart_policy),
-            mem_limit=self._settings.memory_limit,
-            nano_cpus=_nano_cpus(self._settings.cpu_limit),
-            detach=True,
-            stdin_open=True,
-            tty=True,
-        )
-        logger.info(
-            "runtime.create",
-            extra={"container": name, "phase": "end", "elapsed_ms": _elapsed_ms(started)},
-        )
+        return self.status(runtime_id).running
 
     @_map_docker_errors
     def start(self, runtime_id: str | None = None) -> None:
         """Arranca el contenedor; no espera a que el juego responda."""
-        self._validate_runtime_id(runtime_id)
-        name = self._settings.container_name
+        runtime_id = self._require_runtime_id(runtime_id)
         started = time.perf_counter()
-        logger.info("runtime.start", extra={"container": name, "phase": "begin"})
-        container = self._container()
+        logger.info("runtime.start", extra={"container": runtime_id, "phase": "begin"})
+        container = self._get_container(runtime_id)
         container.start()
         logger.info(
             "runtime.start",
-            extra={"container": name, "phase": "end", "elapsed_ms": _elapsed_ms(started)},
+            extra={"container": runtime_id, "phase": "end", "elapsed_ms": _elapsed_ms(started)},
         )
 
     @_map_docker_errors
     def stop(self, runtime_id: str | None = None, grace: int = 30) -> None:
         """Parada ordenada con espera de ``grace`` segundos; si no, fuerza."""
-        self._validate_runtime_id(runtime_id)
-        name = self._settings.container_name
+        runtime_id = self._require_runtime_id(runtime_id)
         started = time.perf_counter()
-        logger.info("runtime.stop", extra={"container": name, "phase": "begin", "grace": grace})
-        container = self._container()
+        logger.info(
+            "runtime.stop",
+            extra={"container": runtime_id, "phase": "begin", "grace": grace},
+        )
+        container = self._get_container(runtime_id)
         container.stop(timeout=grace)
         logger.info(
             "runtime.stop",
-            extra={"container": name, "phase": "end", "elapsed_ms": _elapsed_ms(started)},
+            extra={"container": runtime_id, "phase": "end", "elapsed_ms": _elapsed_ms(started)},
         )
 
     @_map_docker_errors
     def restart(self, runtime_id: str | None = None, grace: int = 30) -> None:
         """Parada ordenada + arranque del contenedor."""
-        self._validate_runtime_id(runtime_id)
-        name = self._settings.container_name
+        runtime_id = self._require_runtime_id(runtime_id)
         started = time.perf_counter()
-        logger.info("runtime.restart", extra={"container": name, "phase": "begin", "grace": grace})
-        container = self._container()
+        logger.info(
+            "runtime.restart",
+            extra={"container": runtime_id, "phase": "begin", "grace": grace},
+        )
+        container = self._get_container(runtime_id)
         container.restart(timeout=grace)
         logger.info(
             "runtime.restart",
-            extra={"container": name, "phase": "end", "elapsed_ms": _elapsed_ms(started)},
+            extra={"container": runtime_id, "phase": "end", "elapsed_ms": _elapsed_ms(started)},
         )
 
     @_map_docker_errors
     def remove(self, runtime_id: str | None = None, delete_data: bool = False) -> None:
-        """Elimina el contenedor (idempotente); ``delete_data`` borra los volúmenes."""
-        self._validate_runtime_id(runtime_id)
-        if not self.exists():
+        """Elimina el contenedor del servidor (idempotente); ``delete_data`` no borra el bind mount.
+
+        El volumen es un bind mount ``{base_path}/{server_id}:/data`` que el
+        panel no gestiona como volumen Docker; ``delete_data`` se conserva por
+        compatibilidad con el protocolo pero el directorio en disco lo limpia la
+        capa de storage al eliminar el servidor, no este adaptador (limpieza
+        por ``server_id`` fuera del ámbito del runtime).
+        """
+        runtime_id = self._require_runtime_id(runtime_id)
+        if not self.exists(runtime_id):
             return
-        name = self._settings.container_name
         started = time.perf_counter()
         logger.info(
             "runtime.remove",
-            extra={"container": name, "phase": "begin", "delete_data": delete_data},
+            extra={"container": runtime_id, "phase": "begin", "delete_data": delete_data},
         )
-        container = self._container()
+        container = self._get_container(runtime_id)
         container.remove(force=True)
-        if delete_data:
-            self._remove_volumes()
         logger.info(
             "runtime.remove",
-            extra={"container": name, "phase": "end", "elapsed_ms": _elapsed_ms(started)},
+            extra={"container": runtime_id, "phase": "end", "elapsed_ms": _elapsed_ms(started)},
         )
 
     @_map_docker_errors
     def status(self, runtime_id: str | None = None) -> RuntimeStatus:
-        """Estado normalizado del contenedor como DTO (FASE A)."""
-        self._validate_runtime_id(runtime_id)
-        container = self._container()
-        return _build_status(container.attrs, self._settings.container_name)
+        """Estado normalizado del contenedor como DTO."""
+        runtime_id = self._require_runtime_id(runtime_id)
+        container = self._get_container(runtime_id)
+        return _build_status(container.attrs, runtime_id)
 
     @_map_docker_errors
     def inspect(self, runtime_id: str | None = None) -> RuntimeInspect:
-        """Inspección completa del contenedor normalizada a dominio (FASE A)."""
-        self._validate_runtime_id(runtime_id)
-        container = self._container()
+        """Inspección completa del contenedor normalizada a dominio."""
+        runtime_id = self._require_runtime_id(runtime_id)
+        container = self._get_container(runtime_id)
         raw = container.attrs
-        return _build_inspect(raw, self._settings)
+        return _build_inspect(raw, container.name)
 
     @_map_docker_errors
     def logs(self, runtime_id: str | None = None, *, tail: int = 200) -> str:
-        """Últimas ``tail`` líneas de stdout/stderr del contenedor (FASE A)."""
-        self._validate_runtime_id(runtime_id)
-        container = self._container()
+        """Últimas ``tail`` líneas de stdout/stderr del contenedor."""
+        runtime_id = self._require_runtime_id(runtime_id)
+        container = self._get_container(runtime_id)
         raw = container.logs(tail=tail)
         if isinstance(raw, bytes):
             return raw.decode("utf-8", errors="replace")
@@ -440,29 +410,37 @@ class DockerRuntimeAdapter:
 
     @_map_docker_errors
     def materialize(self, spec: RuntimeSpec) -> str:
-        """Crea el contenedor desde un ``RuntimeSpec`` sin arrancarlo (§4.1).
+        """Crea el contenedor del servidor desde un ``RuntimeSpec`` sin arrancarlo (§4.1).
 
-        Si ya existe un contenedor con el mismo nombre (FASE A: uno solo), se
-        elimina y se recrea con el ``spec`` actual — evita reutilizar un
-        artefacto viejo sin ``EULA``/puertos incorrectos.
+        Resuelve el ``server_id`` del label ``bedrockpanel.server_id`` y deriva
+        el nombre ``{container_prefix}-{server_id}``. Si ya existe un contenedor
+        con ese nombre (de ESTE servidor), se elimina y se recrea con el ``spec``
+        actual (evita reutilizar un artefacto viejo sin ``EULA``/puertos mal).
+        Devuelve el nombre como ``runtime_id``.
         """
-        name = self._settings.container_name
+        server_id = (spec.labels or {}).get("bedrockpanel.server_id")
+        if not server_id:
+            raise DockerError(
+                "El RuntimeSpec no identifica el server_id (falta label bedrockpanel.server_id)",
+                context={"labels": spec.labels},
+            )
+        runtime_id = self._container_name(server_id, self._settings)
         image_ref = f"{spec.image}:{spec.tag}" if spec.tag else spec.image
         started = time.perf_counter()
         logger.info(
             "runtime.materialize",
-            extra={"container": name, "phase": "begin", "image": image_ref},
+            extra={"container": runtime_id, "phase": "begin", "image": image_ref},
         )
-        if self.exists():
+        if self.exists(runtime_id):
             logger.info(
                 "runtime.materialize",
-                extra={"container": name, "phase": "replace"},
+                extra={"container": runtime_id, "phase": "replace"},
             )
-            self.remove(name, delete_data=False)
+            self.remove(runtime_id, delete_data=False)
         client = self._client()
         client.containers.create(
             image_ref,
-            name=name,
+            name=runtime_id,
             environment=spec.environment or None,
             ports=spec.ports or None,
             volumes=spec.volumes or None,
@@ -477,21 +455,19 @@ class DockerRuntimeAdapter:
         )
         logger.info(
             "runtime.materialize",
-            extra={"container": name, "phase": "end", "elapsed_ms": _elapsed_ms(started)},
+            extra={"container": runtime_id, "phase": "end", "elapsed_ms": _elapsed_ms(started)},
         )
-        return name
+        return runtime_id
 
     @_map_docker_errors
     def get_state(self, runtime_id: str | None = None) -> RuntimeState:
         """Estado normalizado del runtime (§4.1)."""
-        self._validate_runtime_id(runtime_id)
-        return self.status().status
+        return self.status(runtime_id).status
 
     @_map_docker_errors
     def get_health(self, runtime_id: str | None = None) -> dict[str, Any]:
         """Salud del runtime y último estado reportado (§4.1)."""
-        self._validate_runtime_id(runtime_id)
-        st = self.status()
+        st = self.status(runtime_id)
         return {
             "container_id": st.container_id,
             "health": st.health,
@@ -501,9 +477,8 @@ class DockerRuntimeAdapter:
 
     @_map_docker_errors
     def get_resources(self, runtime_id: str | None = None) -> dict[str, Any]:
-        """CPU/RAM actuales del proceso (§4.1). Sin deltas en FASE A."""
-        self._validate_runtime_id(runtime_id)
-        container = self._container()
+        """CPU/RAM actuales del proceso (§4.1)."""
+        container = self._get_container(self._require_runtime_id(runtime_id))
         stats = container.stats(stream=False) or {}
         memory = stats.get("memory_stats") or {}
         cpu = stats.get("cpu_stats") or {}
@@ -518,8 +493,7 @@ class DockerRuntimeAdapter:
     @_map_docker_errors
     def get_exit_code(self, runtime_id: str | None = None) -> int | None:
         """Código de salida del último proceso (§4.1)."""
-        self._validate_runtime_id(runtime_id)
-        container = self._container()
+        container = self._get_container(self._require_runtime_id(runtime_id))
         exit_code = (container.attrs.get("State") or {}).get("ExitCode")
         return int(exit_code) if isinstance(exit_code, int) else None
 
@@ -527,27 +501,27 @@ class DockerRuntimeAdapter:
     def stream_logs(self, runtime_id: str | None = None) -> Iterator[bytes]:
         """Stream en vivo de líneas stdout/stderr (cola + streaming) (§4.1).
 
-        ``container.logs(stream=True, follow=True, tail="all")``: el iterador
-        es bloqueante sobre el socket del daemon y termina cuando el contenedor
-        se detiene/elimina (el daemon cierra el stream). El consumo se hace en
-        un hilo worker dentro de ``ConsoleLogStream.consume`` para no bloquear
-        el event loop (change-log §20).
+        ``container.logs(stream=True, follow=True, tail=0)``: el iterador es
+        bloqueante sobre el socket del daemon y termina cuando el contenedor se
+        detiene/elimina (el daemon cierra el stream). ``tail=0`` hace que el
+        stream arranque **solo con líneas nuevas** (desde el attach), sin
+        rejugar el historial del contenedor: tras un stop/start la cola de BDS
+        conserva líneas viejas de ``Player connected`` de sesiones previas, que
+        re-jugadas dispararían ``PLAYER.JOINED`` fantasma y el enforcement de
+        bans contra un jugador que no está realmente conectado en el contenedor
+        recién arrancado (bug real, change-log §14).
         """
-        self._validate_runtime_id(runtime_id)
-        container = self._container()
-        return cast(Iterator[bytes], container.logs(stream=True, follow=True, tail="all"))
+        container = self._get_container(self._require_runtime_id(runtime_id))
+        return cast(Iterator[bytes], container.logs(stream=True, follow=True, tail=0))
 
     @_map_docker_errors
     def send_stdin(self, runtime_id: str, data: str) -> None:
-        """Escribe en el stdin del proceso (§4.1; mínimo en FASE A)."""
-        self._validate_runtime_id(runtime_id)
-        container = self._container()
-        socket = container.attach_socket(params={"stdin": 1, "stdout": 0, "stderr": 0})
+        """Escribe en el stdin del proceso (§4.1)."""
+        container = self._get_container(self._require_runtime_id(runtime_id))
+        socket = container.attach_socket(params={"stdin": 1, "stdout": 0, "stderr": 0, "stream": 1})
         try:
-            stream = socket.makefile("w")
-            stream.write(data)
-            stream.flush()
-            stream.close()
+            raw = socket._sock if hasattr(socket, "_sock") else socket
+            raw.sendall(data.encode("utf-8"))
         finally:
             socket.close()
 
@@ -559,7 +533,7 @@ class DockerRuntimeAdapter:
         timeout: int = 60,
     ) -> None:
         """Espera una condición del runtime con timeout (§4.1)."""
-        self._validate_runtime_id(runtime_id)
+        runtime_id = self._require_runtime_id(runtime_id)
         supported = {"running", "stopped"}
         if condition not in supported:
             raise DockerError(
@@ -568,9 +542,11 @@ class DockerRuntimeAdapter:
             )
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if condition == "running" and self.is_running():
+            if condition == "running" and self.is_running(runtime_id):
                 return
-            if condition == "stopped" and (not self.exists() or not self.is_running()):
+            if condition == "stopped" and (
+                not self.exists(runtime_id) or not self.is_running(runtime_id)
+            ):
                 return
             time.sleep(0.5)
         raise DockerTimeoutError(
@@ -581,8 +557,7 @@ class DockerRuntimeAdapter:
     @_map_docker_errors
     def signal(self, runtime_id: str, sig: int) -> None:
         """Señal explícita (SIGTERM/SIGKILL) al contenedor (§4.1)."""
-        self._validate_runtime_id(runtime_id)
-        container = self._container()
+        container = self._get_container(self._require_runtime_id(runtime_id))
         container.kill(signal=sig)
 
 
@@ -611,13 +586,13 @@ def _build_status(raw: dict[str, Any], name: str) -> RuntimeStatus:
     )
 
 
-def _build_inspect(raw: dict[str, Any], settings: DockerRuntimeSettings) -> RuntimeInspect:
+def _build_inspect(raw: dict[str, Any], name: str) -> RuntimeInspect:
     """Construye ``RuntimeInspect`` desde los attrs crudos del contenedor."""
     state = raw.get("State") or {}
     config = raw.get("Config") or {}
     host = raw.get("HostConfig") or {}
     return RuntimeInspect(
-        status=_build_status(raw, settings.container_name),
+        status=_build_status(raw, name),
         environment=_parse_env(config.get("Env") or []),
         command=list(config.get("Cmd") or []),
         memory_limit_bytes=host.get("Memory"),

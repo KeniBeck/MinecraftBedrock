@@ -17,3 +17,6 @@ class ServerConsoleReader(Protocol):
 
     async def get_server(self, server_id: str) -> ServerView | None:
         """Devuelve la proyección del servidor o ``None`` si no existe."""
+
+    async def list_servers(self) -> list[ServerView]:
+        """Devuelve la proyección de todos los servidores (lectura)."""

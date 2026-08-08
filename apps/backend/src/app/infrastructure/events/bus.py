@@ -39,6 +39,8 @@ class InProcessEventBus:
 
 
 def _matches(subscription: str, topic: str) -> bool:
+    if subscription == "*":
+        return True
     if subscription.endswith(".*"):
         return topic.startswith(subscription[:-1])
     return subscription == topic

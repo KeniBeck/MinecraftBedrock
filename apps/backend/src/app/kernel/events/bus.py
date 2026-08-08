@@ -23,7 +23,8 @@ class EventBusPort(Protocol):
     def subscribe(self, topic: str, handler: EventHandler) -> None:
         """Registra un consumidor idempotente para el tema ``topic``.
 
-        El tema deriva del contexto del evento (Blueprint §10.3), p. ej. ``server.*``.
+        El tema deriva del contexto del evento (Blueprint §10.3), p. ej.
+        ``server.*`` como comodín de prefijo y ``*`` para recibir todo.
         """
 
     async def consume(self) -> None:

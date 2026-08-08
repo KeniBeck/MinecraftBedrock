@@ -170,8 +170,8 @@ def test_spec_usa_version_existing_si_hay_binario_local(monkeypatch: pytest.Monk
 def test_spec_detecta_binario_en_directorio_data_del_repo(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    repo_data_dir = tmp_path / "data"
-    repo_data_dir.mkdir()
+    repo_data_dir = tmp_path / "data" / "srv-1"
+    repo_data_dir.mkdir(parents=True)
     (repo_data_dir / "bedrock_server-1.26.40.8").write_text("bin", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 
@@ -190,8 +190,8 @@ def test_spec_detecta_binario_en_directorio_data_del_repo(
 def test_spec_usa_existing_cuando_hay_binario_local_con_otra_version(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    repo_data_dir = tmp_path / "data"
-    repo_data_dir.mkdir()
+    repo_data_dir = tmp_path / "data" / "srv-1"
+    repo_data_dir.mkdir(parents=True)
     (repo_data_dir / "bedrock_server-1.26.40.8").write_text("bin", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 
@@ -204,6 +204,39 @@ def test_spec_usa_existing_cuando_hay_binario_local_con_otra_version(
     )
 
     assert spec.environment["VERSION"] == "EXISTING"
+
+
+def test_candidate_data_dirs_siempre_incluye_server_id() -> None:
+    base = "/tmp/bedrockpanel"
+    a = {candidate.name for candidate in spec_factory_module._candidate_data_dirs(base, "srv-1")}
+    b = {candidate.name for candidate in spec_factory_module._candidate_data_dirs(base, "srv-2")}
+
+    assert all(name == "srv-1" for name in a)
+    assert all(name == "srv-2" for name in b)
+    assert a.isdisjoint(b)
+
+
+def test_render_v1_v2_no_comparten_volumen(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shared = tmp_path / "data"
+    shared.mkdir(parents=True)
+    (shared / "bedrock_server-1.26.40.8").write_text("bin", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    settings = FakeSettings({"storage.base_path": "/tmp/bedrockpanel"})
+    spec_factory = RuntimeSpecFactory(settings)
+
+    v1 = spec_factory.render(
+        "v1", "v1", DesiredConfig(version="1.26.40.8", environment={}, config_rev=1)
+    )
+    v2 = spec_factory.render(
+        "v2", "v2", DesiredConfig(version="1.26.40.8", environment={}, config_rev=1)
+    )
+
+    assert v1.volumes != v2.volumes
+    assert pathlib.Path(v1.volumes[0].split(":")[0]).name == "v1"
+    assert pathlib.Path(v2.volumes[0].split(":")[0]).name == "v2"
 
 
 async def test_spec_usa_config_deseada_env_y_b7() -> None:

@@ -60,18 +60,22 @@ def _candidate_data_dirs(base_path: str | Path, server_id: str) -> list[Path]:
     datos del proyecto (por ejemplo ``data/`` en la raíz del repo) cuando ya
     existe allí el binario Bedrock, incluso si el proceso se inicia desde otra
     carpeta.
+
+    Invariante: cada candidato SIEMPRE termina en ``/{server_id}``. Nunca se
+    reutiliza una carpeta compartida sin ``server_id`` en la ruta, porque eso
+    haría que todos los servers cayeran en el mismo directorio físico (el atajo
+    de dev de "reusar el binario ya descargado" debe ser por servidor, jamás
+    compartido).
     """
     base = Path(base_path)
-    candidates: list[Path] = [base / server_id, base]
+    candidates: list[Path] = [base / server_id]
 
     start_points = [Path(__file__).resolve(), Path.cwd(), base]
     for start in start_points:
         for path in [start, *start.parents]:
             if path.name == "data":
-                candidates.append(path)
-            else:
-                candidates.append(path / "data")
                 candidates.append(path / server_id)
+            else:
                 candidates.append(path / "data" / server_id)
 
     seen: dict[Path, None] = {}

@@ -51,12 +51,16 @@ class ApplyConfigCommand:
     Configuration — decisión §22). ``level_name`` es el directorio del mundo
     activado (el ``name`` de ``WORLD.ACTIVATED``): se inyecta como env
     ``LEVEL_NAME`` al renderizar el spec (decisión §22, ``WORLD.ACTIVATED`` →
-    recrear con level-name).
+    recrear con level-name). ``allow_list`` es el toggle de ``ALLOW_LIST`` del
+    evento ``PERMISSION.ALLOWLIST_TOGGLED``: se inyecta como env
+    ``ALLOW_LIST=<true/false>`` al renderizar el spec (mismo mecanismo que
+    ``LEVEL_NAME``).
     """
 
     server_id: str
     config_rev: int | None = None
     level_name: str | None = None
+    allow_list: bool | None = None
     actor_id: str | None = None
 
 

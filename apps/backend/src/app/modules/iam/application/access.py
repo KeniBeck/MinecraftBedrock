@@ -45,6 +45,10 @@ READ_ACTIONS: frozenset[str] = frozenset(
         "player.online",
         "audit.view",
         "iam.user.list",
+        "task.list",
+        "task.view",
+        "template.list",
+        "template.view",
     }
 )
 

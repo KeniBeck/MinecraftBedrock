@@ -63,6 +63,15 @@ class ConsoleStreamManager:
         if not server_id:
             return
         logger.info("SERVER.STARTED recibido; evaluando arranque del stream de %s", server_id)
+        await self.ensure_stream(server_id)
+
+    async def ensure_stream(self, server_id: str) -> None:
+        """Arranca el consumo del stream para ``server_id`` si aún no está activo.
+
+        Es idempotente: si ya hay una tarea en curso lo omite. Se reutiliza tanto
+        desde el ``SERVER.STARTED`` como desde la reconciliación de arranque del
+        panel (mismo efecto para un servidor que ya estaba running).
+        """
         if self.active(server_id):
             logger.info("Stream de %s ya activo; se omite el arranque", server_id)
             return
