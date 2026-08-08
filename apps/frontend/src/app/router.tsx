@@ -1,0 +1,30 @@
+import { createBrowserRouter, Navigate } from 'react-router-dom'
+
+import { AppLayout } from '@/components/layout/AppLayout'
+import { LoginPage } from '@/features/auth/LoginPage'
+import { ServerDetailPage } from '@/features/servers/ServerDetailPage'
+import { RequireAuth, RequireGuest } from '@/lib/auth/guards'
+import { ServerRedirect } from '@/features/servers/ServerRedirect'
+
+export const router = createBrowserRouter([
+  {
+    element: <RequireGuest />,
+    children: [{ path: '/login', element: <LoginPage /> }],
+  },
+  {
+    element: <RequireAuth />,
+    children: [
+      {
+        element: <AppLayout />,
+        children: [
+          // La raíz y /servers delegan en AppLayout (que selecciona el primer
+          // servidor y navega a su detalle).
+          { index: true, element: <ServerRedirect /> },
+          { path: '/servers', element: <ServerRedirect /> },
+          { path: '/servers/:serverId', element: <ServerDetailPage /> },
+        ],
+      },
+    ],
+  },
+  { path: '*', element: <Navigate to="/" replace /> },
+])

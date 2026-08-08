@@ -1,15 +1,27 @@
+import { useEffect } from 'react'
+import { RouterProvider } from 'react-router-dom'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
+import { router } from '@/app/router'
+import { applyTheme, useThemeStore } from '@/stores/theme'
 
-function App() {
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { staleTime: 30_000, retry: 1 },
+  },
+})
+
+export default function App() {
+  const theme = useThemeStore((state) => state.theme)
+
+  // Aplica el tema guardado (dark por defecto) al `<html>`.
+  useEffect(() => {
+    applyTheme(theme)
+  }, [theme])
 
   return (
-    <>
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100">
-        <h1 className="text-4xl font-bold text-gray-800">Welcome to the Minecraft Bedrock App</h1>
-        <p className="mt-4 text-lg text-gray-600">This is a simple React application using Vite and Tailwind CSS.</p>
-      </div>  
-    </>
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>
   )
 }
-
-export default App
