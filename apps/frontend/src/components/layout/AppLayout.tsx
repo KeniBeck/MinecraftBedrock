@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Outlet, useNavigate } from 'react-router-dom'
 
 import { Background } from '@/components/Background'
@@ -13,6 +13,7 @@ import { useServers } from '@/features/servers/hooks'
  */
 export function AppLayout() {
   const navigate = useNavigate()
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth < 768)
   const activeServerId = useActiveServer((state) => state.activeServerId)
   const setActiveServer = useActiveServer((state) => state.setActiveServer)
   const { data: servers = [] } = useServers()
@@ -31,9 +32,12 @@ export function AppLayout() {
     <div className="min-h-screen text-foreground">
       <Background />
       <div className="flex">
-        <Sidebar />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <Header />
+<Sidebar
+            collapsed={sidebarCollapsed}
+            onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
+          />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <Header />
           <main className="flex-1 p-4 sm:p-6">
             <Outlet />
           </main>

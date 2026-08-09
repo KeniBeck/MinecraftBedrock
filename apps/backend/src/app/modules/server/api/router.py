@@ -8,8 +8,11 @@ resultado → respuesta (Blueprint §4.7); no contiene reglas de negocio.
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, Request
 
+from app.bootstrap.container import Container
 from app.bootstrap.errors import http_error
 from app.bootstrap.security import (
     get_container,
@@ -24,6 +27,8 @@ from app.modules.server.api.schemas import (
     CreateServerRequest,
     RestartServerRequest,
     ServerConnectionResponse,
+    ServerDetailResourcesResponse,
+    ServerDetailResponse,
     ServerResponse,
     StopServerRequest,
     UpdateResourcesRequest,
@@ -40,12 +45,29 @@ from app.modules.server.application.commands import (
 )
 from app.modules.server.application.facade import ServerFacade
 from app.modules.server.application.results import ServerView
+from app.modules.server.domain.server import ServerId
 
 router = APIRouter(tags=["server"])
 
 
 def _facade(request: Request) -> ServerFacade:
     return get_container(request).server_facade
+
+
+async def _resources(container: Container, server_id: str) -> ServerDetailResourcesResponse:
+    """Recursos del servidor desde el ``RuntimeSpec`` persistido + ajustes de disco.
+
+    CPU/RAM se leen del ``jsonb`` ``spec["resources"]`` (sin columnas nuevas);
+    ``disk_gb`` sale del ajuste global ``limits.default_disk_gb``.
+    """
+    resources: dict[str, Any] = {}
+    server = await container.server_repository.get(ServerId(server_id))
+    if server is not None:
+        resources = server.spec.resources
+    cpu_cores = float(resources.get("cpus", resources.get("cpu_cores", 0)))
+    ram_mb = int(resources.get("memory_mb", resources.get("ram_mb", 0)))
+    disk_gb = int(container.settings_service.get("limits.default_disk_gb", 10))
+    return ServerDetailResourcesResponse(cpu_cores=cpu_cores, ram_mb=ram_mb, disk_gb=disk_gb)
 
 
 def _response(view: ServerView) -> ServerResponse:
@@ -91,19 +113,24 @@ async def list_servers(
 
 @router.get(
     "/servers/{server_id}",
-    response_model=ServerResponse,
+    response_model=ServerDetailResponse,
     summary="Estado de un servidor",
 )
 async def get_server(
     server_id: str,
     request: Request,
     identity: Identity = Depends(require_server_action("server.view")),
-) -> ServerResponse:
+) -> ServerDetailResponse:
     del identity
     view = await _facade(request).get_server(server_id)
     if view is None:
         raise http_error(404, "SERVER.NOT_FOUND", f"Servidor no encontrado: {server_id}")
-    return _response(view)
+    container = get_container(request)
+    base = _response(view)
+    return ServerDetailResponse(
+        **base.model_dump(),
+        resources=await _resources(container, server_id),
+    )
 
 
 @router.post(

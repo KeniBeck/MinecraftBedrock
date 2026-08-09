@@ -1,15 +1,10 @@
+import { useEffect, useState } from 'react'
+
 import { Loader2, Play, RotateCw, Square } from 'lucide-react'
 
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import { serverActions, STATE_BADGE, STATE_LABEL } from '@/lib/serverState'
+import { serverActions, STATE_LABEL } from '@/lib/serverState'
+import { currentBackground, useThemeStore } from '@/stores/theme'
 import type { Server } from '@/lib/api/servers'
 import { cn } from '@/lib/utils'
 
@@ -21,92 +16,150 @@ interface ServerCardProps {
   busy: 'start' | 'stop' | 'restart' | null
 }
 
-function StatPill({ label, value }: { label: string; value: string }) {
+function textColor(state: Server['state']): string {
+  if (state === 'running' || state === 'starting') return 'text-emerald-300'
+  if (state === 'crashed') return 'text-red-300'
+  return 'text-slate-300'
+}
+
+function StatusBadge({ state }: { state: Server['state'] }) {
+  const isRunning = state === 'running' || state === 'starting'
+  const dot = isRunning
+    ? 'bg-emerald-400 shadow-[0_0_0_3px_rgba(16,185,129,.18)]'
+    : state === 'crashed'
+      ? 'bg-red-400 shadow-[0_0_0_3px_rgba(248,113,113,.18)]'
+      : 'bg-slate-400 shadow-[0_0_0_3px_rgba(148,163,184,.15)]'
   return (
-    <div className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="font-semibold text-foreground">{value}</span>
-    </div>
+    <span className="inline-flex items-center gap-2 border border-black bg-slate-900/70 px-2.5 py-1 shadow-[inset_1px_1px_0_rgba(255,255,255,.15),inset_-1px_-1px_0_rgba(0,0,0,.4)]">
+      <span className={cn('size-2 rounded-none', dot)} />
+      <span className={cn('font-pixel text-[9px] tracking-wider', textColor(state))}>
+        {STATE_LABEL[state]}
+      </span>
+    </span>
   )
 }
 
+function CeilTag({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="pixel-tag max-w-[18rem]">
+      <span className="pixel-tag-label">{label}</span>
+      <span className="pixel-tag-value min-w-0 truncate" title={value}>
+        {value}
+      </span>
+    </span>
+  )
+}
+
+/** Tiempo activo aproximado desde `updated_at` cuando el server está en línea. */
+function UptimeLabel({ server }: { server: Server }) {
+  const isRunning = server.state === 'running' || server.state === 'starting'
+  const [now, setNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    if (!isRunning) return
+    const timer = setInterval(() => setNow(Date.now()), 60_000)
+    return () => clearInterval(timer)
+  }, [isRunning])
+
+  if (!isRunning) {
+    return <span className="pixel-tag-value text-slate-400">—</span>
+  }
+  const elapsed = Math.max(0, now - new Date(server.updated_at).getTime())
+  const hours = Math.floor(elapsed / 3_600_000)
+  const minutes = Math.floor((elapsed % 3_600_000) / 60_000)
+  const text = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`
+  return <span className="pixel-tag-value text-slate-200">{text}</span>
+}
+
 /**
- * Card grande del servidor (mockup §9.1): miniatura, nombre, badge de estado,
- * metadata en pastillas y los 4 botones de acción con color semántico.
+ * Card principal del servidor (mockup §9.1) como bloque con bisel. Layout en dos
+ * columnas: a la izquierda el "mundo" (la imagen de fondo del panel, renderizada
+ * pixelada), al centro el título + badge y una cuadrícula de datos, y a la
+ * derecha la columna vertical de acciones (Iniciar/Reiniciar/Detener/Backup).
  */
 export function ServerCard({ server, onStart, onStop, onRestart, busy }: ServerCardProps) {
   const actions = serverActions(server.state)
-  const isRunning = server.state === 'running' || server.state === 'starting'
+  const backgroundId = useThemeStore((state) => state.backgroundId)
+  const background = currentBackground({ backgroundId })
+  const running = server.state === 'running' || server.state === 'starting'
+
+  const actionButtons = [
+    { key: 'start' as const, variant: 'start' as const, label: 'Iniciar', icon: <Play />, disabled: !actions.canStart, onClick: onStart },
+    { key: 'restart' as const, variant: 'restart' as const, label: 'Reiniciar', icon: <RotateCw />, disabled: !actions.canRestart, onClick: onRestart },
+    { key: 'stop' as const, variant: 'stop' as const, label: 'Detener', icon: <Square />, disabled: !actions.canStop, onClick: onStop },
+  ]
 
   return (
-    <Card className="overflow-hidden rounded-2xl border-white/10 bg-slate-900/60 backdrop-blur-xl">
-      {/* Miniatura decorativa (sin mundo todavía — Fase 4). */}
-      <div className="h-36 bg-gradient-to-br from-indigo-900/60 via-slate-900/40 to-emerald-900/30" />
-      <CardHeader className="flex flex-row items-start justify-between gap-4">
-        <div className="min-w-0">
-          <CardTitle className="text-2xl">{server.name}</CardTitle>
-          <CardDescription
-            title={server.image_ref}
-            className="max-w-[26rem] truncate"
-          >
-            {server.image_ref}
-          </CardDescription>
+    <section
+      className={cn(
+        'relative w-full rounded-xl bg-slate-900/60 backdrop-blur-xl border border-white/10',
+        'grid gap-6 p-6 md:grid-cols-[auto_1fr_auto]',
+      )}
+    >
+      {/* Col 1 — el mundo: imagen de fondo pixelada (reemplaza al avatar). */}
+      <div
+        className="relative aspect-[4/3] w-40 shrink-0 overflow-hidden rounded-xl border border-black/60 bg-black/40"
+        style={{ imageRendering: 'pixelated' }}
+        aria-hidden
+      >
+        <div
+          className="absolute inset-0"
+          style={{
+            background: background.css,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+          }}
+        />
+        {running && (
+          <span className="absolute right-1.5 top-1.5 flex size-2.5 rounded-none bg-emerald-400 shadow-[0_0_0_3px_rgba(16,185,129,.25)]" />
+        )}
+      </div>
+
+      {/* Col 2 — título + badge + cuadrícula de datos. */}
+      <div className="flex min-w-0 flex-col gap-4">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <h2 className="pixel-title truncate text-base text-white sm:text-lg">{server.name}</h2>
+          <StatusBadge state={server.state} />
         </div>
-        <Badge className={cn('mt-1', STATE_BADGE[server.state])}>
-          <span
-            className={cn(
-              'size-1.5 rounded-full',
-              isRunning ? 'bg-emerald-400' : server.state === 'crashed' ? 'bg-red-400' : 'bg-slate-400',
-            )}
-          />
-          {STATE_LABEL[server.state]}
-        </Badge>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex flex-wrap gap-2">
-          <StatPill label="Versión" value={server.version} />
-          <StatPill label="Dirección" value={server.connection.address} />
-          <StatPill label="Puerto" value={String(server.connection.port)} />
-          <StatPill label="RCON" value={server.connection.rcon_port ? String(server.connection.rcon_port) : '—'} />
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <CeilTag label="Versión" value={server.version} />
+          <CeilTag label="Mundo" value={server.name} />
+          <CeilTag label="Dirección" value={server.connection.address} />
+          <div className="pixel-tag max-w-[18rem]">
+            <span className="pixel-tag-label">Tiempo activo</span>
+            <UptimeLabel server={server} />
+          </div>
         </div>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      </div>
+
+      {/* Col 3 — botones de acción apilados a la derecha. */}
+      <div className="flex flex-col gap-3">
+        {actionButtons.map((a) => (
           <Button
-            variant="start"
-            disabled={!actions.canStart || busy !== null}
-            onClick={onStart}
-            data-testid="start-button"
+            key={a.key}
+            variant={a.variant}
+            size="lg"
+            disabled={a.disabled || busy !== null}
+            onClick={a.onClick}
+            data-testid={`${a.key}-button`}
+            className="w-full h-12 text-base"
           >
-            {busy === 'start' ? <Loader2 className="animate-spin" /> : <Play />}
-            Iniciar
+            {busy === a.key ? <Loader2 className="animate-spin" /> : a.icon}
+            {a.label}
           </Button>
-          <Button
-            variant="restart"
-            disabled={!actions.canRestart || busy !== null}
-            onClick={onRestart}
-            data-testid="restart-button"
-          >
-            {busy === 'restart' ? <Loader2 className="animate-spin" /> : <RotateCw />}
-            Reiniciar
-          </Button>
-          <Button
-            variant="stop"
-            disabled={!actions.canStop || busy !== null}
-            onClick={onStop}
-            data-testid="stop-button"
-          >
-            {busy === 'stop' ? <Loader2 className="animate-spin" /> : <Square />}
-            Detener
-          </Button>
-          <Button
-            variant="backup"
-            disabled
-            data-testid="backup-button"
-            title="Disponible en una fase posterior"
-          >
-            Crear backup
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
+        ))}
+        <Button
+          variant="backup"
+          size="lg"
+          disabled
+          data-testid="backup-button"
+          title="Disponible en una fase posterior"
+          className="w-full h-12 text-base"
+        >
+          Crear backup
+        </Button>
+      </div>
+    </section>
   )
 }

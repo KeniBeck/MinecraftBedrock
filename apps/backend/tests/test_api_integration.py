@@ -1193,3 +1193,36 @@ class TestServerResourcesApi:
         audit: Any = container_of(client).iam_facade.deps.audit
         actions = [entry.action for entry in audit.entries]
         assert "server.resources.update" in actions
+
+    def test_detalle_expone_resources_con_valores_correctos(self, client: TestClient) -> None:
+        """``GET /servers/{id}`` incluye ``resources`` (CPU/RAM/Disco)."""
+        auth = login(client, "root")
+        server_id = create_server(client, auth)
+
+        client.put(
+            f"/api/v1/servers/{server_id}/resources",
+            json={"cpu_cores": 4, "ram_mb": 8192},
+            headers=auth,
+        )
+
+        detail = client.get(f"/api/v1/servers/{server_id}", headers=auth)
+
+        assert detail.status_code == 200
+        body = detail.json()
+        assert body["id"] == server_id
+        assert body["resources"]["cpu_cores"] == 4.0
+        assert body["resources"]["ram_mb"] == 8192
+        assert body["resources"]["disk_gb"] == 10
+
+    def test_listado_no_incluye_campo_resources(self, client: TestClient) -> None:
+        """``GET /servers`` (lista) permanece liviana: sin el campo ``resources``."""
+        auth = login(client, "root")
+        server_id = create_server(client, auth)
+
+        listing = client.get("/api/v1/servers", headers=auth)
+
+        assert listing.status_code == 200
+        batch = listing.json()
+        assert len(batch) == 1
+        assert batch[0]["id"] == server_id
+        assert "resources" not in batch[0]

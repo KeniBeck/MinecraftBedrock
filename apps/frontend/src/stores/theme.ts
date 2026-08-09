@@ -3,13 +3,26 @@ import { persist } from 'zustand/middleware'
 
 export type Theme = 'dark' | 'light'
 
+/** Tipo de fondo: gradiente CSS (default) o imagen real tratada como luz difusa. */
+export type BackgroundType = 'gradient' | 'image'
+
 export interface BackgroundDef {
   id: string
   name: string
-  /** Clase CSS con `background` (gradiente/voxel) aplicada a las capas. */
+  /**
+   * Clase CSS con `background` aplicada a las capas. Para `type: 'gradient'`
+   * es la cadena de gradientes radiales/lineales; para `type: 'image'` es un
+   * shorthand `url(...) center/cover no-repeat`.
+   */
   css: string
   /** Paleta de acento asociada (frontend-standards §9.2: mapa fijo). */
   accent: string
+  /**
+   * Cómo renderiza el componente `Background` esta definición. Las imágenes
+   * reales se desenfocan con `blur()` para actuar como luz ambiental difusa y
+   * no romper el glassmorphism de las superficies.
+   */
+  type?: BackgroundType
 }
 
 /**
@@ -36,6 +49,13 @@ export const BACKGROUNDS: BackgroundDef[] = [
     css: 'radial-gradient(1100px 750px at 65% -15%, rgba(190,18,60,0.45), transparent 60%), radial-gradient(900px 700px at 15% 110%, rgba(124,45,18,0.5), transparent 60%), linear-gradient(180deg, #14060a 0%, #1a0b12 55%, #241019 100%)',
     accent: 'orange',
   },
+  {
+    id: 'world',
+    name: 'Mundo Costero',
+    accent: 'cyan',
+    type: 'image',
+    css: 'url("/backgrounds/mundo-mn.webp") center/cover no-repeat',
+  },
 ]
 
 interface ThemeState {
@@ -50,7 +70,7 @@ export const useThemeStore = create<ThemeState>()(
   persist(
     (set, get) => ({
       theme: 'dark',
-      backgroundId: 'cave',
+      backgroundId: 'world',
       setTheme: (theme) => set({ theme }),
       toggleTheme: () => set({ theme: get().theme === 'dark' ? 'light' : 'dark' }),
       setBackground: (backgroundId) => set({ backgroundId }),

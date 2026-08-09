@@ -47,6 +47,14 @@ class ServerResourcesResponse(BaseModel):
     ram_mb: int
 
 
+class ServerDetailResourcesResponse(BaseModel):
+    """Recursos configurados del servidor, expuestos solo en el detalle."""
+
+    cpu_cores: float
+    ram_mb: int
+    disk_gb: int
+
+
 class ServerConnectionResponse(BaseModel):
     host: str = Field(description="Host o dominio público donde escucha el servidor")
     port: int = Field(description="Puerto UDP IPv4 del juego en el host")
@@ -68,3 +76,14 @@ class ServerResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     connection: ServerConnectionResponse
+
+
+class ServerDetailResponse(ServerResponse):
+    """Respuesta de detalle (``GET /servers/{id}``) que añade ``resources``.
+
+    A diferencia de ``ServerResponse`` (usado por el listado ``GET /servers``),
+    incluye un objeto ``resources`` con CPU/RAM (leídos del ``RuntimeSpec`` ya
+    persistido) y el disco por defecto del panel (ajuste ``limits.default_disk_gb``).
+    """
+
+    resources: ServerDetailResourcesResponse

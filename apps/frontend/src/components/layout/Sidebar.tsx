@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   Archive,
@@ -39,8 +38,18 @@ const SIDEBAR_ITEMS = [
   { label: 'Logs', icon: Database, disabled: true },
 ]
 
-export function Sidebar() {
-  const [collapsed, setCollapsed] = useState(false)
+/**
+ * Sidebar con estilo de inventario de Minecraft (prototipo card-pixelada-v2):
+ * superficie texturizada con bisel de dos tonos, borde negro, ítem activo como
+ * bloque esmeralda y hover con el "wash" blanco translúcido de los slots.
+ */
+export function Sidebar({
+  collapsed,
+  onToggleCollapsed,
+}: {
+  collapsed: boolean
+  onToggleCollapsed: () => void
+}) {
   const { serverId } = useParams<{ serverId: string }>()
   const activeServerId = useActiveServer((state) => state.activeServerId)
   const resolvedServerId = serverId ?? activeServerId
@@ -48,41 +57,41 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        'sticky top-0 flex h-screen shrink-0 flex-col border-r border-white/10 bg-slate-900/60 backdrop-blur-xl transition-[width]',
+        'pixel-panel sticky top-0 flex h-screen shrink-0 flex-col transition-[width]',
         collapsed ? 'w-16' : 'w-60',
       )}
     >
       {/* Logo + flecha de colapso (mockup §9.1). */}
-      <div className="flex items-center justify-between px-4 py-4">
+      <div className="flex items-center justify-between border-b border-black px-4 py-4">
         {!collapsed && (
-          <span className="font-pixel text-sm tracking-widest text-white">BEDROCK PANEL</span>
+          <span className="pixel-title text-sm tracking-widest text-white">BEDROCK PANEL</span>
         )}
         <button
           type="button"
-          onClick={() => setCollapsed((value) => !value)}
-          className="rounded-lg p-1.5 text-muted-foreground hover:bg-white/10 hover:text-white"
+          onClick={onToggleCollapsed}
+          className="rounded-none border border-black bg-slate-800/80 p-1.5 text-slate-300 shadow-[inset_1px_1px_0_rgba(255,255,255,.2),inset_-1px_-1px_0_rgba(0,0,0,.4)] hover:bg-white/10 hover:text-white"
           aria-label={collapsed ? 'Expandir menú' : 'Colapsar menú'}
         >
           <ChevronLeft className={cn('size-4 transition-transform', collapsed && 'rotate-180')} />
         </button>
       </div>
 
-      <nav className="flex-1 space-y-1 px-2 py-2">
+      <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-2">
         {SIDEBAR_ITEMS.map((item) => {
           const Icon = item.icon
           const active = item.href === '/servers' && Boolean(resolvedServerId)
           const itemContent = (
             <>
               <Icon className="size-5 shrink-0" />
-              {!collapsed && <span>{item.label}</span>}
+              {!collapsed && <span className="text-sm">{item.label}</span>}
             </>
           )
           const classes = cn(
-            'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
+            'flex items-center gap-3 px-3 py-2',
             active
-              ? 'bg-emerald-500 text-white'
-              : 'text-muted-foreground hover:bg-white/10 hover:text-white',
-            item.disabled && 'cursor-not-allowed opacity-40 hover:bg-transparent hover:text-muted-foreground',
+              ? 'pixel-nav-active text-sm font-bold'
+              : 'pixel-nav text-slate-300',
+            item.disabled && 'cursor-not-allowed opacity-40 hover:bg-transparent hover:shadow-none',
           )
           if (item.disabled || !item.href) {
             return (
@@ -103,10 +112,10 @@ export function Sidebar() {
       </nav>
 
       {/* Pie: versión + Open Source (mockup §9.1). */}
-      <div className="border-t border-white/10 px-4 py-3">
+      <div className="border-t border-black px-4 py-3">
         {!collapsed && (
-          <p className="text-xs text-muted-foreground">
-            v0.1.0 · <span className="text-white/60">Open Source</span>
+          <p className="pixel-overline text-slate-400">
+            v0.1.0 · <span className="text-slate-300">Open Source</span>
           </p>
         )}
       </div>

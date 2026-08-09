@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./styles/pixel-theme.css" layer(components);
 
 @custom-variant dark (&:is(.dark *));
 
@@ -26,7 +27,7 @@
   --radius-md: var(--radius-md);
   --radius-lg: var(--radius-lg);
   --radius-xl: var(--radius-xl);
-  --font-pixel: "Courier New", monospace;
+  --font-pixel: "Press Start 2P", "Courier New", monospace;
   --animate-background-fade: background-fade 0.7s ease-out;
 }
 
@@ -94,5 +95,22 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+/* Fondo general del prototipo (gradiente radial oscuro sobre --bg-deep). */
+body {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 20% 15%, rgba(139, 92, 246, 0.25), transparent 45%),
+    radial-gradient(circle at 80% 80%, rgba(16, 185, 129, 0.12), transparent 40%),
+    var(--bg-deep);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pixel-card,
+  .pixel-card:hover {
+    transition: none;
+    transform: none;
   }
 }

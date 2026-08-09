@@ -25,6 +25,14 @@ export interface ServerConnection {
 }
 
 /** `ServerResponse` real. */
+/** `ServerDetailResourcesResponse` — recursos configurados (solo detalle). */
+export interface ServerResources {
+  cpu_cores: number
+  ram_mb: number
+  disk_gb: number
+}
+
+/** `ServerResponse` real. `resources` solo está presente en el detalle. */
 export interface Server {
   id: string
   name: string
@@ -35,6 +43,7 @@ export interface Server {
   created_at: string
   updated_at: string
   connection: ServerConnection
+  resources?: ServerResources
 }
 
 /** Cuerpo de `POST /servers` (CreateServerRequest). */

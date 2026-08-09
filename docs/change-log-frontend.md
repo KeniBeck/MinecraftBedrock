@@ -230,3 +230,184 @@ por valor visual: si en la revisión visual sobra, se puede quitar o reemplazar
 
 - `pnpm lint` ✅ · `pnpm typecheck` ✅ · `pnpm test` ✅ (24 passed) ·
   `pnpm build` ✅
+
+### Extensión — Fondos de imagen real ("Mundo Costero") (2026-08-08)
+
+> **Origen**: el catálogo de `BACKGROUNDS` (`src/stores/theme.ts`) solo
+> soportaba gradientes CSS. El estándar (§9.2) y el plan mencionaban la
+> posibilidad de imágenes, pero la implementación no las manejaba.
+
+### Alcance
+
+- **`BackgroundDef.type`**: nuevo campo `type: 'gradient' | 'image'`
+  (opcional, default `'gradient'`). El catálogo distingue cómo debe renderizar
+  cada fondo el componente `Background`.
+- **Nuevo fondo `world`** ("Mundo Costero"): `type: 'image'`, acento `cyan`,
+  `css: 'url("/backgrounds/mundo-mn.webp") center/cover no-repeat'`. La imagen
+  vive en `apps/frontend/public/backgrounds/mundo-mn.webp` (WebP, servida por
+  Vite desde la raíz `/backgrounds/...`).
+- **`Background.tsx`**: cuando el fondo es `type: 'image'`, la capa se
+  renderiza con `filter: blur(80px)` + `transform: scale(1.1)` además del
+  `background` del `css`. El crossfade (remount por `key` + `animate-background-fade`)
+  es idéntico al de los gradientes, así que cambiar entre `cave` y `world` no
+  introduce parpadeos.
+
+### Decisiones
+
+- **Imágenes = "luz ambiental difusa", no póster nítido**: las superficies de
+  la app (Sidebar, Header, Cards) usan `backdrop-blur-xl` sobre fondos
+  semitransparentes. Si la imagen se renderizara enfocada, sus detalles
+  atravesarían el cristal y romperían la ilusión de profundidad del
+  glassmorphism del mockup. El `blur(80px)` convierte la imagen en luz difusa;
+  el `scale(1.1)` oculta los bordes del desenfoque.
+- **Los gradientes siguen siendo el default**: generan bordes suaves que se
+  difuminan naturalmente detrás del `backdrop-blur`, por eso el catálogo no los
+  reemplaza — la imagen es una opción adicional, no la nueva normal.
+- Imagen elegida por el usuario: `mundo-mn.webp` (más ligera que la otra
+  opción `continente-oscuro.png`, 39 KB vs 3.5 MB).
+
+### Archivos
+
+| Archivo | Contenido |
+|---|---|
+| `src/stores/theme.ts` | `BackgroundType`, campo `type` en `BackgroundDef`, fondo `world` |
+| `src/components/Background.tsx` | Render de imágenes con `blur(80px)` + `scale(1.1)` |
+| `public/backgrounds/mundo-mn.webp` | Imagen del fondo "Mundo Costero" |
+| `docs/frontend-standards.md` | §9.2 ampliado con tipos de fondo y nota técnica de blur |
+| `docs/change-log-frontend.md` | Esta entrada |
+
+### Verificación
+
+- `pnpm lint` ✅ · `pnpm typecheck` ✅ · `pnpm test` ✅ (24 passed) ·
+  `pnpm build` ✅
+- Pendiente de prueba manual en navegador (criterio de parada): el fondo
+  `world` aparece en el selector y el crossfade entre `cave` (gradiente) y
+  `world` (imagen borrosa) se ve suave y estético.
+
+### Fix — "Desenfoque estratégico" del fondo de imagen (2026-08-08)
+
+> **Origen**: tras la prueba manual, el fondo `world` con `blur(80px)` +
+> `scale(1.1)` se veía como una mancha abstracta de color — el desenfoque era
+> excesivo y destruía la imagen. El usuario pidió que el desenfoque fuera
+> "estratégico": ver la silueta del paisaje en el centro, con los bordes
+> integrados al tema oscuro del panel.
+
+### Alcance
+
+- **`Background.tsx`**:
+  - Filtro reducido de `blur(80px)` → `blur(12px)` y `scale(1.1)` → `scale(1.05)`.
+  - **Nueva capa de viñeta radial** encima de la imagen (solo `type: 'image'`):
+    `radial-gradient(circle at 50% 50%, transparent 40%, rgba(9,10,20,0.85) 100%)`.
+    Oscurece los bordes de forma estratégica sin ocultar el centro del paisaje.
+
+### Decisiones
+
+- **Desenfoque estratégico, no extremo**: `blur(12px)` mantiene la coherencia
+  con el glassmorphism (los detalles nítidos no atraviesan el cristal de las
+  superficies) pero deja ver la forma del paisaje (océano/tierra) en el centro.
+- **La viñeta radial es la clave del acabado**: el gradiente transparente →
+  `rgba(9,10,20,0.85)` funde los bordes con el tema oscuro del panel de forma
+  gradual, evitando el corte duro de un simple `bg-black/30`.
+
+### Archivos
+
+| Archivo | Contenido |
+|---|---|
+| `src/components/Background.tsx` | `blur(12px)` + `scale(1.05)` + viñeta radial para imágenes |
+| `docs/frontend-standards.md` | §9.2 nota técnica actualizada (blur 12px + viñeta radial) |
+| `docs/change-log-frontend.md` | Esta entrada |
+
+### Verificación
+
+- `pnpm lint` ✅ · `pnpm typecheck` ✅ · `pnpm test` ✅ (24 passed) ·
+  `pnpm build` ✅
+- Pendiente de prueba manual en navegador: seleccionar "Mundo Costero" y
+  confirmar que se ve el paisaje en el centro mientras los bordes se fusionan
+  con el tema oscuro.
+
+### Header — refactor a bloques flotantes (glassmorphism) (2026-08-08)
+
+> **Origen**: el `Header` era una barra sólida (`pixel-panel` con borde).
+> `frontend-standards.md §9.1` exige bloques individuales "islas" flotando
+> sobre el fondo dinámico. Refactor completo del header, descartando la
+> barra previa.
+
+### Alcance
+
+- **Contenedor (**`Header`**)** pasa de barra a `flex-row` sin fondo propio:
+  `sticky top-0 z-20 flex flex-row items-center gap-3 px-4 py-3`. El
+  `AppLayout` ya no aporta ninguna superficie de barra al header.
+- **4 bloques independientes**, cada uno un div propio con la superficie
+  `glass` del mockup (§9.1/§9.2):
+  `bg-slate-900/60 backdrop-blur-xl border border-white/10 rounded-xl px-4 py-2.5 flex items-center shrink-0`, separados por `gap-3`.
+  - **1 · Izq**: logo "BEDROCK PANEL" (pixel-title) + icón sword + flecha de
+    colapso del sidebar.
+  - **2 · Centro-izq**: selector de servidor real (dropdown) con icono de
+    espada, "Servidor: {nombre}" y estado en línea con punto verde.
+  - **3 · Centro-der**: contador de jugadores (avatar verde + "X / 10
+    jugadores").
+  - **4 · Derecha**: campana con badge de pendientes, engranaje y menú de
+    perfil con avatar y chevron.
+- **Estado de colapso del sidebar elevado** a `AppLayout` (era local a
+  `Sidebar` con `useState`); ahora `Sidebar` y el bloque 1 del header
+  comparten `collapsed`/`onToggleCollapsed` vía props.
+- Contador de jugadores y badge de la campana como placeholders (0) hasta
+  cablearlos a eventos del WS.
+
+### Archivos
+
+| Archivo | Contenido |
+|---|---|
+| `src/components/layout/Header.tsx` | Refactor a 4 bloques flotantes sin barra |
+| `src/components/layout/AppLayout.tsx` | Eleva estado de colapso y limpia el contenedor |
+| `src/components/layout/Sidebar.tsx` | Recibe `collapsed`/`onToggleCollapsed` por props (colaboración mínima) |
+| `docs/change-log-frontend.md` | Esta entrada |
+
+### Verificación
+
+- `pnpm lint` ✅ · `pnpm typecheck` ✅ · `pnpm build` ✅
+- Pendiente de prueba manual en navegador (criterio de parada): el header se
+  ve como cuatro "islas" flotantes sobre el fondo, no como una barra, y la
+  flecha del header contrae el sidebar.
+
+> **Nota**: para que el flecha de colapso del bloque 1 controlara el sidebar
+> fue necesario elevar el estado de colapso (que residía en `Sidebar`) a
+> `AppLayout` y pasarlo por props — `Sidebar.tsx` se tocó solo para recibir
+> esas props; la decisión del mockup no cambió.
+
+### Header — Reemplazo de iconos del header por imágenes reales y eliminación del botón de colapso del sidebar (2026-08-08)
+
+> **Origen**: revisión visual del header en bloques. Los iconos lucide
+> (espada gris y cabeza de Steve con degradado) no transmitían el lenguaje
+> "ítem de Minecraft"; el botón de colapso del sidebar duplicaba al que ya
+> vive en el propio `Sidebar`.
+
+### Alcance
+
+- **Se elimina el botón de colapso** del header (bloque 1): desaparece el
+  `<button>` con `<ChevronLeft />` que quedaba a la izquierda del selector de
+  servidor. El header ahora arranca directamente con el selector. El control de
+  colapso sigue disponible en el `Sidebar` (donde vive el logo "BEDROCK
+  PANEL"). Las props `collapsed`/`onToggleCollapsed` se mantienen en la firma
+  (renombradas `_collapsed`/`_onToggleCollapsed`) para no romper el contrato con
+  `AppLayout`.
+- **Selector de servidor**: el icono de espada gris (lucide `Sword`) se
+  reemplaza por `<img src="/icons/Diamond_Sword_JE3_BE3.webp">` con clases
+  `w-4 h-4 object-contain shrink-0` (ícono real de Minecraft).
+- **Contador de jugadores**: el span con degradado (cabeza de Steve) se
+  reemplaza por `<img src="/icons/dressing_room_skins.png">` con las mismas
+  clases (ícono real de Minecraft).
+
+### Archivos
+
+| Archivo | Contenido |
+|---|---|
+| `src/components/layout/Header.tsx` | Elimina botón de colapso, reemplaza iconos por `<img>` reales |
+| `docs/change-log-frontend.md` | Esta entrada |
+
+### Verificación
+
+- `pnpm lint` ✅ · `pnpm typecheck` ✅
+- Pendiente de confirmación visual del usuario (criterio de parada): el botón
+  `<` ya no aparece en el header y ambas imágenes (`Diamond_Sword_JE3_BE3.webp`
+  y `dressing_room_skins.png`) se renderizan en sus bloques.

@@ -301,6 +301,37 @@ acento, no solo la imagen.
   cada fondo del catálogo trae su propia combinación coherente predefinida
   por quien diseñe los fondos, no calculada.
 
+**Tipos de fondo (implementación real, `BackgroundDef.type`)**: el catálogo
+distingue `'gradient' | 'image'`. La **implementación por defecto usa
+gradientes radiales/lineales** (radial-gradient + linear-gradient con
+transparencias `rgba`), ya que estos generan bordes suaves e iluminaciones
+que se difuminan naturalmente detrás del `backdrop-blur` de las superficies,
+manteniendo la lectura limpia de la UI. El campo `css` de cada entrada es un
+string de `background` CSS; para los gradientes es la cadena completa de
+capas.
+
+**Nota técnica sobre imágenes reales**: si se implementan imágenes reales,
+estas deben ser tratadas como "fuentes de luz difusa" mediante un **desenfoque
+estratégico** en el componente `Background` para evitar que los detalles nítidos
+rompan la ilusión de profundidad del glassmorphism: se recomienda
+`filter: blur(12px)` (12–16px) con un `scale(1.05)` para ocultar los bordes del
+desenfoque, y **una viñeta radial encima de la imagen** — `radial-gradient(circle,
+transparent 40%, rgba(9,10,20,0.85) 100%)` — que oscurece los bordes de forma
+estratégica sin ocultar el centro del paisaje. Un desenfoque excesivo
+(`blur(80px)`) deja ver solo una mancha abstracta de color; uno insuficiente hace
+que la imagen enfocada se vea como un póster pegado al fondo y atraviese el
+cristal de las superficies. El crossfade entre gradientes e imágenes es el mismo
+(remount por `key` con fade-in CSS); la imagen se precarga igual que los
+gradientes.
+
+- Catálogo actual (default `cave`):
+  - `cave` (gradiente) — acento `emerald` (el del mockup).
+  - `end` (gradiente) — acento `sky`.
+  - `nether` (gradiente) — acento `orange`.
+  - `world` (imagen, `url("/backgrounds/mundo-mn.webp") center/cover`) —
+    acento `cyan`. Se renderiza con `filter: blur(12px)` + `scale(1.05)` +
+    viñeta radial (transparente 40% → `rgba(9,10,20,0.85)` 100%).
+
 ### 9.3 Tokens visuales observados en el mockup (usar como base real)
 
 - Fondo base de superficies: azul-violeta muy oscuro con transparencia

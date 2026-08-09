@@ -54,7 +54,7 @@ describe('ServerDetailPage', () => {
 
   it('muestra la card del servidor con estado y metadata', async () => {
     renderPage()
-    await waitFor(() => expect(screen.getByText('Survival')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getAllByText('Survival').length).toBeGreaterThan(0))
     expect(screen.getAllByText('Detenido').length).toBeGreaterThan(0)
     expect(screen.getAllByText('localhost:19132').length).toBeGreaterThan(0)
   })

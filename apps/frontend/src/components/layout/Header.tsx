@@ -1,8 +1,14 @@
 import { useNavigate } from 'react-router-dom'
-import { Bell, Check, ChevronsUpDown, LogOut, Moon, Settings, Sun } from 'lucide-react'
+import {
+  Bell,
+  Check,
+  ChevronDown,
+  ChevronsUpDown,
+  LogOut,
+  Settings,
+} from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,13 +21,17 @@ import { useServers } from '@/features/servers/hooks'
 import { STATE_LABEL } from '@/lib/serverState'
 import { useActiveServer } from '@/stores/servers'
 import { useAuthStore } from '@/stores/auth'
-import { useThemeStore } from '@/stores/theme'
 import { cn } from '@/lib/utils'
 
 /**
- * Header del mockup (§9.1): a la izquierda la pastilla de servidor — selector
- * real con dropdown que cambia el servidor activo — y a la derecha campana,
- * ajustes y el menú de perfil con logout.
+ * Header del mockup (§9.1) como bloques flotantes de Minecraft con bisel de dos
+ * tonos (claro arriba-izq / oscuro abajo-der) sobre el fondo dinámico — NO una
+ * barra sólida. Cada bloque usa las mismas clases Tailwind (glassmorphism +
+ * bisel) sin CSS adicional:
+ *   1. Centro-izq: selector de servidor real (dropdown) con espada y estado.
+ *   2. Centro-der: contador de jugadores (icono + "X / 10 jugadores").
+ *   3. Der: campana con badge, engranaje y menú de perfil con chevron.
+ * (El logo y el control de colapso viven en el Sidebar; el header no los repite.)
  */
 export function Header() {
   const navigate = useNavigate()
@@ -29,11 +39,16 @@ export function Header() {
   const clear = useAuthStore((state) => state.clear)
   const activeServerId = useActiveServer((state) => state.activeServerId)
   const setActiveServer = useActiveServer((state) => state.setActiveServer)
-  const theme = useThemeStore((state) => state.theme)
-  const toggleTheme = useThemeStore((state) => state.toggleTheme)
 
   const { data: servers = [] } = useServers()
   const activeServer = servers.find((server) => server.id === activeServerId)
+
+  // Placeholder hasta conectar el contador a eventos del WS (§9.1).
+  const MAX_PLAYERS = 10
+  const onlinePlayers = 0
+  const unreadEvents = 0
+
+  const isOnline = activeServer?.state === 'running' || activeServer?.state === 'starting'
 
   function selectServer(serverId: string) {
     setActiveServer(serverId)
@@ -45,20 +60,39 @@ export function Header() {
     navigate('/login', { replace: true })
   }
 
+  // Clase base de cada "bloque": glassmorphism + bisel de Minecraft (§9.1/§9.2).
+  // Bisel claro arriba-izq y oscuro abajo-der = bloque saliente (como un slot).
+  const block = cn(
+    'relative rounded-xl bg-slate-900/60 bg-gradient-to-br from-white/[0.04] to-transparent',
+    'backdrop-blur-xl border border-white/10',
+    'shadow-[inset_1px_1px_0_rgba(255,255,255,0.16),inset_-1px_-1px_0_rgba(0,0,0,0.64)]',
+    'flex items-center shrink-0 px-4 py-2.5',
+  )
+
   return (
-    <header className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-white/10 bg-slate-900/50 px-4 py-3 backdrop-blur-xl">
-      {/* Selector de servidor real (mockup §9.1 — no una etiqueta). */}
+    <header className="sticky top-0 z-20 flex items-center gap-2 bg-transparent px-4 py-3">
+      {/* Bloque 1 — Selector de servidor real (dropdown, mockup §9.1). */}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button
-            variant="outline"
-            className="gap-2 border-white/10 bg-white/5 text-sm"
+          <button
+            type="button"
+            className={cn(block, 'gap-2.5 text-slate-200 transition-colors hover:bg-slate-800/70')}
             data-testid="server-selector"
           >
-            <span className="size-2 rounded-full bg-emerald-400" />
-            <span>Servidor: {activeServer?.name ?? '—'}</span>
-            <ChevronsUpDown className="size-4 text-muted-foreground" />
-          </Button>
+            <img
+              src="/icons/Diamond_Sword_JE3_BE3.webp"
+              alt="Espada de diamante"
+              className="w-8 h-8 object-contain shrink-0"
+            />
+            <span className="text-sm">Servidor: {activeServer?.name ?? '—'}</span>
+            <span
+              className={cn('size-2 rounded-full', isOnline ? 'bg-emerald-400' : 'bg-slate-500')}
+            />
+            <span className="text-xs text-slate-400">
+              {activeServer ? (isOnline ? 'En línea' : STATE_LABEL[activeServer.state]) : '—'}
+            </span>
+            <ChevronsUpDown className="size-4 text-slate-400" />
+          </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" data-testid="server-selector-menu">
           <DropdownMenuLabel>Servidores</DropdownMenuLabel>
@@ -88,26 +122,63 @@ export function Header() {
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {/* Derecha: campana, ajustes, perfil. */}
-      <div className="flex items-center gap-1">
-        <Button variant="ghost" size="icon" aria-label="Notificaciones" disabled>
+      {/* Bloque 2 — Contador de jugadores (mockup §9.1). */}
+      <div className={cn(block, 'gap-2.5')}>
+        <img
+          src="/icons/dressing_room_skins.png"
+          alt="Jugadores"
+          className="w-6 h-6 object-contain shrink-0"
+        />
+        <span className="whitespace-nowrap text-sm text-slate-200">
+          {onlinePlayers} / {MAX_PLAYERS} jugadores
+        </span>
+      </div>
+
+      {/* Separador elástico: empuja el bloque 3 a la derecha. */}
+      <div className="flex-1" />
+
+      {/* Bloque 3 — Campana (badge), engranaje y perfil (mockup §9.1). */}
+      <div className={cn(block, 'gap-0.5')}>
+        <button
+          type="button"
+          aria-label="Notificaciones"
+          title="Notificaciones"
+          className="relative rounded-lg p-1.5 text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
+        >
           <Bell className="size-5" />
-        </Button>
-        <Button variant="ghost" size="icon" aria-label="Ajustes del panel" disabled>
+          {unreadEvents > 0 && (
+            <span className="absolute -right-0.5 -top-0.5 flex size-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
+              {unreadEvents}
+            </span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          aria-label="Ajustes del panel"
+          title="Ajustes"
+          className="rounded-lg p-1.5 text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
+        >
           <Settings className="size-5" />
-        </Button>
-        <Button variant="ghost" size="icon" aria-label="Cambiar tema" onClick={toggleTheme}>
-          {theme === 'dark' ? <Sun className="size-5" /> : <Moon className="size-5" />}
-        </Button>
+        </button>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" className="gap-2 px-2" data-testid="profile-menu">
-              <span className="flex size-7 items-center justify-center rounded-full bg-emerald-500 text-xs font-bold text-white">
-                {identity?.username.slice(0, 1).toUpperCase() ?? '?'}
+            <button
+              type="button"
+              className="flex items-center gap-2 rounded-lg px-1.5 py-1 text-slate-200 transition-colors hover:bg-white/10"
+              data-testid="profile-menu"
+            >
+              <img
+                src="/avatar/skinmc-avatar.png"
+                alt="Avatar"
+                className="w-9 h-9 object-contain shrink-0 rounded-md"
+              />
+              <span className="hidden max-w-28 truncate text-sm sm:inline">
+                {identity?.username}
               </span>
-              <span className="hidden text-sm sm:inline">{identity?.username}</span>
-            </Button>
+              <ChevronDown className="size-4 text-slate-400" />
+            </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuLabel>{identity?.username}</DropdownMenuLabel>

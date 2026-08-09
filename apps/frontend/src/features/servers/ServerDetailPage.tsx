@@ -5,6 +5,7 @@ import { Loader2 } from 'lucide-react'
 
 import { getApiMessage } from '@/lib/api/client'
 import { useRestartServer, useServer, useStartServer, useStopServer } from '@/features/servers/hooks'
+import { useServerMonitoring } from '@/hooks/useServerMonitoring'
 import { ServerCard } from '@/features/servers/components/ServerCard'
 import { StatCards } from '@/features/servers/components/StatCards'
 
@@ -15,6 +16,8 @@ export function ServerDetailPage() {
   const { data: server, isLoading, isError, error } = useServer(serverId)
   const [busy, setBusy] = useState<BusyAction>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+
+  useServerMonitoring(serverId)
 
   const startMutation = useStartServer()
   const stopMutation = useStopServer()
@@ -39,7 +42,7 @@ export function ServerDetailPage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-24">
-        <Loader2 className="size-6 animate-spin text-muted-foreground" />
+        <Loader2 className="size-6 animate-spin text-emerald-300" />
       </div>
     )
   }
@@ -49,7 +52,7 @@ export function ServerDetailPage() {
     return (
       <div
         role="alert"
-        className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-6 text-sm text-red-300"
+        className="rounded-none border-2 border-red-500/40 bg-red-500/10 px-4 py-6 text-sm text-red-300 shadow-[inset_2px_2px_0_rgba(0,0,0,.3)]"
       >
         {message}
       </div>
@@ -57,11 +60,11 @@ export function ServerDetailPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {actionError && (
         <div
           role="alert"
-          className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300"
+          className="rounded-none border-2 border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-300 shadow-[inset_2px_2px_0_rgba(0,0,0,.3)]"
         >
           {actionError}
         </div>
@@ -75,7 +78,7 @@ export function ServerDetailPage() {
           run('restart', () => restartMutation.mutateAsync({ serverId: server.id }))
         }
       />
-      <StatCards server={server} />
+      <StatCards server={server} serverId={server.id} />
     </div>
   )
 }
