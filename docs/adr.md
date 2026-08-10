@@ -1,6 +1,6 @@
 # Architecture Decision Records — BedrockPanel
 
-> **Serie**: ADR-001 … ADR-012
+> **Serie**: ADR-001 … ADR-013
 > **Fecha**: 2026-08-05
 > **Origen**: Architecture Review v1.0
 > **Regla**: el `technical-design.md` (TDD) es **inmutable**. Los ADR registran problemas,
@@ -26,6 +26,7 @@
 | [ADR-010](#adr-010--factoría-de-cliente-docker-en-infrastructure) | Factoría de cliente Docker en Infrastructure | Accepted |
 | [ADR-011](#adr-011--bans-persistidos-globales-y-por-servidor) | Bans persistentes: globales y por servidor | Accepted |
 | [ADR-012](#adr-012--discrepancia-de-identidad-player--tdd-155) | Discrepancia de identidad `Player` vs TDD §15.5 | Accepted |
+| [ADR-013](#adr-013--migración-del-monitoring-al-gateway-único) | Migración del Monitoring al gateway único `/ws` | Proposed |
 
 ---
 
@@ -791,6 +792,78 @@ Se **mantiene la implementación actual** (identidad global por XUID en
   `GlobalBan`/`ServerBan` (ADR-011).
 - Las fases futuras (historial por servidor, métricas por jugador por servidor)
   deben usar `PlaySession`/`player_server_bans`, no `player_players`.
+
+---
+
+## ADR-013 — Migración del Monitoring al gateway único `/ws`
+
+> **Estado**: Proposed (pendiente de decisión — **NO ejecutar en esta pasada**)
+> **Fecha**: 2026-08-10
+> **Origen**: pasada de verificación del panel (change-log §30); revisión del
+> badge de jugadores del header y de la fuente en vivo de métricas
+
+### Problema
+
+Hoy conviven **dos endpoints WS** para el mismo servidor (verificado contra el
+código, frontend-standards §4):
+
+1. El **gateway único `/ws`** (`modules/notification`): eventos de negocio de
+   todos los dominios (estado, consola, jugadores, backups…), con canales
+   `global`/`server:{id}`/`user:{id}` y `resume` por `seq`.
+2. El **WS de monitoring por servidor** (`/servers/{id}/monitoring/ws`,
+   ADR-002, desviación aceptada): snapshots de CPU/RAM/disco/jugadores cada
+   `poll_interval` (~5 s) en un envelope `SERVER.STATE` con `scope="monitoring"`.
+
+Esto obliga al frontend a mantener **dos clientes WS** (gateway compartido +
+un socket de monitoring por servidor activo) y duplica el transporte de métricas.
+
+### Alternativas consideradas
+
+1. **Migrar las métricas de Monitoring al gateway único `/ws`** como canal
+   `server:{id}` (o un canal `monitoring:{id}`), eliminando el endpoint
+   `/servers/{id}/monitoring/ws` y el segundo cliente.
+2. **Mantener el estado actual** (ADR-002): dos endpoints, un socket de
+   monitoring por servidor, uno de gateway compartido.
+3. **Publicar métricas en el bus** para que el gateway las enrute, pero
+   conservar el WS de monitoring como retro-compat.
+
+### Decisión
+
+**Sin decisión ejecutada.** Se deja anotada como **candidata de arquitectura
+(backlog/ADR Proposed)** para evaluarse fuera de la pasada de verificación. La
+implementación actual está **confirmada funcionando** (gateway para negocio,
+WS de monitoring para métricas, cabecera y StatCards leyendo de
+`useMonitoringStore`), por lo que la migración es **riesgo sin beneficio
+funcional inmediato**.
+
+### Justificación de no ejecutarla ahora
+
+- Cambio transversal (backend: transporte/enrutado de métricas; frontend: un
+  único cliente WS) sin impacto funcional observable para el usuario.
+- El estado actual respeta la regla práctica de §4 (negocio → gateway;
+  métricas → WS de monitoring por servidor) y ya está cubierto por tests.
+- La migración solo debería dispararse si aparece un motivo concreto
+  (latencia, coste de sockets, simplificación del frontend, consolidación de
+  `resume`/`seq`).
+
+### Consecuencias
+
+**Positivas (de ejecutarse en el futuro)**:
+- Un solo cliente WS y un solo transporte para estado + métricas.
+- `resume` por `seq` y control de flujo del gateway también para métricas.
+
+**Negativas (de no ejecutarse)**:
+- El frontend mantiene un socket de monitoring por servidor activo además del
+  gateway (coste acotado: uno a la vez, con refcount compartido).
+
+### Impacto en el Blueprint y futuras implementaciones
+
+- Si se acepta, actualizar `technical-design.md` §17/Fase H y
+  `implementation-blueprint.md` §3.12 Notification para consolidar el endpoint.
+- Actualizar `frontend-standards.md` §4 y la capa `ws` del frontend a un único
+  cliente; `useServerMonitoring` pasaría a escribir desde el gateway.
+- Mientras tanto, **no crear más sockets de métricas por componente**: seguir
+  la regla de leer de `useMonitoringStore` (un socket por servidor, §4).
 
 ---
 
