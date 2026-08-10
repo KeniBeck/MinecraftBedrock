@@ -31,6 +31,6 @@ class MetricSample:
     latency_ms: float
     players_online: int
     players_max: int
-    cpu: float
+    cpu: float | None
     ram_mb: float
     disk_mb: float

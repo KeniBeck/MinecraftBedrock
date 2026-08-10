@@ -94,6 +94,36 @@ def _cpus_from_nano(nano: int | None) -> float | None:
     return nano / 1_000_000_000 if nano else None
 
 
+def _compute_cpu_percent(cpu_stats: dict[str, Any], precpu_stats: dict[str, Any]) -> float | None:
+    """% de CPU consumido por el contenedor (delta entre dos samples de Docker).
+
+    Fórmula estándar de Docker: delta de ``total_usage`` sobre delta de
+    ``system_cpu_usage`` multiplicado por los CPUs online.
+
+    Devuelve ``None`` —no un valor inventado— cuando la muestra no es
+    computable: ``precpu_stats`` sin ``system_cpu_usage`` válido (primer sample
+    o contenedor parado) o alguno de los deltas da ≤0 (contadores no
+    monótonos). El poller descarta ese valor de CPU y espera la siguiente
+    muestra a los 5 s (change-log §30): no se clampea ni se reporta ``0.0``.
+    """
+    precpu_total = (precpu_stats.get("cpu_usage") or {}).get("total_usage")
+    precpu_system = precpu_stats.get("system_cpu_usage")
+    if precpu_total is None or precpu_system is None:
+        return None
+
+    cpu_total = (cpu_stats.get("cpu_usage") or {}).get("total_usage") or 0
+    system = cpu_stats.get("system_cpu_usage") or 0
+    cpu_delta = float(cpu_total) - float(precpu_total)
+    system_delta = float(system) - float(precpu_system)
+    if system_delta <= 0 or cpu_delta <= 0:
+        return None
+
+    online_cpus = cpu_stats.get("online_cpus")
+    if not online_cpus:
+        online_cpus = len((cpu_stats.get("cpu_usage") or {}).get("percpu_usage") or []) or 1
+    return (cpu_delta / system_delta) * float(online_cpus) * 100.0
+
+
 def _parse_env(env: list[str]) -> dict[str, str]:
     """Convierte la lista ``KEY=value`` de Docker en un dict."""
     result: dict[str, str] = {}
@@ -491,17 +521,32 @@ class DockerRuntimeAdapter:
 
     @_map_docker_errors
     def get_resources(self, runtime_id: str | None = None) -> dict[str, Any]:
-        """CPU/RAM actuales del proceso (§4.1)."""
-        container = self._get_container(self._require_runtime_id(runtime_id))
-        stats = container.stats(stream=False) or {}
+        """CPU/RAM actuales del proceso (§4.1).
+
+        Usa la API low-level ``api.stats`` (GET /containers/{id}/stats) SIN el
+        ``containers.get()`` previo: así una pasada del poller hace UN inspect
+        (el de ``get_state``/``status``) y un stats, no dos inspects del mismo
+        contenedor (change-log §30).
+
+        ``cpu_percent`` se calcula con el delta entre ``cpu_stats`` y
+        ``precpu_stats`` que devuelve el daemon (formato estándar de Docker).
+        Si la muestra no es computable (``precpu`` vacío/inválido o delta ≤0)
+        devuelve ``None``: el poller descarta ese valor de CPU esa vuelta, no
+        reporta un ``0.0`` inventado ni clampea (change-log §30). ``disk`` no se
+        expone aquí porque el contenedor no sabe del bind mount de storage (ver
+        ``polling._build_sample``).
+        """
+        runtime_id = self._require_runtime_id(runtime_id)
+        stats = self._client().api.stats(runtime_id, stream=False) or {}
         memory = stats.get("memory_stats") or {}
         cpu = stats.get("cpu_stats") or {}
+        precpu = stats.get("precpu_stats") or {}
         return {
             "memory_usage_bytes": memory.get("usage"),
             "memory_limit_bytes": memory.get("limit"),
             "cpu_total_usage": (cpu.get("cpu_usage") or {}).get("total_usage"),
             "system_cpu_usage": cpu.get("system_cpu_usage"),
-            "cpu_percent": None,
+            "cpu_percent": _compute_cpu_percent(cpu, precpu),
         }
 
     @_map_docker_errors

@@ -152,6 +152,22 @@ class FakeClient:
     def __init__(self) -> None:
         self.containers = FakeContainers()
         self.volumes = Mock()
+        # API low-level (``api.stats``) que usa el adaptador en get_resources.
+        self.api = _FakeApi(self.containers)
+
+
+class _FakeApi:
+    """``client.api`` mínimo: ``stats`` delega en el ``stats`` mock del contenedor."""
+
+    def __init__(self, containers: FakeContainers) -> None:
+        self._containers = containers
+
+    def stats(self, container: str, stream: bool = False) -> dict[str, Any]:
+        del stream
+        found = self._containers._rev.get(container)
+        if found is None:
+            raise NotFound(f"no such container: {container}")
+        return found.stats(stream=False) or {}
 
 
 def make_factory(client: FakeClient) -> Mock:
@@ -458,6 +474,52 @@ def test_get_resources_parses_stats() -> None:
     adapter = make_adapter(client)
     resources = adapter.get_resources("panel-srv-1")
     assert resources["memory_usage_bytes"] == 1024
+    # Sin precpu_stats (primer sample) el % de CPU no es computable: None, no 0.0
+    # inventado ni un valor clampeado (change-log §30).
+    assert resources["cpu_percent"] is None
+
+
+def test_get_resources_computes_cpu_percent_from_delta() -> None:
+    client = FakeClient()
+    container = seed_container(client, "panel-srv-1")
+    # Delta de 100% sobre 2 cpus online.
+    container.stats.return_value = {
+        "cpu_stats": {
+            "cpu_usage": {"total_usage": 200, "percpu_usage": [100, 100]},
+            "system_cpu_usage": 1000,
+            "online_cpus": 2,
+        },
+        "precpu_stats": {
+            "cpu_usage": {"total_usage": 100, "percpu_usage": [50, 50]},
+            "system_cpu_usage": 900,
+        },
+        "memory_stats": {"usage": 1024, "limit": 2048},
+    }
+    adapter = make_adapter(client)
+    resources = adapter.get_resources("panel-srv-1")
+    # (200-100)/(1000-900) * 2 * 100 = 200%
+    assert resources["cpu_percent"] == 200.0
+
+
+def test_get_resources_descarta_cpu_cuando_delta_no_monotono() -> None:
+    client = FakeClient()
+    container = seed_container(client, "panel-srv-1")
+    # Contadores no monótonos (daemon reiniciado entre samples): delta ≤0.
+    container.stats.return_value = {
+        "cpu_stats": {
+            "cpu_usage": {"total_usage": 100, "percpu_usage": [100, 0]},
+            "system_cpu_usage": 500,
+            "online_cpus": 2,
+        },
+        "precpu_stats": {
+            "cpu_usage": {"total_usage": 200, "percpu_usage": [100, 100]},
+            "system_cpu_usage": 1000,
+        },
+        "memory_stats": {"usage": 1024, "limit": 2048},
+    }
+    adapter = make_adapter(client)
+    resources = adapter.get_resources("panel-srv-1")
+    assert resources["cpu_percent"] is None
 
 
 def test_get_exit_code_returns_int() -> None:

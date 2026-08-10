@@ -2851,3 +2851,133 @@ se añadieron el secret JWT y la exposición de Postgres para herramientas exter
 ### Pendiente / deuda
 
 - Redactar `docs/development.md` para formalizar el flujo dev/prod coexistente (hoy explicado en README y changelog).
+
+## 30. Auditoría de sync WS — doble-inspect, métricas CPU/jugadores y dedup del poller
+
+> **Fecha**: 2026-08-10
+> **Origen**: auditoría de sincronización en tiempo real pedida por el usuario.
+> Cuatro síntomas aparentemente separados que compartían dos causas de backend:
+> (1) el doble poll del mismo contenedor por dos caminos independientes y
+> (2) métricas que el backend nunca computaba (CPU hardcodeada a `None`, disco
+> a `0`, jugadores a `0` porque el probe no parseaba el PONG RakNet).
+
+### Hallazgo 0 — el frontend YA se conecta a ambos WS (no era un problema de suscripción)
+
+`frontend-standards.md` §4 estaba **desactualizado**: decía que el WS por
+servidor "quedó reemplazado por el gateway". En realidad ADR-002 mantiene el
+WS de monitoring por servidor (`/servers/{id}/monitoring/ws`) y el frontend ya
+lo usaba (`useServerMonitoring` → `useMonitoringStore`). Por eso RAM sí se
+actualizaba: el pipeline WS funcionaba, pero el **backend** llenaba
+`cpu=None`, `disk_mb=0` y `players=0`. El síntoma 3 no era de conexión sino de
+datos.
+
+### Alcance
+
+- **Doble-inspect (síntoma 1)**: había DOS fuentes de la redundancia, ambas
+  corregidas:
+  1. **Doble poll**: en producción corren a la vez el `BackgroundPoller.poll_all`
+     (cada `poll_interval`, lifespan) y, cuando hay un cliente viendo la card,
+     el WS `monitoring_ws` ejecuta `poll_server` del mismo servidor → dos pasadas
+     del mismo contenedor. **Solución**: `SnapshotHub` (cache con TTL =
+     `poll_interval`) en la facade de monitoring. `MonitoringFacade.poll_server`
+     y `poll_all` pasan por el hub: un snapshot reciente se reutiliza y solo hay
+     **una pasada por servidor por ventana**, venga de quien venga (WS o fondo).
+     Sin poller de fondo (tests, `monitoring_poller=None`) el hub está vacío y el
+     WS pollea directo (fallback) — los tests de integración del WS no cambian.
+  2. **Doble inspect dentro de una pasada**: `get_resources` hacía su propio
+     `containers.get()` (GET /json) además del que ya hacía `get_state`→`status`
+     en la misma pasada, y después el `stats`. Con dos pollers eso daba
+     `inspect, inspect, stats, inspect, inspect, stats`; con el hub resuelto
+     quedaba `inspect, inspect, stats`. **Solución**: `get_resources` ahora usa
+     la API low-level `client.api.stats()` (GET /containers/{id}/stats) sin el
+     `containers.get()` previo → **un inspect + un stats por pasada**.
+- **CPU (síntoma 3)**: `docker.get_resources` devolvía `"cpu_percent": None`
+  hardcodeado. Ahora `_compute_cpu_percent` calcula el delta entre `cpu_stats`
+  y `precpu_stats` (fórmula estándar de Docker); sin `precpu` (primer sample)
+  devuelve `0.0`.
+- **Jugadores (síntoma 3)**: `RakNetStatusProbe` solo reportaba online/latencia.
+  Ahora parsea el `ID_UNCONNECTED_PONG` (0x1c) de BDS y extrae
+  `players_online`/`players_max` del campo `MCPE;...;players;max;...`. Si el
+  payload no es un pong válido devuelve `(0, 0)` sin romper el probe.
+- **Disco**: se mantiene `disk_mb=0.0` — Docker no expone el uso del bind
+  mount de storage en `/stats`. Documentado como sin fuente (el stat card
+  muestra "0 / X GB", honesto, no inventado).
+
+### Archivos
+
+| Archivo | Contenido |
+|---|---|
+| `modules/monitoring/application/snapshot_hub.py` | `SnapshotHub` + `poll_or_cached` (dedup por TTL) |
+| `modules/monitoring/application/facade.py` | `poll_server`/`poll_all` cacheados por el hub |
+| `modules/monitoring/application/polling.py` | Propiedad `server` pública (para listar en `poll_all` del hub) |
+| `modules/monitoring/infrastructure/raknet_probe.py` | Parseo del PONG RakNet → players_online/max |
+| `infrastructure/runtime/docker.py` | `_compute_cpu_percent` real + `get_resources` usa `api.stats` sin inspect previo |
+| `tests/test_monitoring.py` | `test_poll_or_cached_*` + `test_facade_poll_server_y_poll_all_comparten_una_pasada` |
+| `tests/test_runtime.py` | `test_get_resources_computes_cpu_percent_from_delta` + `FakeClient.api` |
+| `tests/test_phase_d_config_monitoring.py` | `test_raknet_probe_parses_players_from_bedrock_pong` + `test_parse_pong_ignores_non_bedrock_payloads` |
+
+### Verificación
+
+- `uv run pytest` → `870 passed, 37 deselected` (6 tests nuevos + 1 de delta ≤0).
+- `ruff check` / `ruff format` ✅; `mypy --strict` ✅ en los archivos tocados
+  (quedan 2 errores preexistentes en `tests/test_client_factory.py` de un commit
+  anterior, fuera del alcance de esta auditoría).
+- La dedup se comprueba con `test_facade_poll_server_y_poll_all_comparten_una_pasada`
+  (1 sola llamada al probe).
+- **CPU en vivo**: con un servidor real arrancado, el WS de monitoring reportó
+  `cpu_percent` reales por delta (`3.84`, `1.74`) — antes `None`/`0`.
+
+### Corrección posterior — CPU: descartar muestra inválida (no clampear, no inventar)
+
+> **Fecha**: 2026-08-10 (revisión del usuario). En producción se observó
+> `cpu: 202%` — un delta inválido de `precpu_stats` (sin `system_cpu_usage`
+> válido o contadores no monótonos) producía un % descabellado. La política
+> acordada: **no clampear a 100 ni reportar `0.0` inventado** — si la muestra
+> no es computable se descarta ese valor de CPU y la siguiente pasada (5 s)
+> trae un delta real.
+
+- `_compute_cpu_percent` ahora devuelve `float | None`: `None` cuando
+  `precpu_stats` no trae `system_cpu_usage`/`total_usage` válido o cuando el
+  delta de CPU o del sistema da ≤0. Antes devolvía `0.0` (inventaba un valor).
+- `MetricSample.cpu` pasa a `float | None` y se propaga hasta el payload del WS
+  (`"cpu": null` → el StatCard muestra "—" en lugar de un % falso). **No se
+  descarta la vuelta entera**: un contenedor parado siempre trae `precpu`
+  inválido, y descartar el snapshot completo congelaría jugadores/RAM/estado en
+  el frontend (el server seguiría siendo observable offline).
+- `docker.get_resources` documenta la semántica de `None`.
+
+### Corrección posterior — entorno dev: `server.public_host=localhost` no alcanzaba el juego
+
+> **Fecha**: 2026-08-10. Al repetir la prueba real del gateway se encontró que
+> el servidor jamás llegaba a `running` (y por tanto no se emitían
+> `SERVER.STARTED`/`PLAYER.JOINED`) en el entorno de desarrollo: el backend
+> corre en el contenedor `bedrockpanel-dev` donde `localhost` es el propio
+> contenedor, no el host. El probe RakNet (`RakNetStatusProbe`) sondea
+> `view.connection.host` = `server.public_host`, que resolvía a `localhost`
+> (verificado: desde el contenedor `localhost:19136 → False`, `172.18.0.1 → True`).
+
+- `docker-compose.dev.yml` expone ahora `BEDROCK_PANEL_SERVER_PUBLIC_HOST`
+  (default `localhost`, override con `${BEDROCK_PANEL_SERVER_PUBLIC_HOST}`),
+  mismo patrón que `docker-compose.prod.yml`. Para desarrollo con backend en
+  contenedor hay que apuntarlo a una dirección alcanzable (p. ej. el gateway de
+  la red docker = IP del host).
+- **Con esa corrección, la prueba real confirma**:
+  - el gateway `/ws` capturó `SERVER.STARTING` y `SERVER.STARTED` cuando el
+    servidor real llegó a `running` (~17 s);
+  - `ConsoleStreamManager` arrancó el stream al `SERVER.STARTED` (log
+    "Arrancando stream de {server_id}") — el fix de reconciliación
+    (`ConsoleStreamReconciler.reconcile()` en el lifespan) está aplicado y
+    cubierto por `tests/test_console_stream_reconcile.py`;
+  - una línea de BDS en vivo (`There are 0/10 players online`) fluyó por el WS
+    de console y al buffer, confirmando que el stream está attached y que
+    `PlayerJoinDetector` recibirá `Player connected: ...` → `PLAYER.JOINED`
+    (el detector no tiene bug de parseo; su regex y tests ya estaban bien).
+
+### Pendiente / deuda
+
+- Evaluar con el equipo de backend si conviene migrar Monitoring al gateway
+  único `/ws` a largo plazo (hoy es desviación ADR-002 legítima). No se
+  resuelve en esta auditoría por ser decisión de arquitectura.
+- `PLAYER.JOINED` de punta a punta con un jugador real sigue pendiente de
+  verificación manual en navegador (requiere que un cliente Bedrock se conecte);
+  el pipeline (stream attached + detector + regex) ya está confirmado y probado.

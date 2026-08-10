@@ -27,6 +27,7 @@ services:
       BEDROCK_PANEL_DATABASE_URL: postgresql+psycopg://bedrockpanel:bedrockpanel_dev@postgres:5432/bedrockpanel
       BEDROCK_PANEL_DEBUG: "true"
       BEDROCK_PANEL_LOG_LEVEL: "DEBUG"
+      BEDROCK_PANEL_SERVER_PUBLIC_HOST: ${BEDROCK_PANEL_SERVER_PUBLIC_HOST:-localhost}
     depends_on:
       - postgres
 

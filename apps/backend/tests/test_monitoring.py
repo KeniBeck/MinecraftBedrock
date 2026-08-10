@@ -12,7 +12,8 @@ from datetime import UTC, datetime
 from app.infrastructure.events.bus import InProcessEventBus
 from app.kernel.ports.runtime import ServerState
 from app.kernel.ports.status import ProbeResult
-from app.modules.monitoring.application.polling import StatusPoller
+from app.modules.monitoring.application.polling import StatusPoller, StatusSnapshot
+from app.modules.monitoring.application.snapshot_hub import SnapshotHub, poll_or_cached
 from app.modules.monitoring.domain.metric_sample import SampleStatus
 from app.modules.monitoring.infrastructure.memory import InMemoryMetricSampleStore
 from app.modules.server.application.commands import (
@@ -182,3 +183,55 @@ async def test_sample_status_offline_cuando_el_ping_falla() -> None:
 
     assert snapshot is not None
     assert snapshot.sample.status is SampleStatus.OFFLINE
+
+
+# --- dedup del doble-inspect (SnapshotHub) ---------------------------------
+
+
+async def test_poll_or_cached_polleo_una_vez_dentro_de_la_ventana() -> None:
+    h = Harness()
+    server_id = await h.create_started()
+    hub = SnapshotHub()
+    calls: list[str] = []
+
+    async def fake_poller(sid: str) -> StatusSnapshot | None:
+        calls.append(sid)
+        return await h.poller.poll_server(sid)
+
+    first = await poll_or_cached(hub, server_id, fake_poller, ttl_seconds=5.0)
+    second = await poll_or_cached(hub, server_id, fake_poller, ttl_seconds=5.0)
+
+    assert first is not None and second is not None
+    assert calls == [server_id]  # el segundo golpe usa el cache, no vuelve a pollear
+
+
+async def test_poll_or_cached_no_cachea_cuando_poller_devuelve_none() -> None:
+    hub = SnapshotHub()
+    calls: list[str] = []
+
+    async def missing_poller(sid: str) -> StatusSnapshot | None:
+        calls.append(sid)
+        return None
+
+    assert await poll_or_cached(hub, "srv-x", missing_poller, ttl_seconds=5.0) is None
+    assert await poll_or_cached(hub, "srv-x", missing_poller, ttl_seconds=5.0) is None
+    assert calls == ["srv-x", "srv-x"]
+
+
+async def test_facade_poll_server_y_poll_all_comparten_una_pasada() -> None:
+    """El fondo y el WS no duplican el poll del mismo servidor en la ventana."""
+    from app.modules.monitoring.application.facade import MonitoringFacade
+
+    h = Harness()
+    server_id = await h.create_started()
+    facade = MonitoringFacade(h.poller, poll_interval=5.0)
+    h.probe.calls = []
+
+    # El WS pollea el servidor activo…
+    ws_snapshot = await facade.poll_server(server_id)
+    assert ws_snapshot is not None
+
+    # …y el poll del fondo, que corre enseguida, reutiliza el snapshot cacheado.
+    all_snapshots = await facade.poll_all()
+    assert [s.sample.server_id for s in all_snapshots] == [server_id]
+    assert len(h.probe.calls) == 1  # una sola pasada, no dos

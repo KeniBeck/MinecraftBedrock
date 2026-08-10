@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import struct
 from pathlib import Path
 from unittest.mock import patch
 
@@ -8,6 +9,7 @@ from app.modules.configuration.infrastructure.reader import BedrockConfiguration
 from app.modules.monitoring.infrastructure.raknet_probe import (
     _RAKNET_MAGIC,
     RakNetStatusProbe,
+    _parse_pong,
 )
 
 
@@ -115,3 +117,58 @@ def test_raknet_probe_reports_offline_when_timeout_occurs() -> None:
         result = probe.probe("127.0.0.1", 19132, timeout=0.1)
 
     assert result.online is False
+
+
+def _bedrock_pong(players: int, max_players: int) -> bytes:
+    """Construye un ``ID_UNCONNECTED_PONG`` real de BDS con el conteo dado."""
+    motd = (
+        "MCPE;Survival Server;766;1.21.50;"
+        f"{players};{max_players};13253860892328930865;Bedrock level;Survival;"
+        "1;19132;19133"
+    )
+    data = motd.encode("utf-8")
+    return (
+        bytes([0x1C])
+        + b"\x00" * 8  # ping time
+        + b"\x00" * 8  # server GUID
+        + struct.pack(">H", len(data))
+        + data
+    )
+
+
+def test_raknet_probe_parses_players_from_bedrock_pong() -> None:
+    class PongSocket:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+        def settimeout(self, timeout: float) -> None:
+            del timeout
+            return None
+
+        def sendto(self, payload: bytes, address: tuple[str, int]) -> None:
+            del payload, address
+            return None
+
+        def recvfrom(self, size: int) -> tuple[bytes, tuple[str, int]]:
+            del size
+            return _bedrock_pong(7, 10), ("127.0.0.1", 19132)
+
+        def close(self) -> None:
+            return None
+
+    target = "app.modules.monitoring.infrastructure.raknet_probe.socket.socket"
+    with patch(target, return_value=PongSocket()):
+        probe = RakNetStatusProbe()
+        result = probe.probe("127.0.0.1", 19132, timeout=0.1)
+
+    assert result.online is True
+    assert result.players_online == 7
+    assert result.players_max == 10
+
+
+def test_parse_pong_ignores_non_bedrock_payloads() -> None:
+    # Paquete de longitud insuficiente / id incorrecto → (0, 0) sin excepción.
+    assert _parse_pong(b"\x01\x00") == (0, 0)
+    assert _parse_pong(b"\x1c" + b"\x00" * 16) == (0, 0)
+    # Datos de longitud declarada mayor que la disponible → (0, 0).
+    assert _parse_pong(b"\x1c" + b"\x00" * 16 + b"\xff\xffMCPE;x;0;0;a;b") == (0, 0)

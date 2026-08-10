@@ -69,6 +69,11 @@ class StatusPoller:
         self._settings = settings
 
     @property
+    def server(self) -> ServerFacade:
+        """Facade de Server usada para listar/consultar servidores (para el hub)."""
+        return self._server
+
+    @property
     def probe_timeout(self) -> float:
         return float(cast(float, self._settings.get("monitoring.probe_timeout", 2.0)))
 
@@ -138,6 +143,7 @@ class StatusPoller:
         result: ProbeResult,
         resources: dict[str, Any],
     ) -> MetricSample:
+        cpu = resources.get("cpu_percent")
         return MetricSample(
             server_id=view.id,
             ts=self._time.now(),
@@ -145,7 +151,7 @@ class StatusPoller:
             latency_ms=result.latency_ms,
             players_online=result.players_online,
             players_max=result.players_max,
-            cpu=float(resources.get("cpu_percent") or 0.0),
+            cpu=float(cpu) if cpu is not None else None,
             ram_mb=_bytes_to_mb(resources.get("memory_usage_bytes")),
             disk_mb=0.0,
         )
