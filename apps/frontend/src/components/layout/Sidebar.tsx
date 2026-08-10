@@ -1,4 +1,4 @@
-import { Link, useParams } from 'react-router-dom'
+import { Link, useLocation, useParams } from 'react-router-dom'
 import {
   Archive,
   Bell,
@@ -20,13 +20,23 @@ import { cn } from '@/lib/utils'
 
 /**
  * Ítems del sidebar según frontend-standards §6 (naming y orden exactos del
- * mockup). En Fase 2 solo "Servidor" navega a la página de detalle; el resto
- * se muestran como placeholders deshabilitados (fases posteriores).
+ * mockup). "Servidor" y "Consola" navegan a `/servers/:id` y
+ * `/servers/:id/console` usando el servidor activo; el resto se muestran como
+ * placeholders deshabilitados (fases posteriores).
  */
-const SIDEBAR_ITEMS = [
-  { label: 'Dashboard', icon: LayoutDashboard, href: '/', disabled: true },
+interface SidebarItem {
+  label: string
+  icon: typeof Gamepad2
+  href?: string
+  /** Ruta hija dentro de `/servers/:serverId` (p. ej. `console`). */
+  sub?: string
+  disabled?: boolean
+}
+
+const SIDEBAR_ITEMS: SidebarItem[] = [
+  { label: 'Dashboard', icon: LayoutDashboard, disabled: true },
   { label: 'Servidor', icon: Gamepad2, href: '/servers', disabled: false },
-  { label: 'Consola', icon: Keyboard, disabled: true },
+  { label: 'Consola', icon: Keyboard, href: '/servers', sub: 'console', disabled: false },
   { label: 'Jugadores', icon: Users, disabled: true },
   { label: 'Mundos', icon: Globe, disabled: true },
   { label: 'Backups', icon: Archive, disabled: true },
@@ -51,8 +61,17 @@ export function Sidebar({
   onToggleCollapsed: () => void
 }) {
   const { serverId } = useParams<{ serverId: string }>()
+  const { pathname } = useLocation()
   const activeServerId = useActiveServer((state) => state.activeServerId)
   const resolvedServerId = serverId ?? activeServerId
+
+  /** `/servers/:id[/sub]` si el ítem depende del servidor activo, o `null`. */
+  function resolveHref(item: SidebarItem): string | null {
+    if (!item.href) return null
+    if (item.href !== '/servers') return item.href
+    if (!resolvedServerId) return null
+    return `/servers/${resolvedServerId}${item.sub ? `/${item.sub}` : ''}`
+  }
 
   return (
     <aside
@@ -79,7 +98,8 @@ export function Sidebar({
       <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-2">
         {SIDEBAR_ITEMS.map((item) => {
           const Icon = item.icon
-          const active = item.href === '/servers' && Boolean(resolvedServerId)
+          const href = resolveHref(item)
+          const active = href ? pathname === href : false
           const itemContent = (
             <>
               <Icon className="size-5 shrink-0" />
@@ -93,16 +113,13 @@ export function Sidebar({
               : 'pixel-nav text-slate-300',
             item.disabled && 'cursor-not-allowed opacity-40 hover:bg-transparent hover:shadow-none',
           )
-          if (item.disabled || !item.href) {
+          if (item.disabled || !href) {
             return (
               <span key={item.label} className={classes} title={item.disabled ? 'Próximamente' : undefined}>
                 {itemContent}
               </span>
             )
           }
-          const href = item.href === '/servers' && resolvedServerId
-            ? `/servers/${resolvedServerId}`
-            : item.href
           return (
             <Link key={item.label} to={href} className={classes} data-testid={`sidebar-${item.label}`}>
               {itemContent}

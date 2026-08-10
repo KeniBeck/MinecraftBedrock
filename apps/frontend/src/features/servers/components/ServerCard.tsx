@@ -7,6 +7,7 @@ import { serverActions, STATE_LABEL } from '@/lib/serverState'
 import { currentBackground, useThemeStore } from '@/stores/theme'
 import type { Server } from '@/lib/api/servers'
 import { cn } from '@/lib/utils'
+import { UpdateResourcesDialog } from '@/features/servers/components/UpdateResourcesDialog'
 
 interface ServerCardProps {
   server: Server
@@ -160,6 +161,7 @@ export function ServerCard({ server, onStart, onStop, onRestart, busy }: ServerC
         >
           Crear backup
         </Button>
+        <UpdateResourcesDialog server={server} disabled={busy !== null} />
       </div>
     </section>
   )

@@ -12,7 +12,8 @@
  * `serialize_envelope`:
  * - `event`: tipo canónico (p. ej. `SERVER.STARTED`).
  * - `server_id`: servidor destino (o `null` para global/user).
- * - `scope`: `global` | `server` | `user`.
+ * - `scope`: `global` | `server` | `user` | `console` (el WS de consola usa
+ *   `console` — `modules/console/api/router.py::_envelope`).
  * - `payload`: objeto arbitrario por evento.
  * - `ts`: ISO timestamp de publicación.
  * - `seq`: número global monótono (para resume).
@@ -20,7 +21,7 @@
 export interface WsEnvelope {
   event: string
   server_id: string | null
-  scope: 'global' | 'server' | 'user'
+  scope: 'global' | 'server' | 'user' | 'console'
   payload: Record<string, unknown>
   ts: string
   seq: number

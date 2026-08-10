@@ -99,3 +99,27 @@ export async function restartServer(serverId: string, grace = 30): Promise<Serve
   const { data } = await apiClient.post<Server>(`/servers/${serverId}/restart`, { grace })
   return data
 }
+
+/**
+ * Cuerpo de `PUT /servers/{id}/resources` (UpdateResourcesRequest): ambos campos
+ * opcionales, verificados contra `api/schemas.py` (`cpu_cores` float 1..64,
+ * `ram_mb` int 512..65536). Enviar solo los campos que se quieran cambiar; el
+ * backend recrea el contenedor únicamente si algo cambió.
+ */
+export interface UpdateServerResourcesRequest {
+  cpu_cores?: number
+  ram_mb?: number
+}
+
+/**
+ * `PUT /servers/{id}/resources` — requiere `server.update`. Devuelve el
+ * `ServerResponse` con el estado resultante; si el servidor estaba corriendo,
+ * se reinicia para aplicar el cambio.
+ */
+export async function updateServerResources(
+  serverId: string,
+  payload: UpdateServerResourcesRequest,
+): Promise<Server> {
+  const { data } = await apiClient.put<Server>(`/servers/${serverId}/resources`, payload)
+  return data
+}

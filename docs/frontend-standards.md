@@ -149,6 +149,7 @@ interesan según qué página está viendo.
   `/servers/{id}/monitoring/ws` (este sí es un socket por recurso, es el
   diseño del ADR-002) y escribe en `useMonitoringStore`. Los componentes leen
   del store; no abren su propio socket de métricas.
+- El contrato completo de "qué store lee cada tipo de dato" está en **§14**.
 
 ## 5. Estructura de carpetas (feature-first)
 
@@ -501,3 +502,43 @@ actualiza datos (no badge, no dropdown):
   Si algún día existe un endpoint de "mark read", migrarlo ahí.
 - El store deduplica por `seq` (un `resume` re-emite eventos ya vistos) y
   mantiene un tope (`MAX_ITEMS`).
+
+## 14. Contrato de consumo WS — exactamente dos stores
+
+> Base: auditoría puntual de la pasada de verificación (change-log backend §30 /
+> ADR-013 Rejected). El frontend tiene **dos dueños de socket** y **dos stores
+> de lectura**; ningún otro código abre conexiones ni lee el payload del WS.
+
+### 14.1 Quién abre sockets (dueños, verificados contra el código)
+
+| Dueño (nombre real) | Endpoint | Escritura |
+|---|---|---|
+| `useWebSocketStore` (`stores/ws.ts`) — **singleton** `WebSocketClient` (`lib/ws/WebSocketClient.ts`) | gateway `/api/v1/ws` | Eventos de negocio → `useNotificationsStore` + cachés TanStack (`useServerStateSync`) |
+| `useServerMonitoring` (`hooks/useServerMonitoring.ts`) — refcount: **un** socket por servidor activo | `/api/v1/servers/{id}/monitoring/ws` | Telemetría → `useMonitoringStore` |
+
+### 14.2 Tabla de consumo (regla obligatoria)
+
+**Ningún componente nuevo abre socket propio ni lee el payload del WS
+directamente.** Todo dato en vivo se lee de **exactamente una** de estas dos
+stores, según la tabla:
+
+| Dato en vivo | Store (nombre real) | Fuente |
+|---|---|---|
+| Cambio de estado / evento de negocio (`SERVER.*`, `CONSOLE.OUTPUT`, `PLAYER.*`, `BACKUP.*`, `TASK.*`, `IAM/AUTH.*`) | `useNotificationsStore` (`stores/notifications.ts`) | gateway `/ws` vía `useWebSocketStore` |
+| Telemetría numérica continua (CPU, RAM, disco, jugadores, `latency_ms`) | `useMonitoringStore` (`stores/monitoring.ts`) | `useServerMonitoring` |
+
+Los cambios de **estado de servidor** (para cards/selectores) se leen de las
+cachés de TanStack Query, que `useServerStateSync` actualiza desde el gateway —
+**no** del payload del WS directo (patrón §13.2).
+
+### 14.3 Reglas derivadas
+
+- Un componente que necesite ambos tipos de dato consume **las dos stores** (ej.
+  `Header`, `StatCards`); nunca abre un segundo socket de métricas.
+- La capa que sí crea sockets es solo la de infraestructura listada en §14.1; un
+  endpoint nuevo con socket propio **debe** integrarse a una de las dos stores
+  (o justificar una tercera por ADR), no proliferar sockets por página.
+- Auditoría puntual (2026-08-10): verificado que ningún componente abre
+  `new WebSocket(...)` fuera de `useServerMonitoring` y del singleton del
+  gateway — los 2 bugs históricos de este patrón (dropdown de estado, badge de
+  jugadores) se corrigieron apuntando al store correcto, no creando otro socket.

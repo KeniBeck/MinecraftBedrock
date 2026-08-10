@@ -52,15 +52,33 @@ acción), start/stop/restart.
 - Start/stop desde la UI funciona contra un servidor real y el estado se
   actualiza solo (por WS), sin refrescar la página.
 
+> **Estado (2026-08-10)**: criterio de parada **cumplido** — confirmado por el
+> usuario en navegador (layout fiel al mockup, selector real, start/stop/
+> restart con estado en vivo por WS), más las extensiones de la Fase 2 ya
+> implementadas: campana de notificaciones, badge de jugadores del header,
+> "Crear servidor", y "Actualizar recursos" CPU/RAM (modal con validación,
+> recreación automática y `SERVER.BUSY` — ver change-log). Detalles en
+> `docs/change-log-frontend.md` §Fase 2 y sus entradas posteriores.
+
 ## Fase 3 — Consola en vivo
 
-**Alcance**: terminal con scroll, logs en vivo (filtrando `CONSOLE.OUTPUT`
-del canal `server:{id}`), envío de comandos.
+**Alcance**: terminal con scroll, logs en vivo (líneas `CONSOLE.OUTPUT` del
+WS dedicado por servidor `/servers/{id}/console/ws` — ADR-002, NO el canal
+`server:{id}` del gateway, que no reenvía eventos de consola), envío de
+comandos vía `POST /servers/{id}/console/commands` (202, `server.console.write`).
 
 **Criterio de parada:**
 - Logs reales de un servidor corriendo aparecen en vivo en la UI.
 - Un comando enviado desde la UI se ve reflejado en `docker logs` del
   contenedor real.
+
+> **Estado (2026-08-10)**: implementado (página `/servers/:serverId/console`,
+> buffer con límite 1000 líneas, auto-scroll, input oculto sin
+> `server.console.write`, aviso si no está en línea, ítem "Consola" del sidebar
+> cableado). Tests unitarios + lint/typecheck/build en verde. **Pendiente de
+> verificación manual por el usuario en navegador** (los dos criterios de
+> parada) — no avanzar a Fase 4 sin esa confirmación. Detalles en
+> `docs/change-log-frontend.md` §Fase 3.
 
 ## Fase 4 — Mundos, Backups, Plantillas
 

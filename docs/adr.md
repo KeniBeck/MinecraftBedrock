@@ -26,7 +26,7 @@
 | [ADR-010](#adr-010--factoría-de-cliente-docker-en-infrastructure) | Factoría de cliente Docker en Infrastructure | Accepted |
 | [ADR-011](#adr-011--bans-persistidos-globales-y-por-servidor) | Bans persistentes: globales y por servidor | Accepted |
 | [ADR-012](#adr-012--discrepancia-de-identidad-player--tdd-155) | Discrepancia de identidad `Player` vs TDD §15.5 | Accepted |
-| [ADR-013](#adr-013--migración-del-monitoring-al-gateway-único) | Migración del Monitoring al gateway único `/ws` | Proposed |
+| [ADR-013](#adr-013--migración-del-monitoring-al-gateway-único) | Migración del Monitoring al gateway único `/ws` | Rejected |
 
 ---
 
@@ -797,7 +797,7 @@ Se **mantiene la implementación actual** (identidad global por XUID en
 
 ## ADR-013 — Migración del Monitoring al gateway único `/ws`
 
-> **Estado**: Proposed (pendiente de decisión — **NO ejecutar en esta pasada**)
+> **Estado**: Rejected (cerrado — no ejecutar; ver "Decisión final")
 > **Fecha**: 2026-08-10
 > **Origen**: pasada de verificación del panel (change-log §30); revisión del
 > badge de jugadores del header y de la fuente en vivo de métricas
@@ -827,43 +827,75 @@ un socket de monitoring por servidor activo) y duplica el transporte de métrica
 3. **Publicar métricas en el bus** para que el gateway las enrute, pero
    conservar el WS de monitoring como retro-compat.
 
-### Decisión
+### Decisión final
 
-**Sin decisión ejecutada.** Se deja anotada como **candidata de arquitectura
-(backlog/ADR Proposed)** para evaluarse fuera de la pasada de verificación. La
-implementación actual está **confirmada funcionando** (gateway para negocio,
-WS de monitoring para métricas, cabecera y StatCards leyendo de
-`useMonitoringStore`), por lo que la migración es **riesgo sin beneficio
-funcional inmediato**.
+**Rejected.** Se descarta la fusión de transportes y se **cierra el ADR** (no se
+deja en Proposed indefinido). Se mantienen los dos endpoints según ADR-002: el
+gateway `/ws` para eventos de negocio y el WS de monitoring por servidor para
+telemetría. El trigger de revisión al final define cuándo —y solo cuándo— se
+reabre el tema, para que no reaparezca de forma especulativa en cada pasada.
 
-### Justificación de no ejecutarla ahora
+### Justificación (modelos de consistencia distintos)
 
-- Cambio transversal (backend: transporte/enrutado de métricas; frontend: un
-  único cliente WS) sin impacto funcional observable para el usuario.
-- El estado actual respeta la regla práctica de §4 (negocio → gateway;
-  métricas → WS de monitoring por servidor) y ya está cubierto por tests.
-- La migración solo debería dispararse si aparece un motivo concreto
-  (latencia, coste de sockets, simplificación del frontend, consolidación de
-  `resume`/`seq`).
+Los dos WS **no son duplicados del mismo canal** — representan **modelos de
+consistencia distintos** que conviene no mezclar:
+
+| Aspecto | Gateway `/ws` | WS de monitoring por servidor |
+|---|---|---|
+| Naturaleza | **Event log** de negocio (estado, consola, jugadores, backups) | **Telemetría de último valor** (CPU/RAM/disco/jugadores cada ~5 s) |
+| Entrega | Encolado + `resume` por `seq` (re-emite lo perdido) | Snapshot descartable — el siguiente polling corrige |
+| Tolerancia a pérdida | Baja (cada evento es un hecho) | Alta (el último valor gana) |
+| Consumidor | `useNotificationsStore` + cachés TanStack | `useMonitoringStore` |
+
+Fusionar ambos en un solo transporte mezclaría dos contratos: las métricas no
+necesitan `resume` ni durabilidad (son último valor), y meterlas en el event log
+ensuciaría el `seq` del negocio y dispararía re-emisiones inútiles de `resume`.
+
+### Justificación (escala y riesgo)
+
+- **No hay problema de escala real**: el costo es **2 sockets por pestaña
+  abierta** (1 gateway + 1 de monitoring del servidor activo), **independiente
+  de la cantidad de servidores** — el socket de monitoring solo sigue al
+  servidor activo (refcount compartido, `useServerMonitoring`); no hay N
+  sockets por N servidores.
+- **Riesgo no justificado**: tocar un transporte recién estabilizado y ya
+  verificado contra servidores reales, **sin un problema medible concreto**, es
+  riesgo sin beneficio funcional.
+- El estado actual respeta la regla práctica de §4 (negocio → gateway; métricas
+  → WS de monitoring por servidor) y está cubierto por tests.
+
+### Trigger de revisión futuro
+
+Solo se reconsidera la fusión de transportes ante un **problema medible y
+demostrado**, no de forma especulativa:
+
+1. **Límite de conexiones**: el servidor/proxy rechaza conexiones por tope de
+   sockets (con logs o métricas que lo evidencien).
+2. **Latencia comprobada**: medición concreta (no percibida) de latencia o
+   pérdida de snapshots que afecte la UI.
+3. **Costo de mantenimiento real**: mantener los dos endpoints demuestra un
+   costo medible (bugs recurrentes, duplicación de código con coste en horas).
+
+Si ninguno aplica, la decisión se mantiene **Rejected** y el tema no se reabre
+en cada pasada de verificación.
 
 ### Consecuencias
 
-**Positivas (de ejecutarse en el futuro)**:
-- Un solo cliente WS y un solo transporte para estado + métricas.
-- `resume` por `seq` y control de flujo del gateway también para métricas.
-
-**Negativas (de no ejecutarse)**:
-- El frontend mantiene un socket de monitoring por servidor activo además del
-  gateway (coste acotado: uno a la vez, con refcount compartido).
+- **Aceptadas**: dos sockets por pestaña (gateway + monitoring del servidor
+  activo) y dos stores de consumo (`useNotificationsStore` para negocio,
+  `useMonitoringStore` para telemetría) — contrato formalizado en
+  `frontend-standards.md` §14.
+- **No se crean más sockets por componente**: todo dato en vivo se lee de esos
+  stores (§14). La auditoría puntual (2026-08-10) confirmó que **ningún
+  componente abre socket directo** fuera de `useServerMonitoring` (telemetría,
+  refcount compartido) y el singleton del gateway (`stores/ws.ts`).
 
 ### Impacto en el Blueprint y futuras implementaciones
 
-- Si se acepta, actualizar `technical-design.md` §17/Fase H y
-  `implementation-blueprint.md` §3.12 Notification para consolidar el endpoint.
-- Actualizar `frontend-standards.md` §4 y la capa `ws` del frontend a un único
-  cliente; `useServerMonitoring` pasaría a escribir desde el gateway.
-- Mientras tanto, **no crear más sockets de métricas por componente**: seguir
-  la regla de leer de `useMonitoringStore` (un socket por servidor, §4).
+- **Ninguno**: no hay cambio de transporte pendiente. El TDD §13.1 mantiene la
+  deuda documentada de reflejar los dos endpoints (nota de ADR-002).
+- Fases futuras (Consola, Jugadores, Monitoring/Scheduler) consumen según
+  `frontend-standards.md` §14, sin abrir sockets propios.
 
 ---
 

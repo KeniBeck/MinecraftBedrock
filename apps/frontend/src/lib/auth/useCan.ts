@@ -12,6 +12,13 @@ import { useAuthStore } from '@/stores/auth'
  */
 const PANEL_MIN_ROLES: Record<string, readonly string[]> = {
   'server.create': ['admin', 'super_admin'],
+  // `server.update` es WRITE_ACTION (ámbito server) → la tienen operator,
+  // admin y super_admin (modules/iam/domain/permissions.py). No es PANEL_ACTION
+  // como `server.create`, por eso su mínimo de rol es más amplio.
+  'server.update': ['operator', 'admin', 'super_admin'],
+  // `server.console.write` también es WRITE_ACTION (operator+) — oculta el
+  // input de comandos de la consola sin permiso.
+  'server.console.write': ['operator', 'admin', 'super_admin'],
 }
 
 export function rolesCan(action: string, roles: readonly string[] | undefined): boolean {

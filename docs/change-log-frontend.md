@@ -106,9 +106,9 @@
 
 - `pnpm lint` ✅ · `pnpm typecheck` ✅ · `pnpm test` ✅ (14 passed) ·
   `pnpm build` ✅
-- Pendiente de prueba manual en navegador (criterio de parada de la Fase 1):
-  login con usuario real (con y sin 2FA) y ver el WS conectado + al menos un
-  evento en la consola tras suscribirse al canal `global`.
+- Confirmado manualmente en navegador por el usuario: login con usuario real
+  (incluido el paso 2FA) y WS conectado con al menos un evento en la consola
+  tras suscribirse al canal `global`.
 
 ## Fase 2 — Layout + Servidores
 
@@ -205,9 +205,10 @@
 
 - `pnpm lint` ✅ · `pnpm typecheck` ✅ · `pnpm test` ✅ (24 passed) ·
   `pnpm build` ✅ (solo warning de chunk >500kB, no bloqueante)
-- Pendiente de prueba manual en navegador (criterio de parada de la Fase 2):
-  layout fiel al mockup, selector de servidor cambiando entre los servidores
-  reales, y start/stop con el estado actualizándose por WS sin refrescar.
+- Confirmado manualmente en navegador por el usuario: layout fiel al mockup
+  (glassmorphism + fondo dinámico detrás de las superficies), selector de
+  servidor cambiando entre los servidores reales, y start/stop/restart con el
+  estado actualizándose por WS sin refrescar.
 
 ### Fix — `image_ref` rompía la card de servidor (2026-08-08)
 
@@ -280,9 +281,9 @@ por valor visual: si en la revisión visual sobra, se puede quitar o reemplazar
 
 - `pnpm lint` ✅ · `pnpm typecheck` ✅ · `pnpm test` ✅ (24 passed) ·
   `pnpm build` ✅
-- Pendiente de prueba manual en navegador (criterio de parada): el fondo
-  `world` aparece en el selector y el crossfade entre `cave` (gradiente) y
-  `world` (imagen borrosa) se ve suave y estético.
+- Confirmado manualmente en navegador por el usuario: el fondo `world` aparece
+  en el selector y el crossfade entre `cave` (gradiente) y `world` (imagen
+  difusa) se ve suave y estético.
 
 ### Fix — "Desenfoque estratégico" del fondo de imagen (2026-08-08)
 
@@ -321,9 +322,9 @@ por valor visual: si en la revisión visual sobra, se puede quitar o reemplazar
 
 - `pnpm lint` ✅ · `pnpm typecheck` ✅ · `pnpm test` ✅ (24 passed) ·
   `pnpm build` ✅
-- Pendiente de prueba manual en navegador: seleccionar "Mundo Costero" y
-  confirmar que se ve el paisaje en el centro mientras los bordes se fusionan
-  con el tema oscuro.
+- Confirmado manualmente en navegador por el usuario: seleccionar "Mundo
+  Costero" muestra el paisaje en el centro mientras los bordes se fusionan con
+  el tema oscuro.
 
 ### Header — refactor a bloques flotantes (glassmorphism) (2026-08-08)
 
@@ -366,9 +367,10 @@ por valor visual: si en la revisión visual sobra, se puede quitar o reemplazar
 ### Verificación
 
 - `pnpm lint` ✅ · `pnpm typecheck` ✅ · `pnpm build` ✅
-- Pendiente de prueba manual en navegador (criterio de parada): el header se
-  ve como cuatro "islas" flotantes sobre el fondo, no como una barra, y la
-  flecha del header contrae el sidebar.
+- Confirmado manualmente en navegador por el usuario: el header se ve como
+  bloques "isla" flotantes sobre el fondo, no como una barra (la flecha de
+  colapso del header se eliminó en la entrada posterior de iconos; el control
+  vive en el Sidebar).
 
 > **Nota**: para que el flecha de colapso del bloque 1 controlara el sidebar
 > fue necesario elevar el estado de colapso (que residía en `Sidebar`) a
@@ -408,9 +410,9 @@ por valor visual: si en la revisión visual sobra, se puede quitar o reemplazar
 ### Verificación
 
 - `pnpm lint` ✅ · `pnpm typecheck` ✅
-- Pendiente de confirmación visual del usuario (criterio de parada): el botón
-  `<` ya no aparece en el header y ambas imágenes (`Diamond_Sword_JE3_BE3.webp`
-  y `dressing_room_skins.png`) se renderizan en sus bloques.
+- Confirmado manualmente en navegador por el usuario: el botón `<` ya no
+  aparece en el header y ambas imágenes (`Diamond_Sword_JE3_BE3.webp` y
+  `dressing_room_skins.png`) se renderizan en sus bloques.
 
 ### Extensión — Capa "pixel" reutilizable en <Button> + "Crear servidor" (2026-08-10)
 
@@ -476,9 +478,9 @@ por valor visual: si en la revisión visual sobra, se puede quitar o reemplazar
 
 - `pnpm vitest run`: 24/24 ✅ (6 archivos)
 - `pnpm build`: typecheck + build OK (solo warning de chunk > 500 kB, no bloquea)
-- Pendiente de confirmación visual del usuario: bisel/press del botón, textura
-  en cada variante, y el modal crea un servidor real (botón visible solo para
-  admin/super_admin).
+- Confirmado manualmente en navegador por el usuario: bisel/press y textura
+  del botón pixel en cada variante, el modal "Crear servidor" crea un servidor
+  real, y el botón es visible solo para admin/super_admin.
 
 ### Extensión — Campana de notificaciones + sincronización de lista (auditoría WS, 2026-08-10)
 
@@ -537,10 +539,11 @@ por valor visual: si en la revisión visual sobra, se puede quitar o reemplazar
 - `pnpm vitest run`: 29/29 ✅ (7 archivos)
 - `pnpm build`: typecheck + build OK (solo warning de chunk > 500 kB)
 - `pnpm lint`: ✅
-- Pendiente de confirmación visual del usuario (criterio de parada): iniciar un
-  servidor real → el header cambia a "En línea" sin refrescar; conectar un
-  jugador real → la campana muestra la notificación; el stat de Jugadores sube
-  y CPU se mueve.
+- Confirmado manualmente en navegador por el usuario: iniciar/parar un servidor
+  real cambia el header a "En línea"/"Detenido" sin refrescar y la campana
+  muestra la notificación; el stat de Jugadores y CPU se mueven en vivo.
+  (Conectar un jugador real queda pendiente de prueba con un cliente Bedrock —
+  criterio de la Fase 5.)
 
 ### Fix — Badge de jugadores del header (fuente en vivo del WS de monitoring, 2026-08-10)
 
@@ -581,6 +584,175 @@ por valor visual: si en la revisión visual sobra, se puede quitar o reemplazar
 
 - `pnpm vitest run`: 30/30 ✅ (7 archivos)
 - `pnpm lint` ✅ · `pnpm typecheck` ✅
-- Pendiente de confirmación visual del usuario (criterio de parada): con el
-  servidor real corriendo, el badge del header refleja el mismo contador que el
-  StatCard "Jugadores" sin refrescar.
+- Confirmado manualmente en navegador por el usuario: con el servidor real
+  corriendo, el badge del header refleja el mismo contador que el StatCard
+  "Jugadores" sin refrescar (jugadores en vivo desde el WS de monitoring).
+
+### Cierre ADR-013 + contrato de consumo WS (§14) + auditoría de sockets (2026-08-10)
+
+> **Origen**: revisión posterior a la pasada (change-log backend §30). No dejar
+> la migración Monitoring→gateway en Proposed indefinido; formalizar quién
+> consume qué en el frontend; y auditar que no queden sockets directos sueltos.
+
+### Decisiones
+
+- **ADR-013 cerrado como Rejected** (docs/adr.md): los dos WS son modelos de
+  consistencia distintos — event log de negocio con `resume` por `seq` (gateway
+  `/ws`) vs. telemetría de último valor descartable (WS de monitoring por
+  servidor). No hay problema de escala real (2 sockets por pestaña, independiente
+  de la cantidad de servidores: el de monitoring sigue solo al activo, refcount
+  compartido). El riesgo de tocar el transporte recién estabilizado no se
+  justifica sin un problema medible. Se escribe un **trigger de revisión
+  futuro** explícito (límite de conexiones, latencia comprobada, costo de
+  mantenimiento real) — el tema no se reabre de forma especulativa.
+- **`frontend-standards.md` §14 nuevo — contrato de consumo WS**: exactamente
+  dos stores de lectura con nombre real del código: `useNotificationsStore`
+  (`stores/notifications.ts`) para cambio de estado/evento de negocio vía
+  gateway (`useWebSocketStore`, `stores/ws.ts`); `useMonitoringStore`
+  (`stores/monitoring.ts`) para telemetría numérica continua (CPU/RAM/disco/
+  jugadores). Ningún componente abre socket propio; los dueños de socket son
+  solo `useWebSocketStore` (singleton) y `useServerMonitoring` (refcount).
+- **Auditoría puntual de sockets** (no se asumió que estaba bien): `grep` de
+  `new WebSocket(`/`EventSource` en `apps/frontend/src`. Resultado: solo
+  aparecen en `lib/ws/WebSocketClient.ts` (cliente del gateway, creado por
+  `stores/ws.ts`) y `hooks/useServerMonitoring.ts` (telemetría) — **ningún
+  componente abre socket directo** fuera de esos dos dueños.
+
+### Archivos
+
+| Archivo | Contenido |
+|---|---|
+| `docs/adr.md` | ADR-013 → Rejected + trigger de revisión futuro |
+| `docs/frontend-standards.md` | §4 cross-ref + §14 (dueños de socket, tabla de consumo, reglas) |
+| `docs/change-log-frontend.md` | Esta entrada |
+
+### Verificación
+
+- Auditoría: `grep -n "new WebSocket\\|EventSource" apps/frontend/src` → solo
+  2 dueños de socket en producción (gateway singleton + telemetría). Sin
+  cambios de código en esta entrada (docs + verificación).
+
+### Extensión — Actualizar recursos de servidor (CPU/RAM) (2026-08-10)
+
+> **Origen**: cierre de la Fase 2 del plan. Quedaba la acción de escritura
+> sobre recursos sin UI; el backend ya la expone (`PUT /servers/{id}/resources`)
+> con `UpdateServerResourcesUseCase` y el detalle ya devuelve `resources`.
+
+### Decisiones
+
+- **Contrato verificado contra el código real del backend** (no copiado del
+  prompt): `api/schemas.py` → `UpdateResourcesRequest` con `cpu_cores` opcional
+  (float 1..64) y `ram_mb` opcional (int 512..65536); respuesta 200
+  `ServerResponse` (sin `resources`); `ServerDetailResponse` sí expone
+  `resources` actuales → el modal precarga los valores del detalle.
+  `domain/errors.py`: `SERVER.RESOURCES_INVALID` (422) y `SERVER.BUSY` (409).
+  El use case recrea el contenedor solo si algo cambió y publica
+  `SERVER.RESOURCES_CHANGED`; el ciclo de recreación emite `SERVER.STARTING`
+  → el sync WS existente (`useServerStateSync`) ya lo refleja, **sin** sumar
+  `RESOURCES_CHANGED` a `STATE_EVENTS`.
+- **Permiso**: `server.update` es WRITE_ACTION (ámbito server, no PANEL_ACTION
+  como `server.create`) → la tienen operator/admin/super_admin. Se extiende
+  `PANEL_MIN_ROLES['server.update'] = ['operator', 'admin', 'super_admin']` en
+  `lib/auth/useCan.ts`; sin permiso el botón se oculta (el backend además
+  responde 403, que se maneja sin romper la UI).
+- **UI**: modal reutilizando `dialog.tsx` con el patrón de `CreateServerDialog`
+  (estado local + `getApiMessage`/`getApiCode`, sin react-hook-form). Botón en
+  la columna de acciones de la card del detalle (junto a Iniciar/Reiniciar/
+  Detener/Crear backup), no en la card pequeña del header. Validación client-side
+  de rangos (CPU 1..64, RAM 512..65536) y envío solo de los campos cambiados;
+  aviso explícito de reinicio si el servidor está en línea. `409 SERVER.BUSY`
+  muestra `detail.message` del backend tal cual.
+- **Cache**: `useUpdateResources` escribe el `ServerResponse` en el detalle y
+  además invalida detalle y lista (la respuesta no trae `resources`, hay que
+  re-fetchear los valores nuevos).
+
+### Archivos
+
+| Archivo | Contenido |
+|---|---|
+| `src/lib/api/servers.ts` | `UpdateServerResourcesRequest` + `updateServerResources` |
+| `src/lib/auth/useCan.ts` | `server.update` en `PANEL_MIN_ROLES` |
+| `src/features/servers/hooks.ts` | `useUpdateResources` (setQueryData + invalidación) |
+| `src/features/servers/components/UpdateResourcesDialog.tsx` | Modal (nuevo) |
+| `src/features/servers/components/ServerCard.tsx` | Botón integrado en la columna de acciones |
+| `src/features/servers/components/UpdateResourcesDialog.test.tsx` | Tests del modal (nuevo) |
+| `src/features/servers/hooks.test.tsx` | Tests del hook (nuevo) |
+| `docs/frontend-implementation-plan.md` | Fase 2 cerrada (extensión implementada) |
+
+### Verificación
+
+- Tests vitest: **44 passed (9 files)** — incluye el hook (éxito escribe cache e
+  invalida detalle+lista, 422/403 no invalidan) y el modal (oculto sin permiso,
+  precarga de valores, validación de rangos, aviso de reinicio solo en línea,
+  `409` muestra `detail.message`, `422` de FastAPI muestra fallback, 403 no
+  rompe la UI).
+- `pnpm typecheck` ✅ · `pnpm lint` ✅ · `pnpm build` ✅ (warning de chunk
+  >500 kB conocido, no bloqueante).
+
+### Fase 3 — Consola en vivo (2026-08-10)
+
+> **Origen**: alcance del plan (`frontend-implementation-plan.md` §Fase 3).
+> El contrato se verificó contra el backend real y corrigió varios supuestos del
+> borrador inicial.
+
+### Decisiones
+
+- **El streaming NO usa el gateway**: la consola tiene un WS dedicado por
+  servidor `/servers/{id}/console/ws?token=&after_seq=` (ADR-002, `console/api/
+  router.py::console_ws`), igual que el de monitoring. El gateway no reenvía
+  `CONSOLE.*` (verificado: ninguna referencia en `modules/notification`). Se
+  replica el patrón de `useServerMonitoring` (registry con refcount por
+  servidor + reconexión con backoff), NO el `useWebSocketStore.subscribe` del
+  borrador (esa API no existe en `stores/ws.ts`).
+- **Histórico sin polling HTTP**: `after_seq=-1` reproduce todo el buffer del
+  backend (`ConsoleLog.since()` es exclusivo y los seq empiezan en 0); al
+  reconectar o volver a la página se reanuda desde `lastSeq` guardado en el
+  store (sin duplicar líneas). El `GET .../console/buffer` no se usa en la UI.
+- **Envelope `CONSOLE.OUTPUT`**: `{event, server_id, scope: 'console',
+  payload: {line}, ts, seq}` — se amplió `WsEnvelope.scope` para incluir
+  `'console'`. `payload.line` es la línea cruda.
+- **Envío de comandos**: `POST /servers/{id}/console/commands` devuelve **202**
+  con `CommandAckResponse = {server_id, command, priority, seq, at}` (no un 200
+  `{status}` como asumía el borrador). Body `{command: 1..512}` (priority
+  default `normal`). Permiso real: **`server.console.write`** (WRITE_ACTION →
+  operator+) para enviar y `server.console.read` (viewer+) para ver — se mapea
+  `server.console.write` en `PANEL_MIN_ROLES`; sin permiso se oculta el input
+  (el backend además responde 403). Errores `CONSOLE.*` (`SERVER_OFFLINE`,
+  `COMMAND_REJECTED`, …) con `getApiMessage` inline, **sin toasts** (sonner no
+  está instalado).
+- **Aviso offline**: si el servidor no está `running`, banner ámbar + input y
+  botón deshabilitados (el backend además responde `CONSOLE.SERVER_OFFLINE`).
+- **Sidebar**: el ítem "Consola" estaba `disabled: true`; se cableó a
+  `/servers/:serverId/console` usando el servidor activo (campo `sub` por ítem)
+  y el activo ahora se calcula por match exacto del pathname.
+- **Store**: `useConsoleStore` con buffer por servidor (límite 1000, igual que
+  el anillo del backend) + `lastSeq` por servidor para resume idempotente. El
+  buffer NO se limpia al desmontar (el scrollback persiste en la sesión).
+
+### Archivos
+
+| Archivo | Contenido |
+|---|---|
+| `src/stores/console.ts` | Store de líneas + `lastSeq` (nuevo) |
+| `src/lib/api/console.ts` | `sendConsoleCommand` + tipos (202) (nuevo) |
+| `src/features/console/hooks.ts` | `useConsole` (WS dedicado) + `toConsoleLine` + `useSendCommand` (nuevo) |
+| `src/features/console/components/ConsoleTerminal.tsx` | Terminal (nuevo) |
+| `src/features/console/ConsolePage.tsx` | Página `/servers/:serverId/console` (nuevo) |
+| `src/app/router.tsx` | Ruta de la consola |
+| `src/components/layout/Sidebar.tsx` | ítem "Consola" cableado + activo por pathname |
+| `src/lib/auth/useCan.ts` | `server.console.write` |
+| `src/lib/ws/types.ts` | `scope` incluye `'console'` |
+| Tests | `stores/console.test.ts`, `features/console/hooks.test.tsx`, `ConsoleTerminal.test.tsx`, `ConsolePage.test.tsx`, `Sidebar.test.tsx` |
+| `docs/frontend-implementation-plan.md` | Fase 3 implementada, verificación manual pendiente |
+
+### Verificación
+
+- Tests vitest: **65 passed (14 files)** — store (anillo 1000, lastSeq, clear),
+  `toConsoleLine` (filtro evento/servidor/línea vacía), envío (202), terminal
+  (líneas, vacío, banner offline, input oculto sin permiso, envío, error
+  `CONSOLE.SERVER_OFFLINE`), página (carga/spinner/error), sidebar (links
+  Consola/Servidor + activo).
+- `pnpm typecheck` ✅ · `pnpm lint` ✅ · `pnpm build` ✅ (warning de chunk
+  conocido).
+- **Pendiente de verificación manual por el usuario** (criterios de parada de
+  Fase 3: logs en vivo y comando visible en `docker logs`).

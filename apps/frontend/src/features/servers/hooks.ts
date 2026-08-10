@@ -8,8 +8,10 @@ import {
   serverKeys,
   startServer,
   stopServer,
+  updateServerResources,
   type CreateServerRequest,
   type Server,
+  type UpdateServerResourcesRequest,
 } from '@/lib/api/servers'
 import { useServerStateSync } from '@/hooks/useServerStateSync'
 
@@ -77,6 +79,29 @@ export function useRestartServer() {
     mutationFn: ({ serverId }: { serverId: string }) => restartServer(serverId, 30),
     onSuccess: (server) => {
       queryClient.setQueryData(serverKeys.detail(server.id), server)
+    },
+  })
+}
+
+/**
+ * `PUT /servers/{id}/resources` — cambia CPU/RAM. El `ServerResponse` no trae
+ * `resources`, así que además de reflejar el estado devuelto se invalidan el
+ * detalle y la lista para re-fetchear los valores nuevos del backend.
+ */
+export function useUpdateResources() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      serverId,
+      payload,
+    }: {
+      serverId: string
+      payload: UpdateServerResourcesRequest
+    }) => updateServerResources(serverId, payload),
+    onSuccess: (server) => {
+      queryClient.setQueryData(serverKeys.detail(server.id), server)
+      queryClient.invalidateQueries({ queryKey: serverKeys.detail(server.id) })
+      queryClient.invalidateQueries({ queryKey: serverKeys.all })
     },
   })
 }
