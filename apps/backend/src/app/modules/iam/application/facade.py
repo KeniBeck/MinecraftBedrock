@@ -8,6 +8,8 @@ entidades de dominio ni hashes.
 
 from __future__ import annotations
 
+from psycopg.errors import UniqueViolation
+
 from app.kernel.ports.access import Identity
 from app.modules.iam.application.access import AccessControlService
 from app.modules.iam.application.commands import (
@@ -62,6 +64,7 @@ from app.modules.iam.application.use_cases import (
     LogoutUseCase,
     RefreshUseCase,
 )
+from app.modules.iam.domain.role import BuiltinRole
 
 
 class IamFacade:
@@ -108,6 +111,55 @@ class IamFacade:
 
     async def assign_membership(self, cmd: AssignMembershipCommand) -> None:
         await self._assign_membership.execute(cmd)
+
+    async def ensure_bootstrap_admin(
+        self,
+        username: str,
+        password: str,
+        display_name: str = "Administrador",
+    ) -> str:
+        """Crea (si no existe) un super_admin con las credenciales dadas.
+
+        Bootstrap de primer arranque en producción, idempotente: si el usuario
+        ya existe o ya tiene el rol super_admin, no lo duplica ni lo degrada.
+        Devuelve el id del usuario (creado o existente).
+        """
+        deps = self.deps
+        if not username or not password:
+            return ""
+        user = await deps.repository.get_by_username(username)
+        if user is None:
+            try:
+                view = await self._create_user.execute(
+                    CreateUserCommand(
+                        username=username,
+                        password=password,
+                        display_name=display_name,
+                        actor_id=None,
+                    )
+                )
+                user_id = view.id
+                needs_role = True
+            except UniqueViolation:
+                # Race con otro worker: otro proceso ya insertó el mismo username.
+                # Re-resolvemos y solo aseguramos el rol (idempotente).
+                user = await deps.repository.get_by_username(username)
+                if user is None:
+                    return ""
+                user_id = user.id
+                needs_role = BuiltinRole.SUPER_ADMIN not in user.roles
+        else:
+            user_id = user.id
+            needs_role = BuiltinRole.SUPER_ADMIN not in user.roles
+        if needs_role:
+            await self._assign_role.execute(
+                AssignRoleCommand(
+                    user_id=user_id,
+                    role=BuiltinRole.SUPER_ADMIN,
+                    actor_id=None,
+                )
+            )
+        return user_id
 
     # -- autenticación ------------------------------------------------------
 

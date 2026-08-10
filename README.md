@@ -51,3 +51,30 @@ Si el arranque o la carga del mundo se vuelve lenta, se puede aumentar el
 recurso asignado al contenedor desde los settings del backend:
 `server.resources.memory_mb` y `server.resources.cpus`. Los valores por defecto
 actuales son `2048` MB y `2.0` CPUs.
+
+## Despliegue en producción (Docker)
+
+La pila completa (backend + frontend + Postgres) se levanta con
+`docker-compose.prod.yml` de forma portable.
+
+- **¿Quiere montarlo en cualquier PC (Windows/macOS/Linux) sin tocar código?** Siga la
+  guía intuitiva en [`docs/installation.md`](docs/installation.md).
+- **¿Busca los detalles técnicos del despliegue?** Lea [`docs/deployment.md`](docs/deployment.md).
+
+```bash
+cp .env.prod.example .env.prod      # edita credenciales/claves
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
+```
+
+Si defines `BEDROCK_PANEL_BOOTSTRAP_ADMIN_USERNAME` y `BEDROCK_PANEL_BOOTSTRAP_ADMIN_PASSWORD`
+en `.env.prod`, el backend crea automáticamente un **super_admin** en el primer arranque
+idempotente para entrar al panel sin usar comandos.
+
+- Imágenes **separadas** por aplicación: `infra/docker/Dockerfile.backend`
+  (FastAPI + uvicorn) y `infra/docker/Dockerfile.frontend` (build Vite + nginx
+  con proxy `/api` y `/ws`).
+- Postgres portable con volumen nombrado, healthcheck y `depends_on`.
+- El backend obtiene migraciones aplicadas en el arranque (entrypoint) y gestiona
+  los contenedores Minecraft vía el socket de Docker del host.
+
+> Despliegue en desarrollo (solo backend + Postgres): `docker-compose.dev.yml`.

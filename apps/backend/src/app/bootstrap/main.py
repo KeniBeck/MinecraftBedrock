@@ -10,6 +10,7 @@ previas: la base real corre sin inyección).
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -42,6 +43,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     if reconciler is not None:
         await reconciler.reconcile()
     await app.state.container.settings_service.reload()
+    await _bootstrap_admin(app)
     for poller in pollers:
         await poller.start()
     try:
@@ -87,6 +89,33 @@ def create_app(container: Container | None = None) -> FastAPI:
 
     _register_root(app)
     return app
+
+
+async def _bootstrap_admin(app: FastAPI) -> None:
+    """Bootstrap de super_admin de primer arranque (producción).
+
+    Si ``bootstrap_admin_username``/``bootstrap_admin_password`` están
+    definidos en el entorno, crea (idempotente) un super_admin. Defensivo: un
+    fallo de bootstrap no debe tumbar el arranque del panel.
+    """
+    settings = get_settings()
+    if not settings.bootstrap_admin_username or not settings.bootstrap_admin_password:
+        return
+    iam = app.state.container.iam_facade
+    try:
+        await iam.ensure_bootstrap_admin(
+            settings.bootstrap_admin_username,
+            settings.bootstrap_admin_password,
+            settings.bootstrap_admin_display_name,
+        )
+        logging.getLogger(__name__).info(
+            "Bootstrap admin listo: %s", settings.bootstrap_admin_username
+        )
+    except Exception:  # pragma: no cover - defensivo
+        logging.getLogger(__name__).exception(
+            "Fallo al crear el bootstrap admin (se omite): %s",
+            settings.bootstrap_admin_username,
+        )
 
 
 def _register_root(app: FastAPI) -> None:

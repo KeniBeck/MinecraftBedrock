@@ -76,6 +76,19 @@ class Settings(BaseSettings):
     iam_totp_issuer: str = "BedrockPanel"
     iam_temp_token_ttl_seconds: int = 300
 
+    # Clave HMAC de firma de los JWT de acceso (HS256). Si no se define su
+    # fallback de desarrollo es "dev-insecure-secret-change-me" (29 bytes), por
+    # lo que PyJWT emite un InsecureKeyLengthWarning (<32). En producción se
+    # recomienda una cadena larga, p. ej. `secrets.token_urlsafe(48)`.
+    iam_jwt_secret: str = "dev-insecure-secret-change-me"
+
+    # Bootstrap de administrador inicial (producción): si se definen usuario y
+    # contraseña, el backend crea en el arranque un super_admin con esos
+    # credenciales (idempotente; no sobrescribe si ya existe). Vacío = desactivado.
+    bootstrap_admin_username: str = ""
+    bootstrap_admin_password: str = ""
+    bootstrap_admin_display_name: str = "Administrador"
+
 
 @lru_cache
 def get_settings() -> Settings:

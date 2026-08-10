@@ -1,0 +1,25 @@
+# .dockerignore — contexto de build compartido por Dockerfile.backend y frontend.
+# Evita enviar al daemon carpetas grandes/secretas al construir.
+
+# VCS
+.git
+.github
+
+# Entornos y secretos Python
+apps/**/.venv
+apps/**/.uv
+apps/**/__pycache__
+apps/**/*.py[cod]
+apps/**/.mypy_cache
+apps/**/.pytest_cache
+apps/**/.ruff_cache
+apps/backend/.env
+apps/backend/.env.*
+
+# Frontend: no enviar node_modules (se instala dentro del builder) ni builds previos.
+apps/frontend/node_modules
+apps/frontend/dist
+
+# Datos locales del servidor (imagen BDS) no se empaquetan.
+apps/backend/data/
+data/

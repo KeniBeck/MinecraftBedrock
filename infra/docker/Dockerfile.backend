@@ -1,0 +1,80 @@
+# Dockerfile de producción del backend BedrockPanel (FastAPI + Python 3.13).
+#
+# Alineado al TDD §3 (Python 3.13) y a los criterios de la FASE: imagen mínima,
+# dependencias resueltas con `uv` y cacheadas, sin `--reload`, migraciones
+# Alembic aplicadas en el arranque vía entrypoint (deuda §17/§11, ahora cerrada
+# para producción).
+#
+# Multi-stage:
+#   - `builder`: sobre python:3.13-slim + el binario uv. Resuelve dependencias
+#     de producción en `.venv` (caché por capas) y luego instala el paquete `app`.
+#   - `runtime`: python:3.13-slim solo copia `venv` + fuente; sin tooling extra.
+#
+# NOTA: la imagen `ghcr.io/astral-sh/uv` es scratch-like (solo el binario `uv`,
+# sin shell/python); por eso NO se usa como `FROM`, se copia `uv`/`uvx` como
+# hacer `Dockerfile.dev`. UV_VERSION debe fijarse (no `latest`) para
+# reproducibilidad.
+
+ARG UV_VERSION=0.5.26
+ARG PYTHON_VERSION=3.13
+
+# --------------------------------------------------------------------------- #
+# FASE BUILDER — resolución de dependencias SQLAlchemy/psycopg/etc.
+# --------------------------------------------------------------------------- #
+FROM python:${PYTHON_VERSION}-slim AS builder
+
+# Referencia PINNED al binario uv. Se escribe literal `0.5.26` (el builder legacy
+# de Docker NO sustituye ARG dentro de `COPY --from`). Mantener en sincronía con
+# `ARG UV_VERSION` de la línea superior (usado en `FROM`).
+COPY --from=ghcr.io/astral-sh/uv:0.5.26 /uv /uvx /bin/
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /workspace/apps/backend
+
+# Copia solo los archivos de resolución para cachear la capa de dependencias.
+COPY apps/backend/pyproject.toml apps/backend/uv.lock apps/backend/.python-version ./
+
+# Resuelve e instala SOLO dependencias de producción, sin el proyecto (aún no
+# existe `src/`, hatchling no podría empaquetar `app`). `--no-dev` omite el
+# grupo `dev`; `--frozen` usa `uv.lock` tal cual.
+RUN uv sync --frozen --no-dev --no-install-project
+
+# Ahora sí: copia el fuente y sincroniza el paquete `app` contra las deps ya
+# cacheadas en el paso anterior.
+COPY apps/backend/src ./src
+RUN uv sync --frozen --no-dev
+
+# --------------------------------------------------------------------------- #
+# FASE RUNTIME — código + venv, lista para servir
+# --------------------------------------------------------------------------- #
+FROM python:${PYTHON_VERSION}-slim AS runtime
+
+# Variables de entorno por defecto (sobrescribibles en docker-compose).
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    BEDROCK_PANEL_DEBUG=false \
+    BEDROCK_PANEL_LOG_LEVEL=INFO
+
+WORKDIR /workspace/apps/backend
+
+# En el builder, `uv sync` genera el venv dentro del project dir (`.venv`).
+COPY --from=builder /workspace/apps/backend/.venv ./.venv
+
+# Copia el código fuente de la aplicación.
+COPY apps/backend/src ./src
+
+# Config para Alembic (ubicación de migraciones y URL por defecto).
+COPY apps/backend/alembic.ini ./alembic.ini
+
+# Entrypoint: espera Postgres, aplica migraciones y arranca uvicorn.
+COPY infra/docker/entrypoint.backend.sh /usr/local/bin/entrypoint.backend.sh
+RUN chmod +x /usr/local/bin/entrypoint.backend.sh
+
+# Puerto HTTP del panel (la API REST + WS / api_prefix).
+EXPOSE 8000
+
+# Comando por defecto (workers derivados de CPU en el entrypoint).
+CMD ["/usr/local/bin/entrypoint.backend.sh"]

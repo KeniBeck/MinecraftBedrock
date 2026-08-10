@@ -2711,3 +2711,143 @@ consumidores previos (el test antiguo de `materialize` usaba `{"memory": "2g"}`)
 - `uv run mypy --strict .` ✅ (398 archivos)
 - `uv run pytest -q` ✅ **856 passed, 37 deselected** (antes 854/37): +2 tests
   del fix de RAM.
+
+---
+
+## 27. Infraestructura de producción — Dockerfiles backend/frontend + compose portable
+
+> **Fecha**: 2026-08-09
+> **Alcance**: estandarizar el despliegue del panel (backend + frontend + Postgres)
+> con Docker, portable a cualquier máquina. Se separan las imágenes por aplicación
+> (contrario a un único Dockerfile que corra ambas), se cierra la deuda de aplicar
+> migraciones en producción y se externalizan credenciales/storage por entorno.
+> No toca el contrato §4.1, el TDD ni las capas del backend.
+
+### Decisión principal — una imagen por aplicación
+
+- **Backend** = proceso vivo (uvicorn). **Frontend** = build estático servido por
+  nginx. Compartir un solo Dockerfile/containizarlos juntos mezcla ciclos de vida
+  y bases distintas; se mantienen **contenedores separados** orquestados por
+  `docker-compose.prod.yml` en una red interna `bedrockpanel`.
+- Solo `frontend` publica un puerto al host; `backend` y `postgres` permanecen en
+  la red interna.
+
+### Archivos creados/modificados
+
+| Archivo | Contenido |
+|---|---|
+| `infra/docker/Dockerfile.backend` | Multi-stage (builder uv → runtime python:3.13-slim). Sin `--reload`; `uv:0.5.26` fijado en `ARG UV_VERSION` (independiente de `latest`); copia `pyproject`/`uv.lock`/`.python-version` y `alembic.ini`. |
+| `infra/docker/entrypoint.backend.sh` | 1) espera Postgres (sondeo con psycopg, sin cliente instalado), 2) `alembic upgrade head`, 3) arranca uvicorn con `BEDROCK_PANEL_WEB_CONCURRENCY` o 2×NCPU (máx 8). |
+| `infra/docker/Dockerfile.frontend` | Multi-stage (node:22 → build `pnpm install --frozen-lockfile` + `pnpm build` → nginx:1.27 sirviendo `dist/`). pnpm 9 fijado vía Corepack (no hay `packageManager` en `package.json`). |
+| `infra/docker/nginx.conf` | Sirve el SPA en `/`, activos con cache inmutable, proxy `/api/`→`backend:8000` (REST + WS con `Upgrade`) y `/ws`→`backend:8000` (gateway WS de Notification). `client_max_body_size` acorde a import de mundos. |
+| `docker-compose.prod.yml` | postgres (+healthcheck) + backend (depends_on sano, env `BEDROCK_PANEL_*`, mount `/var/run/docker.sock`, volumen de storage) + frontend. |
+| `.env.prod.example` | Plantilla de entorno con credenciales/almacenamiento/claves requeridas. |
+| `.dockerignore` | Excluye node_modules, `dist/`, venv, `.env*` y datos del contexto de build. |
+| `docs/deployment.md` | Guía completa: arquitectura, preparación, build/up, uso diario, volúmenes, env vars y notas de seguridad. |
+
+### Decisiones de integración con el código existente
+
+| Punto | Decisión |
+|---|---|
+| `BEDROCK_PANEL_STORAGE_ROOT` | Ruta **absoluta del host**, montada en el backend **en la misma ruta**, y usada por docker-py como origen de los bind-mounts `{storage_root}/{server_id}:/data` (§20/§21). Mantenerla idéntica host/contenedor es crítico para worlds/backups/templates y bind-mounts. |
+| Socket de Docker | Única vía de producción para que `DockerRuntimeAdapter` gestione los contenedores Minecraft en el host (`docker.sock`). |
+| Migraciones | Se ejecutan en el entrypoint, antes de uvicorn; cierra la deuda de "alembic upgrade en arranque" (§11/§17). Alembic lee la URL vía `Settings` (misma fuente de verdad, §13). |
+| Workers | `BEDROCK_PANEL_WEB_CONCURRENCY` o 2×NCPU; la persistencia es Postgres, los buffers/streams en memoria son por proceso. |
+
+### Verificación
+
+- `docker compose ... config` ✅ (con `.env.prod` poblado).
+- `sh -n entrypoint.backend.sh` ✅ (sintaxis shell).
+- Verificación de red/construcción de las imágenes queda pendiente de un host con
+  acceso a los builds y al daemon Docker (mismo criterio que las integraciones
+  opt-in del resto del proyecto).
+
+### Pendiente / deuda
+
+- Construcción real de las imágenes (`docker build`) y smoke-test end-to-end en
+  un host con Docker (no se ejecuta aquí, por lo que los hits de red/ue son
+  a validar en el destino).
+- TLS/HTTPS externo (terminación en un reverse proxy a nivel de host o `frontend`
+  con certificados), fuera de alcance de esta pila base.
+- El `package.json` del frontend no declara `packageManager`; la versión de pnpm
+  se fija explícitamente en `Dockerfile.frontend` (Corepack). Puede añadirse el
+  campo para robustez futura.
+
+---
+
+## 28. Bootstrap de super_admin por entorno + guía de instalación multi-SO
+
+**Fecha**: 2026-08-09
+
+### Resumen
+
+Sobre la infraestructura de producción (sección 27), se añade un **administrador
+inicial mediante variables de entorno** (para entrar al panel sin crear usuarios por
+comando) y una **guía de instalación intuitiva** para Windows, macOS y Ubuntu.
+
+### Cambios
+
+| Área | Detalle |
+|---|---|
+| `bootstrap/config.py` | Nuevos settings `bootstrap_admin_username`, `bootstrap_admin_password`, `bootstrap_admin_display_name` (env `BEDROCK_PANEL_BOOTSTRAP_ADMIN_*`). |
+| `iam/application/facade.py` | Nuevo `ensure_bootstrap_admin(username, password, display_name)` idempotente: crea el usuario si falta y asegura el rol `super_admin` sin degradarlo. Maneja la race entre workers de uvicorn capturando `UniqueViolation` y re-resolviendo el usuario creado por el worker ganador (arranque limpio, sin trazas de error). |
+| `bootstrap/main.py` | `_bootstrap_admin()` en el lifespan tras el `reload()` de settings; defensivo (try/except), no rompe el arranque. |
+| `docker-compose.prod.yml` | Reenvío de las 3 variables `BEDROCK_PANEL_BOOTSTRAP_ADMIN_*` al backend. |
+| `.env.prod.example` | Documentadas las variables de bootstrap con defaults (`admin` / placeholder / `Administrador`). |
+| `docs/installation.md` | **Nuevo**: guía paso a paso para Windows/macOS/Linux (Docker, `.env.prod`, Fernet, arranque, login admin, uso diario, troubleshooting). Enlazada desde `README.md`. |
+| `docs/deployment.md` | Tabla de variables ampliada con el bootstrap + sección "Administrador inicial". |
+| Tests | `TestBootstrapAdmin` en `tests/test_iam_use_cases.py` (3 tests: creación con rol, idempotencia/no-degradación, cortocircuito en vacío). |
+
+### Verificación
+
+- `uv run pytest tests/test_iam_use_cases.py -q` → `16 passed`.
+- `ruff check` / `ruff format --check` / `mypy --strict` ✅ en `facade.py`.
+- Rebuild + `up -d` real: login `POST /api/v1/auth/login` → `200` con roles `["super_admin"]`; logs del backend sin ERROR ni traceback de bootstrap con múltiples workers.
+
+### Pendiente / deuda
+
+- Probar la guía `docs/installation.md` en un PC externo (Windows/macOS/Ubuntu) como
+  criterio de aceptación de la portabilidad.
+
+---
+
+## 29. Ajustes de convivencia dev/prod: stack dev, cliente Docker, JWT y exposición de Postgres
+
+**Fecha**: 2026-08-10
+
+### Resumen
+
+Perfectas la experiencia de **desarrollo** (coexistencia con producción) y cierro
+errores detectados al correr el stack dev de forma manual: el backend dev no podía
+conectar a Postgres, el cliente Docker rompía en el manejo de errores de permisos, y
+se añadieron el secret JWT y la exposición de Postgres para herramientas externas.
+
+### Cambios
+
+| Área | Detalle |
+|---|---|
+| `docker-compose.dev.yml` | `BEDROCK_PANEL_DATABASE_URL` apuntando al servicio `postgres:5432` de la red dev (antes faltaba y usaba el default erróneo), `depends_on: postgres` y montaje `/var/run/docker.sock` para que el poller de reconcile alcance el daemon. |
+| `infrastructure/runtime/client_factory.py` | Corregido `_has_permission_error`: la SDK de Docker usa `args` a veces como **string** no tupla, lo que hacía `node.args[1]` indexar un carácter y reventar con `AttributeError: 'str' object has no attribute 'args'`. Ahora solo se sigue si es tupla con 2º elemento `BaseException`. |
+| `bootstrap/config.py` | Nuevo setting `iam_jwt_secret` (env `BEDROCK_PANEL_IAM_JWT_SECRET`) para firma HMAC HS256; sin él se usa el fallback de desarrollo (29 bytes) y PyJWT emite `InsecureKeyLengthWarning`. |
+| `docker-compose.prod.yml` | Reenvío de `BEDROCK_PANEL_IAM_JWT_SECRET` y `ports` para Postgres (`${BEDROCK_PANEL_PG_PORT:-5432}:5432`) que permite conectar DBeaver/pgAdmin en `localhost:5432`. |
+| `.env.prod.example` | Documentados `BEDROCK_PANEL_IAM_JWT_SECRET` y `BEDROCK_PANEL_PG_PORT`. |
+| `docs/installation.md` | Sección Linux generalizada: ya no solo "Ubuntu", sino Ubuntu/Debian y derivadas (Linux Mint, Pop!_OS, Zorin) usando el instalador oficial que detecta la distro. Añadido paso de la clave JWT. |
+| `docs/deployment.md` | Tabla de variables ampliada con `BEDROCK_PANEL_IAM_JWT_SECRET`. |
+| Tests | `tests/test_client_factory.py`: `test_permission_detection_with_str_args_does_not_crash_and_finds_cause` (args string → detecta `PermissionError` en la cadena de causas) y `test_str_args_without_permission_is_retryable_and_does_not_crash`. |
+
+### Cómo quedó la convivencia dev/prod
+
+- **Dev**: `docker-compose.dev.yml` (backend `:8000` con `--reload`, Postgres host `5433`) + Vite local `:5173` (`pnpm dev`) con proxy `/api` → `localhost:8000`. Cambios en `src` se recargan en caliente.
+- **Prod**: `docker-compose.prod.yml` (backend estático multi-worker **sin** `--reload`, nginx `:8080`, Postgres host `5432`).
+- No comparten puertos ni volúmenes; evolución y despliegue se "sube" con `docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build`.
+
+### Verificación
+
+- `uv run pytest tests/test_client_factory.py -q` → `8 passed`; `tests/test_iam_use_cases.py` → `16 passed`.
+- `ruff check` / `ruff format --check` / `mypy --strict` ✅ en `client_factory.py` y `config.py`.
+- Stack dev real: DB conecta, WS `/api/v1/ws` y monitoring aceptados, adiós `AttributeError`, adiós `runtime.operation_failed` (con daemon alcanzable vía socket).
+- Prod real: `BEDROCK_PANEL_IAM_JWT_SECRET` aplicado elimina `InsecureKeyLengthWarning`; Postgres expuesto y conectable (`psql` verificado); login `admin` `200` `super_admin`.
+
+### Pendiente / deuda
+
+- Redactar `docs/development.md` para formalizar el flujo dev/prod coexistente (hoy explicado en README y changelog).

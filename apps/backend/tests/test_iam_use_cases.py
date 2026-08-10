@@ -22,6 +22,7 @@ from app.modules.iam.application.commands import (
     LogoutCommand,
     RefreshCommand,
 )
+from app.modules.iam.application.facade import IamFacade
 from app.modules.iam.application.use_cases import (
     AssignMembershipUseCase,
     AssignRoleUseCase,
@@ -310,3 +311,35 @@ class TestAssignments:
             await AssignRoleUseCase(deps.deps).execute(
                 AssignRoleCommand(user_id="nope", role=BuiltinRole.ADMIN)
             )
+
+
+class TestBootstrapAdmin:
+    async def test_crea_admin_super_admin_si_no_existe(self) -> None:
+        deps = Deps()
+        facade = IamFacade(deps.deps)
+        user_id = await facade.ensure_bootstrap_admin("root", "s3cret", "Root")
+        user = await deps.repository.get(user_id)
+        assert user is not None
+        assert user.username == "root"
+        assert BuiltinRole.SUPER_ADMIN in user.roles
+        assert event_types(deps.events) == [IAM_USER_CREATED, IAM_USER_ROLE_CHANGED]
+
+    async def test_idempotente_no_duplica_ni_degrada(self) -> None:
+        deps = Deps()
+        facade = IamFacade(deps.deps)
+        first = await facade.ensure_bootstrap_admin("root", "s3cret", "Root")
+        events_after_first = list(deps.events)
+        second = await facade.ensure_bootstrap_admin("root", "s3cret", "Root")
+        assert second == first
+        user = await deps.repository.get(first)
+        assert user is not None
+        assert BuiltinRole.SUPER_ADMIN in user.roles
+        assert deps.events == events_after_first
+
+    async def test_sin_bootstrap_no_crea_nada(self) -> None:
+        deps = Deps()
+        facade = IamFacade(deps.deps)
+        user_id = await facade.ensure_bootstrap_admin("", "", "")
+        assert user_id == ""
+        user = await deps.repository.get_by_username("")
+        assert user is None

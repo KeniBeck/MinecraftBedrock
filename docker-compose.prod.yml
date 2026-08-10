@@ -1,0 +1,90 @@
+# docker-compose.prod.yml — pila de producción portable de BedrockPanel.
+#
+# Levanta los TRES servicios de una sola vez (`docker compose -f ... up -d`):
+#   - postgres : Postgres 16 con credenciales desde entorno (no hardcodeadas).
+#   - backend  : FastAPI (Dockerfile.backend). Aplica migraciones en el arranque.
+#   - frontend : nginx sirviendo el SPA + proxy /api y /ws hacia el backend.
+#
+# CÓMO USAR                          : cp .env.prod.example .env.prod && editar,
+#   y luego `docker compose --env-file .env.prod -f docker-compose.prod.yml up -d`.
+#
+# REQUISITOS DE RED (clave):
+#   El panel gestiona contenedores Minecraft con docker-py sobre el SOCKET de
+#   Docker del host, creando contenedores con bind-mounts `{storage_root}/{id}:/data`
+#   (Fase A/§20). Para que esos bind-mounts y la capa de storage local
+#   (LocalServerStorage: worlds, backups, templates) apunten al MISMO sitio,
+#   `BEDROCK_PANEL_STORAGE_ROOT` debe ser una ruta ABSOLUTA del HOST que se monta
+#   en el contenedor en la MISMA ruta.
+#     - El backend necesita `- /var/run/docker.sock:/var/run/docker.sock` para
+#       crear/gestionar los contenedores Minecraft en el host.
+#     - `BEDROCK_PANEL_SERVER_PUBLIC_HOST` = IP/LAN/DNS que ven los clientes.
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: bedrockpanel-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bedrockpanel}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Se requiere POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-bedrockpanel}
+    ports:
+      - "${BEDROCK_PANEL_PG_PORT:-5432}:5432"
+    volumes:
+      - bedrockpanel-pgdata-prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bedrockpanel} -d ${POSTGRES_DB:-bedrockpanel}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - bedrockpanel
+
+  backend:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.backend
+    image: bedrockpanel-backend:latest
+    container_name: bedrockpanel-backend
+    restart: unless-stopped
+    environment:
+      BEDROCK_PANEL_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-bedrockpanel}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-bedrockpanel}
+      BEDROCK_PANEL_SERVER_PUBLIC_HOST: ${BEDROCK_PANEL_SERVER_PUBLIC_HOST:-localhost}
+      BEDROCK_PANEL_STORAGE_ROOT: ${BEDROCK_PANEL_STORAGE_ROOT:-/var/lib/bedrockpanel/instances}
+      BEDROCK_PANEL_DEBUG: "false"
+      BEDROCK_PANEL_LOG_LEVEL: ${BEDROCK_PANEL_LOG_LEVEL:-INFO}
+      BEDROCK_PANEL_IAM_ENCRYPTION_KEY: ${BEDROCK_PANEL_IAM_ENCRYPTION_KEY:?Se requiere clave Fernet de IAM}
+      BEDROCK_PANEL_IAM_JWT_SECRET: ${BEDROCK_PANEL_IAM_JWT_SECRET:-}
+      BEDROCK_PANEL_BOOTSTRAP_ADMIN_USERNAME: ${BEDROCK_PANEL_BOOTSTRAP_ADMIN_USERNAME:-}
+      BEDROCK_PANEL_BOOTSTRAP_ADMIN_PASSWORD: ${BEDROCK_PANEL_BOOTSTRAP_ADMIN_PASSWORD:-}
+      BEDROCK_PANEL_BOOTSTRAP_ADMIN_DISPLAY_NAME: ${BEDROCK_PANEL_BOOTSTRAP_ADMIN_DISPLAY_NAME:-Administrador}
+      BEDROCK_PANEL_WEB_CONCURRENCY: ${BEDROCK_PANEL_WEB_CONCURRENCY:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${BEDROCK_PANEL_STORAGE_ROOT:-/var/lib/bedrockpanel/instances}:${BEDROCK_PANEL_STORAGE_ROOT:-/var/lib/bedrockpanel/instances}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - bedrockpanel
+
+  frontend:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.frontend
+    image: bedrockpanel-frontend:latest
+    container_name: bedrockpanel-frontend
+    restart: unless-stopped
+    ports:
+      - "${BEDROCK_PANEL_HTTP_PORT:-8080}:80"
+    depends_on:
+      - backend
+    networks:
+      - bedrockpanel
+
+volumes:
+  bedrockpanel-pgdata-prod:
+
+networks:
+  bedrockpanel:
+    driver: bridge
