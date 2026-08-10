@@ -86,6 +86,45 @@ def test_create_maps_native_os_error_as_retryable() -> None:
     assert exc.value.context["reason"] == "transport_error"
 
 
+class _StrArgsDockerException(DockerException):
+    """DockerException cuyo ``args`` es un string (no tupla), como emite la SDK
+    en algunos errores; reproduce el crash de `_has_permission_error`."""
+
+    def __init__(self, message: str) -> None:
+        self.args = message  # type: ignore[assignment]
+
+
+def test_permission_detection_with_str_args_does_not_crash_and_finds_cause() -> None:
+    inner = PermissionError(13, "Permission denied")
+    os_err = OSError(111, "Connection refused")
+    os_err.__cause__ = inner
+    msg = "got permission error while attempting to connect to the Docker daemon socket"
+    wrapper = _StrArgsDockerException(msg)
+    wrapper.__context__ = os_err
+    with patch(
+        "app.infrastructure.runtime.client_factory.docker.from_env",
+        side_effect=wrapper,
+    ):
+        factory = DockerFromEnvClientFactory()
+        with pytest.raises(DockerError) as exc:
+            factory.create()
+    assert exc.value.retryable is False
+    assert exc.value.context["reason"] == "permission_denied"
+
+
+def test_str_args_without_permission_is_retryable_and_does_not_crash() -> None:
+    wrapper = _StrArgsDockerException("no such host")
+    with patch(
+        "app.infrastructure.runtime.client_factory.docker.from_env",
+        side_effect=wrapper,
+    ):
+        factory = DockerFromEnvClientFactory()
+        with pytest.raises(DockerError) as exc:
+            factory.create()
+    assert exc.value.retryable is True
+    assert exc.value.context["reason"] == "client_init_failed"
+
+
 def requests_connection_error(inner: BaseException) -> BaseException:
     error = OSError(inner)
     error.__cause__ = inner

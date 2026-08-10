@@ -91,8 +91,13 @@ class DockerFromEnvClientFactory:
             seen.add(id(node))
             if isinstance(node, PermissionError):
                 return True
+            # ``args`` puede ser una tupla con la causa como 2º elemento, pero la
+            # SDK también lo usa como string simple; solo seguimos si es una
+            # tupla con un 2º elemento excepción (evita indexar un char y romper).
             if isinstance(node.args, tuple) and len(node.args) > 1:
-                stack.append(node.args[1])
+                link = node.args[1]
+                if isinstance(link, BaseException):
+                    stack.append(link)
             stack.append(node.__cause__)
             stack.append(node.__context__)
         return False

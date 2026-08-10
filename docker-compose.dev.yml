@@ -22,9 +22,13 @@ services:
       - "8000:8000"
     volumes:
       - ./apps/backend/src:/workspace/apps/backend/src
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
+      BEDROCK_PANEL_DATABASE_URL: postgresql+psycopg://bedrockpanel:bedrockpanel_dev@postgres:5432/bedrockpanel
       BEDROCK_PANEL_DEBUG: "true"
       BEDROCK_PANEL_LOG_LEVEL: "DEBUG"
+    depends_on:
+      - postgres
 
 volumes:
   bedrockpanel-pgdata:
