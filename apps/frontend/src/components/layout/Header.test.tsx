@@ -7,6 +7,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { Header } from '@/components/layout/Header'
 import { listServers, type Server } from '@/lib/api/servers'
 import { useActiveServer } from '@/stores/servers'
+import { useMonitoringStore } from '@/stores/monitoring'
 
 vi.mock('@/lib/api/servers', () => ({
   listServers: vi.fn(),
@@ -14,6 +15,7 @@ vi.mock('@/lib/api/servers', () => ({
   stopServer: vi.fn(),
   restartServer: vi.fn(),
   getServer: vi.fn(),
+  serverKeys: { all: ['servers'], detail: (id: string) => ['server', id] },
 }))
 
 function makeServer(id: string, name: string, state: Server['state']): Server {
@@ -48,6 +50,7 @@ describe('Header — selector de servidor', () => {
   afterEach(() => {
     vi.clearAllMocks()
     useActiveServer.getState().setActiveServer(null)
+    useMonitoringStore.getState().clear('s1')
   })
 
   it('muestra el servidor activo en la pastilla', async () => {
@@ -91,5 +94,26 @@ describe('Header — selector de servidor', () => {
     await user.click(screen.getByTestId('server-selector'))
     await waitFor(() => expect(screen.getByText('En línea')).toBeInTheDocument())
     expect(screen.getByText('Detenido')).toBeInTheDocument()
+  })
+
+  it('muestra los jugadores en vivo del WS de monitoreo del servidor activo', async () => {
+    vi.mocked(listServers).mockResolvedValue([makeServer('s1', 'Survival', 'running')])
+    useActiveServer.getState().setActiveServer('s1')
+    useMonitoringStore.getState().setSnapshot('s1', {
+      state: 'running',
+      status: 'running',
+      latency_ms: null,
+      players: 7,
+      players_max: 10,
+      cpu: null,
+      ram_mb: null,
+      disk_mb: null,
+    })
+
+    renderHeader()
+
+    await waitFor(() => {
+      expect(screen.getByText('7 / 10 jugadores')).toBeInTheDocument()
+    })
   })
 })

@@ -49,7 +49,7 @@ export const useMonitoringStore = create<MonitoringState>((set) => ({
 /** Lee el snapshot de un servidor (o EMPTY si aún no llega ninguno). */
 export function currentSnapshot(
   snapshots: Record<string, MonitoringSnapshot>,
-  serverId: string,
+  serverId: string | null | undefined,
 ): MonitoringSnapshot {
-  return snapshots[serverId] ?? EMPTY
+  return snapshots[serverId ?? ''] ?? EMPTY
 }

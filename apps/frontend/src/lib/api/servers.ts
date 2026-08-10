@@ -1,6 +1,17 @@
 import { apiClient } from '@/lib/api/client'
 
 /**
+ * Claves de cache de TanStack Query para el módulo Server (frontend-standards
+ * §13): `all` es la lista `['servers']` que lee el header; `detail(id)` es el
+ * detalle `['server', id]`. Vivir en el módulo de API evita el import circular
+ * entre `features/servers/hooks.ts` y `hooks/useServerStateSync.ts`.
+ */
+export const serverKeys = {
+  all: ['servers'] as const,
+  detail: (serverId: string) => ['server', serverId] as const,
+}
+
+/**
  * Tipos del módulo Server — verificados contra
  * `apps/backend/src/app/modules/server/api/schemas.py` (ServerResponse,
  * ServerConnectionResponse). El backend define `state` como enum de strings:

@@ -12,6 +12,7 @@ vi.mock('@/lib/api/servers', () => ({
   startServer: vi.fn(),
   stopServer: vi.fn(),
   restartServer: vi.fn(),
+  serverKeys: { all: ['servers'], detail: (id: string) => ['server', id] },
 }))
 
 // El sync por WS usa el store/WebSocketClient real; lo neutralizamos.

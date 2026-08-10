@@ -1,25 +1,36 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import {
+  createServer,
   getServer,
   listServers,
   restartServer,
+  serverKeys,
   startServer,
   stopServer,
+  type CreateServerRequest,
   type Server,
 } from '@/lib/api/servers'
 import { useServerStateSync } from '@/hooks/useServerStateSync'
 
-export const serverKeys = {
-  all: ['servers'] as const,
-  detail: (serverId: string) => ['server', serverId] as const,
-}
+export { serverKeys }
 
 /** `GET /servers` — lista de servidores visibles (para el selector del header). */
 export function useServers() {
   return useQuery({
     queryKey: serverKeys.all,
     queryFn: listServers,
+  })
+}
+
+/** `POST /servers` — crea un servidor y refresca la lista. */
+export function useCreateServer() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: CreateServerRequest) => createServer(payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: serverKeys.all })
+    },
   })
 }
 

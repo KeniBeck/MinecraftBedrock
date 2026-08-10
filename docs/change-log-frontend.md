@@ -411,3 +411,176 @@ por valor visual: si en la revisión visual sobra, se puede quitar o reemplazar
 - Pendiente de confirmación visual del usuario (criterio de parada): el botón
   `<` ya no aparece en el header y ambas imágenes (`Diamond_Sword_JE3_BE3.webp`
   y `dressing_room_skins.png`) se renderizan en sus bloques.
+
+### Extensión — Capa "pixel" reutilizable en <Button> + "Crear servidor" (2026-08-10)
+
+> **Origen**: la tarea pedía un bloque de botón "pixel" reutilizable (el mockup
+> §9.3 lo mostraba como un bloque saliente de Minecraft) y un modal "Crear
+> servidor" real en el header. Todo verificado contra el backend: `server.create`
+> es `PANEL_ACTION` (solo admin/super_admin), `CreateServerRequest =
+> {name 1..128, version?, template_id?}` y el puerto lo asigna el pool (no va en
+> el form).
+
+### Decisiones
+
+- **Capa pixel en el `Button` existente** (no librería nueva): la variante y la
+  mecánica viven en `button.tsx` (cva) con dos slot extras:
+  - `pixel`: activa `pixel-btn` (bevel duro de dos tonos SIN blur, border-radius
+    0). Estados en CSS: hover = wash blanco + brightness, active = el bloque se
+    *hunde* (invierte el bisel + `translateY(2px)`), disabled = desaturado
+    oscuro y aplanado.
+  - `pixelTexture` (default `true`): añade un overlay de ruido 8×8 Stone-esco
+    con `blend-mode: overlay` para que la textura funcione sobre **cualquier**
+    color de variante sin re-pintar una paleta por variante.
+  - Uso: `<Button variant="start" pixel>` — el `<Button>` base no cambia su
+    contrato, así que los botones no-pixel del resto del app siguen intactos.
+  - Se **elimina** el uso manual de la clase `pixel-btn` que había en
+    `ServerCard.tsx` (el bisel quedaba incompleto y ya lo provee la variante).
+- **Nueva variante `create`** (violeta `bg-violet-600`) en `button.tsx` para
+  acciones de creación. No estaba en la paleta §9.3 (que solo cubría
+  emerald/red/amber/blue); se extiende el estándar.
+- **Helper `useCan(action)`** en `lib/auth/useCan.ts`: a falta de endpoint de
+  "mis permisos" (§3/§12 del estándar), centraliza el mapeo `permiso panel →
+  roles mínimos` (`server.create` → admin/super_admin) y lo usa el header para
+  **ocultar** (no deshabilitar) el botón. Autorización real siempre la aplica el
+  backend (403 si no puede). Reutilizable para futuros botones de panel (§6).
+- **Modal "Crear servidor"** (`CreateServerDialog.tsx`): wrapper shadcn
+  `dialog.tsx` nuevo sobre `@radix-ui/react-dialog` (ya instalado) + formulario
+  de estado local (patrón LoginPage, NO react-hook-form/zod — primera vez que se
+  usa Dialog; se documenta la elección por consistencia con el resto del app).
+- **Mapeo de errores**: `SERVER.ALREADY_EXISTS` (verificado en
+  `modules/server/domain/errors.py`) se muestra como error de campo *Nombre*;
+  el resto usa `getApiMessage`/`getApiCode`.
+- **Íconos**: se mantiene `lucide-react` (`Plus`) para el botón — el estándar
+  §9.3 reserva pixel-art solo para íconos de dominio; una acción de UI puntual
+  como "crear" es un ícono de UI normal.
+- **Cache**: `useCreateServer` (nueva mutation) invalida `serverKeys.all` en
+  éxito; el resto de la lista del header se refresca por TanStack Query.
+
+### Archivos
+
+| Archivo | Contenido |
+|---|---|
+| `src/components/ui/button.tsx` | Variante `create`, slots `pixel`/`pixelTexture` |
+| `src/styles/pixel-theme.css` | `.pixel-btn` completo (estados) + `.pixel-btn-texture` |
+| `src/features/servers/components/ServerCard.tsx` | `pixel` en los 4 botones de acción |
+| `src/components/ui/dialog.tsx` | Wrapper shadcn de `@radix-ui/react-dialog` |
+| `src/lib/auth/useCan.ts` | Helper/paquete rol→permiso panel |
+| `src/features/servers/components/CreateServerDialog.tsx` | Modal "Crear servidor" |
+| `src/features/servers/hooks.ts` | `useCreateServer` (invalida lista) |
+| `src/components/layout/Header.tsx` | Botón (oculto sin permiso) + modal |
+| `docs/frontend-standards.md` | Variante `create` + capa `pixel` en §9.3 |
+| `docs/change-log-frontend.md` | Esta entrada |
+
+### Verificación
+
+- `pnpm vitest run`: 24/24 ✅ (6 archivos)
+- `pnpm build`: typecheck + build OK (solo warning de chunk > 500 kB, no bloquea)
+- Pendiente de confirmación visual del usuario: bisel/press del botón, textura
+  en cada variante, y el modal crea un servidor real (botón visible solo para
+  admin/super_admin).
+
+### Extensión — Campana de notificaciones + sincronización de lista (auditoría WS, 2026-08-10)
+
+> **Origen**: auditoría de sincronización en tiempo real (§30 del changelog
+> backend). El backend arregló las causas de datos (CPU real, jugadores
+> parseados, dedup del doble-inspect). Del lado frontend quedaron dos síntomas
+> a corregir aquí: la campana no existía (era un botón muerto) y el header no
+> sincronizaba el estado del servidor. Causa real del header: `useServerStateSync`
+> solo actualizaba la cache del **detalle**, no la de la **lista**.
+
+### Decisiones
+
+- **`useServerStateSync` actualiza las DOS cachés** (`['server', id]` detalle +
+  `['servers']` lista que lee el selector del header) desde el mismo handler de
+  WS. Patrón §13.2 del estándar: un evento → N cachés, sin duplicar lógica. Se
+  extrae `applyState`.
+- **`serverKeys` se mueve a `lib/api/servers.ts`** para romper el import
+  circular entre `features/servers/hooks.ts` y `hooks/useServerStateSync.ts`;
+  `hooks.ts` lo re-exporta para no romper consumidores.
+- **Campana real** (`NotificationsBell` + `useNotifications` +
+  `useNotificationsStore`):
+  - Filtro de eventos: solo `SERVER.STARTED/STOPPED/CRASHED`,
+    `PLAYER.JOINED/LEFT`, `BACKUP.COMPLETED/FAILED`, `TASK.FAILED`. El ruido
+    (`SERVER.STATE` de monitoring, `CONSOLE.OUTPUT`) se filtra en el hook
+    (lista `NOTIFICATION_EVENTS`), no en el store.
+  - Suscripciones: `global` + `user:{id}` + `server:{id}` de los servidores
+    visibles (vía `useServers`), memoizadas para no re-suscribir por render.
+  - "Leído" es estado local zustand (no hay endpoint REST de notificaciones en
+    el backend — verificado). Marcar leído al abrir el dropdown.
+  - Store deduplica por `seq` (los `resume` re-emiten eventos ya vistos) y
+    limita a `MAX_ITEMS`.
+  - Dropdown lista evento + tiempo relativo, con ícono de estado (verde =
+    ok, rojo = fallo/crash).
+- **Síntoma 3 (stats)**: no se tocó el frontend — `StatCards` ya leía
+  `useMonitoringStore` (RAM funcionaba). El fix fue 100% backend (CPU real,
+  jugadores). Disco sigue 0/«sin fuente» documentado.
+
+### Archivos
+
+| Archivo | Contenido |
+|---|---|
+| `src/hooks/useServerStateSync.ts` | Actualiza detalle + lista (`applyState`) |
+| `src/lib/api/servers.ts` | `serverKeys` movido aquí (rompe circular) |
+| `src/features/servers/hooks.ts` | Re-exporta `serverKeys` |
+| `src/stores/notifications.ts` | Store zustand (items, dedup por seq, markAllRead) |
+| `src/hooks/useNotifications.ts` | Suscripciones + filtro de eventos de notificación |
+| `src/components/layout/NotificationsBell.tsx` | Badge + dropdown + mark-leído |
+| `src/components/layout/Header.tsx` | Usa `NotificationsBell` (quita botón muerto) |
+| `src/components/layout/NotificationsBell.test.tsx` | Badge, sin badge, mark-leído al abrir, dedup seq, orden |
+| `src/features/servers/ServerDetailPage.test.tsx`, `src/components/layout/Header.test.tsx` | Mocks actualizados con `serverKeys` |
+| `docs/frontend-standards.md` | §4 corregido (dos WS) + §13 nuevo (patrón de sync) |
+| `docs/change-log-frontend.md` | Esta entrada |
+
+### Verificación
+
+- `pnpm vitest run`: 29/29 ✅ (7 archivos)
+- `pnpm build`: typecheck + build OK (solo warning de chunk > 500 kB)
+- `pnpm lint`: ✅
+- Pendiente de confirmación visual del usuario (criterio de parada): iniciar un
+  servidor real → el header cambia a "En línea" sin refrescar; conectar un
+  jugador real → la campana muestra la notificación; el stat de Jugadores sube
+  y CPU se mueve.
+
+### Fix — Badge de jugadores del header (fuente en vivo del WS de monitoring, 2026-08-10)
+
+> **Origen**: pasada de verificación con el servidor real `prubea-panel`
+> (change-log backend §30). El contador "X / N jugadores" del header era un
+> placeholder hardcodeado (`onlinePlayers = 0`) mientras el StatCard
+> "Jugadores" ya leía en vivo de `useMonitoringStore`. Mismo root cause que el
+> dropdown de estado: el header no apuntaba a la fuente en vivo.
+
+### Decisiones
+
+- **El header lee de la misma fuente que el StatCard**: `currentSnapshot(snapshots,
+  activeServerId)` de `useMonitoringStore` (WS de monitoring del servidor
+  activo). No usa REST inicial ni query aparte. `players_max` con el mismo
+  fallback que StatCards (`Math.max(snap.players_max, 10)`).
+- **WS de monitoring del servidor activo conectado a nivel de layout**:
+  `AppLayout` llama `useServerMonitoring(activeServerId ?? undefined)`, así el
+  badge tiene datos en vivo en cualquier página (no solo en el detalle).
+- **`useServerMonitoring` ahora es idempotente por servidor** (refcount
+  compartido en un registry de módulo): AppLayout y ServerDetailPage comparten
+  UN socket para el mismo servidor (frontend-standards §4 — "los componentes
+  leen del store, no abren su propio socket"). El snapshot se limpia solo
+  cuando el ÚLTIMO suscriptor se desmonta.
+- **`currentSnapshot` ampliado a `string | null | undefined`** (el id activo
+  puede ser `null`); `serverId ?? ''` → EMPTY.
+
+### Archivos
+
+| Archivo | Contenido |
+|---|---|
+| `src/components/layout/Header.tsx` | Badge lee `useMonitoringStore` del servidor activo |
+| `src/components/layout/AppLayout.tsx` | `useServerMonitoring(activeServerId)` global |
+| `src/hooks/useServerMonitoring.ts` | Refactor a socket compartido por servidor (refcount) |
+| `src/stores/monitoring.ts` | `currentSnapshot` acepta `null`/`undefined` |
+| `src/components/layout/Header.test.tsx` | +1 test: badge muestra jugadores en vivo del WS |
+
+### Verificación
+
+- `pnpm vitest run`: 30/30 ✅ (7 archivos)
+- `pnpm lint` ✅ · `pnpm typecheck` ✅
+- Pendiente de confirmación visual del usuario (criterio de parada): con el
+  servidor real corriendo, el badge del header refleja el mismo contador que el
+  StatCard "Jugadores" sin refrescar.

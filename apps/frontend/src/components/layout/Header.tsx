@@ -1,6 +1,5 @@
 import { useNavigate } from 'react-router-dom'
 import {
-  Bell,
   Check,
   ChevronDown,
   ChevronsUpDown,
@@ -9,6 +8,8 @@ import {
 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
+import { CreateServerDialog } from '@/features/servers/components/CreateServerDialog'
+import { NotificationsBell } from '@/components/layout/NotificationsBell'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,6 +21,7 @@ import {
 import { useServers } from '@/features/servers/hooks'
 import { STATE_LABEL } from '@/lib/serverState'
 import { useActiveServer } from '@/stores/servers'
+import { useMonitoringStore, currentSnapshot } from '@/stores/monitoring'
 import { useAuthStore } from '@/stores/auth'
 import { cn } from '@/lib/utils'
 
@@ -43,10 +45,12 @@ export function Header() {
   const { data: servers = [] } = useServers()
   const activeServer = servers.find((server) => server.id === activeServerId)
 
-  // Placeholder hasta conectar el contador a eventos del WS (§9.1).
-  const MAX_PLAYERS = 10
-  const onlinePlayers = 0
-  const unreadEvents = 0
+  // Jugadores en vivo del WS de monitoreo del servidor activo — la misma fuente
+  // que el StatCard "Jugadores" (useMonitoringStore, no REST ni query aparte).
+  const snapshots = useMonitoringStore((state) => state.snapshots)
+  const snap = currentSnapshot(snapshots, activeServerId)
+  const onlinePlayers = snap.players || 0
+  const playersMax = Math.max(snap.players_max, 10)
 
   const isOnline = activeServer?.state === 'running' || activeServer?.state === 'starting'
 
@@ -130,28 +134,19 @@ export function Header() {
           className="w-6 h-6 object-contain shrink-0"
         />
         <span className="whitespace-nowrap text-sm text-slate-200">
-          {onlinePlayers} / {MAX_PLAYERS} jugadores
+          {onlinePlayers} / {playersMax} jugadores
         </span>
       </div>
 
       {/* Separador elástico: empuja el bloque 3 a la derecha. */}
       <div className="flex-1" />
 
-      {/* Bloque 3 — Campana (badge), engranaje y perfil (mockup §9.1). */}
+      {/* Acción de creación (oculto si la identidad no tiene server.create). */}
+      <CreateServerDialog/>
+
+      {/* Bloque 3 — Campana (badge real de notificaciones), engranaje y perfil (mockup §9.1). */}
       <div className={cn(block, 'gap-0.5')}>
-        <button
-          type="button"
-          aria-label="Notificaciones"
-          title="Notificaciones"
-          className="relative rounded-lg p-1.5 text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
-        >
-          <Bell className="size-5" />
-          {unreadEvents > 0 && (
-            <span className="absolute -right-0.5 -top-0.5 flex size-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
-              {unreadEvents}
-            </span>
-          )}
-        </button>
+        <NotificationsBell />
 
         <button
           type="button"

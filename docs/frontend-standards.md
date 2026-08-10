@@ -76,15 +76,30 @@ endpoint de "mis permisos por server" si existe).
 Si el usuario entra con una API key (`X-API-Key`, no aplica a sesiones de
 navegador normales), no es un caso que el frontend web necesite manejar.
 
-## 4. WebSocket — un único gateway, con protocolo de canales
+## 4. WebSocket — gateway único + WS de Monitoring por servidor (ADR-002)
 
-**No hay un WS por página.** Hay un único endpoint `GET /api/v1/ws` que
-sirve TODOS los eventos en tiempo real de TODOS los dominios (servidor,
-consola, mundo, backup, tarea, IAM, sistema). El WS por-servidor que
-pudiera existir en versiones tempranas del backend quedó reemplazado por
-este — no lo repliques.
+**Hay DOS endpoints WS reales hoy** (verificado contra el código, change-log
+§30 — este documento quedó desactualizado cuando se escribió solo el gateway):
 
-**Conexión**: `ws://<host>/api/v1/ws?token=<access_token>` (o header
+1. **`GET /api/v1/ws`** — el gateway único de eventos de dominio
+   (`modules/notification/api/router.py`). Sirve los eventos de NEGOCIO de
+   todos los dominios (servidor, consola, mundo, backup, tarea, IAM, sistema)
+   con protocolo de canales (`global`, `server:{id}`, `user:{id}`). Es la
+   fuente del estado en vivo del dominio (SERVER.STARTED → estado del server,
+   CONSOLE.OUTPUT → consola, PLAYER.JOINED → jugadores…).
+2. **`GET /api/v1/servers/{id}/monitoring/ws`** — WS de métricas POR SERVIDOR
+   (`modules/monitoring/api/router.py`, ADR-002, desviación aceptada). Emite
+   snapshots de CPU/RAM/disco/jugadores cada `poll_interval` (~5 s) en un
+   envelope de transporte `SERVER.STATE` con `scope="monitoring"`. **NO es un
+   evento de negocio**: no se publica en el bus ni llega al gateway `/ws`.
+
+**Regla práctica**: los eventos de *negocio* (cambios de estado, consola,
+jugadores, backups) vienen del **gateway `/ws`**. Las *métricas* (CPU/RAM/
+disco) vienen del **WS de monitoring por servidor**. Si una página necesita
+ambos (ej. la card de detalle), conecta los dos — no asumas que el gateway
+trae métricas ni que el WS de monitoring trae eventos de negocio.
+
+**Conexión (gateway)**: `ws://<host>/api/v1/ws?token=<access_token>` (o header
 `Authorization` si el cliente WS del navegador lo soporta — en la práctica,
 usa el query param, es más simple en browsers). Cierra con código `4401` si
 el token no autentica.
@@ -104,9 +119,10 @@ responde `{"error": "NOTI.RESUME_TOO_LARGE"}` — en ese caso, el cliente debe
 simplemente re-suscribirse sin `last_seq` (perder el historial es aceptable,
 no reintentar el resume con el mismo `last_seq`).
 
-**Canales**: `global` (abierto a cualquier sesión autenticada), `server:{id}`
-(requiere `server.view` en ese servidor — si no tiene acceso, la suscripción
-se rechaza, no falla la conexión entera), `user:{id}` (solo tu propio id).
+**Canales (gateway)**: `global` (abierto a cualquier sesión autenticada),
+`server:{id}` (requiere `server.view` en ese servidor — si no tiene acceso, la
+suscripción se rechaza, no falla la conexión entera), `user:{id}` (solo tu
+propio id).
 
 **Eventos que llegan del servidor** (envelope, campos observados en el
 código): algo con `event_type`/`scope`/`server_id`/`payload`/`seq`/`ts` —
@@ -129,6 +145,10 @@ interesan según qué página está viendo.
 - La consola en vivo (Console page) se alimenta de este mismo WS filtrando
   eventos `CONSOLE.OUTPUT` del canal `server:{id}` — no hay endpoint HTTP
   de polling para logs en vivo, es 100% WS.
+- **Métricas**: el hook `useServerMonitoring` abre UN socket por servidor a
+  `/servers/{id}/monitoring/ws` (este sí es un socket por recurso, es el
+  diseño del ADR-002) y escribe en `useMonitoringStore`. Los componentes leen
+  del store; no abren su propio socket de métricas.
 
 ## 5. Estructura de carpetas (feature-first)
 
@@ -344,10 +364,19 @@ gradientes.
 - Ámbar (`amber-500/600`) para backup/acciones "especiales" (no
   destructivas pero tampoco rutinarias).
 - Azul (`blue-400/500`) como acento neutro secundario (RAM, reiniciar).
+- Violeta (`violet-600`) para acciones de **creación** (nueva variante `create`
+  en `button.tsx`, añadida tras el mockup — no estaba en la paleta original).
+- **Capa `pixel`**: el `Button` expone `pixel` y `pixelTexture`. `pixel` activa
+  el bloque saliente de Minecraft (bevel duro de dos tonos SIN blur, radio 0,
+  hover = wash, press = el bloque se hunde, disabled = aplanado/desaturado) vía
+  `.pixel-btn` en `pixel-theme.css`. `pixelTexture` (default `true`) añade ruido
+  Stone-esco 8×8 con blend overlay sobre el color de la variante. Botones de
+  acción de un server (Iniciar/Detener/Reiniciar/Backup) y el "Crear servidor"
+  usan `pixel`.
 - Iconografía: estilo pixel-art/voxel de Minecraft para íconos de dominio
   (bloques, picos, cofres) — íconos de UI genéricos (campana, engranaje,
-  chevron) en un set normal tipo `lucide-react`, no forces pixel-art en
-  TODO, sería ilegible en tamaños chicos.
+  chevron, plus de "crear") en un set normal tipo `lucide-react`, no forces
+  pixel-art en TODO, sería ilegible en tamaños chicos.
 - Tipografía: un font pixel/bloque solo para el logo/headers grandes
   ("BEDROCK PANEL", títulos de card tipo "Survival Server") — el resto
   (metadata, tablas, botones) usa una sans-serif normal y legible. No
@@ -402,3 +431,73 @@ diferencias deliberadas respecto a ese borrador:
 - El diseño visual **no es libre** — el mockup de §9 es vinculante para
   todas las páginas, no solo Dashboard. La pastilla de servidor en el
   header es un selector real (multi-servidor), no una etiqueta.
+
+## 13. Sincronización en tiempo real (patrón obligatorio)
+
+> Base establecida por la auditoría de sync WS (change-log §30). Todo lo que
+> venga (Fase 3 Consola, Fase 5 Jugadores, Fase 6 Monitoring/Scheduler) debe
+> seguir este patrón, no improvisar uno nuevo por fase.
+
+### 13.1 Qué endpoints WS existen hoy (verificado contra el código)
+
+| Endpoint | Fuente | Qué trae |
+|---|---|---|
+| `GET /api/v1/ws` | `modules/notification/api/router.py` | Eventos de **negocio** con protocolo de canales (`global`, `server:{id}`, `user:{id}`): `SERVER.*`, `CONSOLE.OUTPUT`, `PLAYER.JOINED/LEFT`, `BACKUP.*`, `TASK.*`, `IAM/AUTH.*`. Envelope: `{event, server_id, scope, payload, ts, seq}`. |
+| `GET /api/v1/servers/{id}/monitoring/ws` | `modules/monitoring/api/router.py` (ADR-002) | Métricas por servidor: snapshot `SERVER.STATE` (`scope="monitoring"`) cada ~5 s con `{state, status, latency_ms, players, players_max, cpu, ram_mb, disk_mb}`. **No es evento de negocio** — no llega al gateway. |
+
+Regla: **negocio → gateway `/ws`; métricas → WS de monitoring por servidor.**
+No asumas que el gateway trae métricas, ni que el WS de monitoring trae
+eventos de negocio. Conecta ambos solo en las páginas que necesiten los dos
+(ej. la card de detalle usa `useServerMonitoring` + `useServerStateSync`).
+
+### 13.2 Un evento WS actualiza N cachés de TanStack Query
+
+El caso real que motivó esto: `SERVER.STARTED` debe actualizar a la vez el
+**detalle** `['server', id]` (lo lee la card) y la **lista** `['servers']`
+(la lee el selector del header). Si solo se toca una cache, el header queda
+con el estado viejo (bug de la auditoría).
+
+Patrón obligatorio — un solo handler actualiza **todas** las cachés que
+guarden el mismo recurso:
+
+```ts
+function applyState(queryClient, serverId, state) {
+  queryClient.setQueryData(['server', serverId], (cur) => cur ? { ...cur, state } : cur)
+  queryClient.setQueryData(['servers'], (list) =>
+    list?.map((s) => s.id === serverId ? { ...s, state } : s),
+  )
+}
+```
+
+- Las claves (`serverKeys.all`, `serverKeys.detail`) viven en
+  `lib/api/servers.ts` (no en el hook) para evitar import circular y que
+  cualquier consumidor las reutilice.
+- Si aparece un tercer consumidor del mismo recurso, **agrégale su cache al
+  mismo handler** (o normaliza en una cache por-id con selectores), no crees
+  un segundo `setQueryData` por consumidor.
+- Los cambios de estado NO invalidan ni refetchean; se aplican optimistamente
+  desde el evento (el WS es la fuente de verdad para `state`).
+
+### 13.3 Qué genera notificación vs. qué es silencio
+
+La campana (`useNotifications` + `useNotificationsStore`) filtra los eventos
+que son *notificación visible*; el resto de envelopes del gateway solo
+actualiza datos (no badge, no dropdown):
+
+| Tipo | ¿Notificación? |
+|---|---|
+| `SERVER.STARTED`, `SERVER.STOPPED`, `SERVER.CRASHED` | Sí |
+| `PLAYER.JOINED`, `PLAYER.LEFT` | Sí |
+| `BACKUP.COMPLETED`, `BACKUP.FAILED`, `TASK.FAILED` | Sí |
+| `SERVER.STATE` (monitoring), `CONSOLE.OUTPUT`, métricas | **No** — ruido, filtrar siempre |
+
+- El filtro vive en el hook `useNotifications` (`NOTIFICATION_EVENTS`), no en
+  el store — el store solo persiste lo que recibe.
+- Suscripciones de la campana: `global` + `user:{id}` + `server:{id}` de los
+  **servidores visibles** (vía `useServers`). `useServerStateSync` (detalle)
+  se suma; el cliente WS del gateway es un singleton y mergea canales.
+- **"Leído" es estado local (zustand)**: no hay endpoint REST de
+  notificaciones en el backend (verificado). No se persiste server-side.
+  Si algún día existe un endpoint de "mark read", migrarlo ahí.
+- El store deduplica por `seq` (un `resume` re-emite eventos ya vistos) y
+  mantiene un tope (`MAX_ITEMS`).
