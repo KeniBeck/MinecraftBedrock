@@ -86,12 +86,12 @@ def test_create_maps_native_os_error_as_retryable() -> None:
     assert exc.value.context["reason"] == "transport_error"
 
 
-class _StrArgsDockerException(DockerException):
+class _StrArgsDockerException(DockerException):  # type: ignore[misc]  # base Any (docker sin py.typed)
     """DockerException cuyo ``args`` es un string (no tupla), como emite la SDK
     en algunos errores; reproduce el crash de `_has_permission_error`."""
 
     def __init__(self, message: str) -> None:
-        self.args = message  # type: ignore[assignment]
+        self.args = message
 
 
 def test_permission_detection_with_str_args_does_not_crash_and_finds_cause() -> None:
