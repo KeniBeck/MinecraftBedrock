@@ -139,10 +139,11 @@ export function ServerCard({ server, onStart, onStop, onRestart, busy }: ServerC
             key={a.key}
             variant={a.variant}
             size="default"
+            pixel
             disabled={a.disabled || busy !== null}
             onClick={a.onClick}
             data-testid={`${a.key}-button`}
-            className="pixel-btn rounded-none w-full h-10 text-sm"
+            className="w-full h-10 text-sm"
           >
             {busy === a.key ? <Loader2 className="animate-spin" /> : a.icon}
             {a.label}
@@ -151,10 +152,11 @@ export function ServerCard({ server, onStart, onStop, onRestart, busy }: ServerC
         <Button
           variant="backup"
           size="default"
+          pixel
           disabled
           data-testid="backup-button"
           title="Disponible en una fase posterior"
-          className="pixel-btn rounded-none w-full h-10 text-sm"
+          className="w-full h-10 text-sm"
         >
           Crear backup
         </Button>

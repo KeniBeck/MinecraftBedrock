@@ -178,14 +178,61 @@ display:inline-block;
     inset -1px -1px 0 rgba(0,0,0,.4);
 }
 
-/* ---- botón pixelado: bloque sólido con bisel de dos tonos (mockup §9.3) ---- */
+/* ---- botón pixelado: bloque sólido con bisel de dos tonos (mockup §9.3) ----
+   Mecánica reutilizable vía la capa `pixel` del <Button> (button.tsx). El color
+   de cada variante provee el fondo; aquí solo las sombras/estados. Bisel duro
+   SIN blur (sombra offset plana = bloque saliente de Minecraft). */
 .pixel-btn{
+  position:relative;
   border-radius:0;
   color:#fff;
   font-weight:600;
+  /* bloque saliente: bisel claro arriba-izq, oscuro abajo-der, sello negro */
   box-shadow:
-    inset 2px 2px 0 rgba(255,255,255,.16),
-    inset -2px -2px 0 rgba(0,0,0,.64);
+    inset 2px 2px 0 0 var(--bevel-hi),
+    inset -2px -2px 0 0 var(--bevel-lo),
+    inset 0 0 0 1px var(--seal),
+    0 4px 0 0 rgba(0,0,0,.4);
+  transition:transform .06s ease, box-shadow .06s ease, filter .06s ease;
+  image-rendering:pixelated;
+}
+/* wash alto al pasar el ratón (foco: el bloque se ilumina) */
+.pixel-btn::after{
+  content:"";
+  position:absolute; inset:0;
+  background:rgba(255,255,255,0);
+  transition:background .06s linear;
+  pointer-events:none;
+}
+.pixel-btn:hover:not(:disabled)::after{ background:rgba(255,255,255,.10); }
+.pixel-btn:hover:not(:disabled){ filter:brightness(1.08); }
+/* press: el bloque se hunde — invierte el bisel y baja 2px */
+.pixel-btn:active:not(:disabled){
+  transform:translateY(2px);
+  box-shadow:
+    inset 2px 2px 0 0 var(--bevel-lo),
+    inset -2px -2px 0 0 var(--bevel-hi),
+    inset 0 0 0 1px var(--seal),
+    0 0 0 0 rgba(0,0,0,.4);
+}
+/* deshabilitado: desaturado, oscuro y con la forma hundida */
+.pixel-btn:disabled{
+  color:rgba(255,255,255,.65);
+  box-shadow:
+    inset 2px 2px 0 0 rgba(0,0,0,.35),
+    inset -2px -2px 0 0 rgba(255,255,255,.10),
+    inset 0 0 0 1px var(--seal),
+    0 0 0 0 rgba(0,0,0,0);
+}
+
+/* ruido Stone-esco como overlay de textura (vía `pixelTexture`). Reutiliza un
+   patrón 8x8 de celdas claras/oscuras con blend overlay para que funcione sobre
+   cualquier color de variante sin re-pintar paletas. */
+.pixel-btn-texture{
+  background-image:
+    url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA4IDgiPjxyZWN0IHg9IjAiIHk9IjAiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9InJnYmEoMjU1LDI1NSwyNTUsMC4xMCkiLz48cmVjdCB4PSIxIiB5PSIwIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSJyZ2JhKDAsMCwwLDAuMTIpIi8+PHJlY3QgeD0iMiIgeT0iMCIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0icmdiYSgwLDAsMCwwLjEyKSIvPjxyZWN0IHg9IjMiIHk9IjAiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9InJnYmEoMjU1LDI1NSwyNTUsMC4xMCkiLz48cmVjdCB4PSI3IiB5PSIwIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSJyZ2JhKDI1NSwyNTUsMjU1LDAuMTApIi8+PHJlY3QgeD0iMSIgeT0iMSIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0icmdiYSgyNTUsMjU1LDI1NSwwLjEwKSIvPjxyZWN0IHg9IjIiIHk9IjEiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9InJnYmEoMCwwLDAsMC4xMikiLz48cmVjdCB4PSI0IiB5PSIxIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSJyZ2JhKDI1NSwyNTUsMjU1LDAuMTApIi8+PHJlY3QgeD0iNSIgeT0iMSIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0icmdiYSgwLDAsMCwwLjEyKSIvPjxyZWN0IHg9IjAiIHk9IjIiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9InJnYmEoMCwwLDAsMC4xMikiLz48cmVjdCB4PSIzIiB5PSIyIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSJyZ2JhKDI1NSwyNTUsMjU1LDAuMTApIi8+PHJlY3QgeD0iNyIgeT0iMiIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0icmdiYSgyNTUsMjU1LDI1NSwwLjEwKSIvPjxyZWN0IHg9IjEiIHk9IjMiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9InJnYmEoMCwwLDAsMC4xMikiLz48cmVjdCB4PSIyIiB5PSIzIiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSJyZ2JhKDI1NSwyNTUsMjU1LDAuMTApIi8+PHJlY3QgeD0iMyIgeT0iMyIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0icmdiYSgyNTUsMjU1LDI1NSwwLjEwKSIvPjxyZWN0IHg9IjEiIHk9IjUiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9InJnYmEoMjU1LDI1NSwyNTUsMC4xMCkiLz48cmVjdCB4PSIyIiB5PSI1IiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSJyZ2JhKDAsMCwwLDAuMTIpIi8+PHJlY3QgeD0iMyIgeT0iNSIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0icmdiYSgwLDAsMCwwLjEyKSIvPjxyZWN0IHg9IjQiIHk9IjUiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9InJnYmEoMjU1LDI1NSwyNTUsMC4xMCkiLz48cmVjdCB4PSI1IiB5PSI1IiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSJyZ2JhKDAsMCwwLDAuMTIpIi8+PHJlY3QgeD0iNiIgeT0iNSIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0icmdiYSgyNTUsMjU1LDI1NSwwLjEwKSIvPjxyZWN0IHg9IjciIHk9IjUiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9InJnYmEoMCwwLDAsMC4xMikiLz48cmVjdCB4PSI0IiB5PSI2IiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSJyZ2JhKDI1NSwyNTUsMjU1LDAuMTApIi8+PHJlY3QgeD0iNSIgeT0iNiIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0icmdiYSgwLDAsMCwwLjEyKSIvPjxyZWN0IHg9IjYiIHk9IjYiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9InJnYmEoMCwwLDAsMC4xMikiLz48cmVjdCB4PSIxIiB5PSI3IiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSJyZ2JhKDI1NSwyNTUsMjU1LDAuMTApIi8+PHJlY3QgeD0iMiIgeT0iNyIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0icmdiYSgwLDAsMCwwLjEyKSIvPjxyZWN0IHg9IjUiIHk9IjciIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9InJnYmEoMDAsMCwwLDAuMTIpIi8+PHJlY3QgeD0iNiIgeT0iNyIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0icmdiYSgyNTUsMjU1LDI1NSwwLjEwKSIvPjwvc3ZnPg==");
+  background-size:8px 8px;
+  background-repeat:repeat;
 }
 
 .pixel-badge{

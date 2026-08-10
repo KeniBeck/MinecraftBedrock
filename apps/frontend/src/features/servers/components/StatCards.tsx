@@ -21,7 +21,7 @@ interface StatCardProps {
 }
 
 /** Bloque del mockup §9.1: bisel de dos tonos + textura pixelada. */
-const block = 'pixel-card'
+const block = 'pixel-card flex-1'
 
 function StatCard({ item, icon }: StatCardProps) {
   const pct = typeof item.progress === 'number'
@@ -79,7 +79,7 @@ export function StatCards({ server, serverId }: { server: Server; serverId: stri
   const diskPct = diskCeilGb > 0 ? diskUsedGb / diskCeilGb : null
 
   return (
-    <div className="flex flex-wrap gap-3 sm:gap-4">
+    <div className="flex flex-wrap justify-start gap-3 sm:gap-4">
       <StatCard
         item={{
           label: 'Jugadores',

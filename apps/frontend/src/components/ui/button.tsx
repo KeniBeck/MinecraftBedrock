@@ -29,6 +29,9 @@ const buttonVariants = cva(
           'bg-slate-600 text-white border-white/10 shadow-[inset_1px_1px_0_rgba(255,255,255,0.16),inset_-1px_-1px_0_rgba(0,0,0,0.64)] hover:bg-slate-700',
         backup:
           'bg-amber-600 text-white border-white/10 shadow-[inset_1px_1px_0_rgba(255,255,255,0.16),inset_-1px_-1px_0_rgba(0,0,0,0.64)] hover:bg-amber-700',
+        // Acción de creación (agregar worlds/servers) — añadido tras el mockup §9.3.
+        create:
+          'bg-violet-600 text-white border-white/10 shadow-[inset_1px_1px_0_rgba(255,255,255,0.16),inset_-1px_-1px_0_rgba(0,0,0,0.64)] hover:bg-violet-500',
       },
       size: {
         default: 'h-10 px-4 py-2',
@@ -36,10 +39,24 @@ const buttonVariants = cva(
         lg: 'h-11 px-8',
         icon: 'h-10 w-10',
       },
+      // Capa pixel del prototipo (§9.3): el bevel/estados viven en `.pixel-btn`
+      // (pixel-theme.css) para que el color de la variante provea el fondo y la
+      // clase CSS las sombras. `pixel` activa todo el bloque; `pixelTexture`
+      // añade el overlay de ruido Stone-esco sobre el color de la variante.
+      pixel: {
+        false: '',
+        true: 'pixel-btn rounded-none border-black disabled:pointer-events-auto disabled:cursor-not-allowed disabled:saturate-50 disabled:brightness-75 disabled:opacity-100',
+      },
+      pixelTexture: {
+        false: '',
+        true: 'pixel-btn-texture',
+      },
     },
     defaultVariants: {
       variant: 'default',
       size: 'default',
+      pixel: false,
+      pixelTexture: true,
     },
   },
 )
