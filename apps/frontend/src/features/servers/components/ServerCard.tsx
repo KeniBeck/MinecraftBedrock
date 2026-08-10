@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 
-import { Loader2, Play, RotateCw, Square } from 'lucide-react'
+import { Box, Globe, Layers, Timer, Loader2, Play, RotateCw, Square } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { serverActions, STATE_LABEL } from '@/lib/serverState'
@@ -39,13 +39,15 @@ function StatusBadge({ state }: { state: Server['state'] }) {
   )
 }
 
-function CeilTag({ label, value }: { label: string; value: string }) {
+/** Píldora glass con ícono para un dato de la metadata central. */
+function Pill({ icon, children, title }: { icon: ReactNode, children: ReactNode, title?: string }) {
   return (
-    <span className="pixel-tag max-w-[18rem]">
-      <span className="pixel-tag-label">{label}</span>
-      <span className="pixel-tag-value min-w-0 truncate" title={value}>
-        {value}
-      </span>
+    <span
+      title={title}
+      className="inline-flex items-center gap-2 rounded-full bg-slate-900/60 px-3 py-1.5 text-xs font-medium text-white backdrop-blur-xl border border-white/10"
+    >
+      {icon}
+      <span className="truncate">{children}</span>
     </span>
   )
 }
@@ -62,20 +64,18 @@ function UptimeLabel({ server }: { server: Server }) {
   }, [isRunning])
 
   if (!isRunning) {
-    return <span className="pixel-tag-value text-slate-400">—</span>
+    return <span className="text-slate-400">—</span>
   }
   const elapsed = Math.max(0, now - new Date(server.updated_at).getTime())
   const hours = Math.floor(elapsed / 3_600_000)
   const minutes = Math.floor((elapsed % 3_600_000) / 60_000)
-  const text = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`
-  return <span className="pixel-tag-value text-slate-200">{text}</span>
+  return <span className="text-slate-200">{hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`}</span>
 }
 
 /**
- * Card principal del servidor (mockup §9.1) como bloque con bisel. Layout en dos
- * columnas: a la izquierda el "mundo" (la imagen de fondo del panel, renderizada
- * pixelada), al centro el título + badge y una cuadrícula de datos, y a la
- * derecha la columna vertical de acciones (Iniciar/Reiniciar/Detener/Backup).
+ * Card principal del servidor (mockup §9.1): cristal redondeado, 3 columnas —
+ * imagen del mundo (pixelada, estirada a la altura), metadata en píldoras glass
+ * y columna de botones pixelados. Layout con grid y alineación central.
  */
 export function ServerCard({ server, onStart, onStop, onRestart, busy }: ServerCardProps) {
   const actions = serverActions(server.state)
@@ -93,12 +93,12 @@ export function ServerCard({ server, onStart, onStop, onRestart, busy }: ServerC
     <section
       className={cn(
         'relative w-full rounded-xl bg-slate-900/60 backdrop-blur-xl border border-white/10',
-        'grid gap-6 p-6 md:grid-cols-[auto_1fr_auto]',
+        'flex flex-col gap-8 p-6 md:flex-row md:items-stretch',
       )}
     >
-      {/* Col 1 — el mundo: imagen de fondo pixelada (reemplaza al avatar). */}
+      {/* Col 1 — el mundo: imagen pixelada estirada a la altura de los botones. */}
       <div
-        className="relative aspect-[4/3] w-40 shrink-0 overflow-hidden rounded-xl border border-black/60 bg-black/40"
+        className="relative shrink-0 self-stretch overflow-hidden rounded-xl border border-black/60 bg-black/40 md:flex-1 md:min-h-0"
         style={{ imageRendering: 'pixelated' }}
         aria-hidden
       >
@@ -115,35 +115,34 @@ export function ServerCard({ server, onStart, onStop, onRestart, busy }: ServerC
         )}
       </div>
 
-      {/* Col 2 — título + badge + cuadrícula de datos. */}
-      <div className="flex min-w-0 flex-col gap-4">
+      {/* Col 2 — título + badge + píldoras de metadata. */}
+      <div className="flex min-w-0 flex-1 flex-col items-start justify-center gap-5">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <h2 className="pixel-title truncate text-base text-white sm:text-lg">{server.name}</h2>
           <StatusBadge state={server.state} />
         </div>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <CeilTag label="Versión" value={server.version} />
-          <CeilTag label="Mundo" value={server.name} />
-          <CeilTag label="Dirección" value={server.connection.address} />
-          <div className="pixel-tag max-w-[18rem]">
-            <span className="pixel-tag-label">Tiempo activo</span>
+        <div className="flex max-w-full flex-wrap gap-2">
+          <Pill icon={<Layers className="h-3 w-3 text-slate-300" />} title={server.version}>{server.version}</Pill>
+          <Pill icon={<Box className="h-3 w-3 text-slate-300" />} title={server.name}>{server.name}</Pill>
+          <Pill icon={<Globe className="h-3 w-3 text-slate-300" />} title={server.connection.address}>{server.connection.address}</Pill>
+          <Pill icon={<Timer className="h-3 w-3 text-slate-300" />}>
             <UptimeLabel server={server} />
-          </div>
+          </Pill>
         </div>
       </div>
 
-      {/* Col 3 — botones de acción apilados a la derecha. */}
-      <div className="flex flex-col gap-3">
+      {/* Col 3 — botones pixelados apilados a la derecha. */}
+      <div className="flex flex-col gap-2 md:w-48 md:items-stretch">
         {actionButtons.map((a) => (
           <Button
             key={a.key}
             variant={a.variant}
-            size="lg"
+            size="default"
             disabled={a.disabled || busy !== null}
             onClick={a.onClick}
             data-testid={`${a.key}-button`}
-            className="w-full h-12 text-base"
+            className="pixel-btn rounded-none w-full h-10 text-sm"
           >
             {busy === a.key ? <Loader2 className="animate-spin" /> : a.icon}
             {a.label}
@@ -151,11 +150,11 @@ export function ServerCard({ server, onStart, onStop, onRestart, busy }: ServerC
         ))}
         <Button
           variant="backup"
-          size="lg"
+          size="default"
           disabled
           data-testid="backup-button"
           title="Disponible en una fase posterior"
-          className="w-full h-12 text-base"
+          className="pixel-btn rounded-none w-full h-10 text-sm"
         >
           Crear backup
         </Button>

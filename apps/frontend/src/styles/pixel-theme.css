@@ -178,6 +178,16 @@ display:inline-block;
     inset -1px -1px 0 rgba(0,0,0,.4);
 }
 
+/* ---- botón pixelado: bloque sólido con bisel de dos tonos (mockup §9.3) ---- */
+.pixel-btn{
+  border-radius:0;
+  color:#fff;
+  font-weight:600;
+  box-shadow:
+    inset 2px 2px 0 rgba(255,255,255,.16),
+    inset -2px -2px 0 rgba(0,0,0,.64);
+}
+
 .pixel-badge{
 width:8px; height:8px; border-radius:0;
   background:var(--emerald-strong);
