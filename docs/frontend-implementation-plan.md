@@ -72,13 +72,11 @@ comandos vía `POST /servers/{id}/console/commands` (202, `server.console.write`
 - Un comando enviado desde la UI se ve reflejado en `docker logs` del
   contenedor real.
 
-> **Estado (2026-08-10)**: implementado (página `/servers/:serverId/console`,
-> buffer con límite 1000 líneas, auto-scroll, input oculto sin
-> `server.console.write`, aviso si no está en línea, ítem "Consola" del sidebar
-> cableado). Tests unitarios + lint/typecheck/build en verde. **Pendiente de
-> verificación manual por el usuario en navegador** (los dos criterios de
-> parada) — no avanzar a Fase 4 sin esa confirmación. Detalles en
-> `docs/change-log-frontend.md` §Fase 3.
+> **Estado (2026-08-10)**: criterio de parada **cumplido** — confirmado por el
+> usuario en navegador: logs reales en vivo en la UI y comando enviado desde la
+> consola reflejado en `docker logs`. Además: input que se vacía al enviar con
+> foco en el campo y auto-scroll al final. Tests + lint/typecheck/build en
+> verde. Detalles en `docs/change-log-frontend.md` §Fase 3.
 
 ## Fase 4 — Mundos, Backups, Plantillas
 

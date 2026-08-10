@@ -38,6 +38,8 @@ export function ConsoleTerminal({ serverId, serverState }: ConsoleTerminalProps)
   const [error, setError] = useState<string | null>(null)
   const [autoScroll, setAutoScroll] = useState(true)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const focusOnEnable = useRef(false)
 
   const isRunning = serverState === 'running'
 
@@ -45,6 +47,16 @@ export function ConsoleTerminal({ serverId, serverState }: ConsoleTerminalProps)
     const el = scrollRef.current
     if (el && autoScroll) el.scrollTop = el.scrollHeight
   }, [lines, autoScroll])
+
+  useEffect(() => {
+    // Enfoca solo tras el commit en que el input ya no está `disabled` y el
+    // comando se vació. Los dos commits (isPending→false y command→'') pueden
+    // llegar en cualquier orden, así que el effect se re-evalúa ante cualquiera.
+    if (command === '' && !sendCommand.isPending && focusOnEnable.current) {
+      focusOnEnable.current = false
+      inputRef.current?.focus()
+    }
+  }, [command, sendCommand.isPending])
 
   function handleScroll() {
     const el = scrollRef.current
@@ -60,6 +72,9 @@ export function ConsoleTerminal({ serverId, serverState }: ConsoleTerminalProps)
     try {
       await sendCommand.mutateAsync(trimmed)
       setCommand('')
+      // El input está `disabled` durante el envío; enfocar ahora no tendría efecto
+      // porque React aún no ha re-renderizado. Se enfoca tras el commit (ver abajo).
+      focusOnEnable.current = true
     } catch (err) {
       // 409 CONSOLE.SERVER_OFFLINE y demás: `detail.message` del backend tal cual.
       setError(getApiMessage(err, 'No se pudo enviar el comando'))
@@ -67,7 +82,7 @@ export function ConsoleTerminal({ serverId, serverState }: ConsoleTerminalProps)
   }
 
   return (
-    <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-white/10 bg-slate-900/60 backdrop-blur-xl">
+    <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-white/10 bg-black text-green-400">
       <div className="flex items-center gap-2 border-b border-white/10 px-4 py-2.5">
         <Terminal className="size-4 text-emerald-300" />
         <span className="pixel-overline text-slate-300">Consola en vivo</span>
@@ -77,7 +92,8 @@ export function ConsoleTerminal({ serverId, serverState }: ConsoleTerminalProps)
         ref={scrollRef}
         onScroll={handleScroll}
         data-testid="console-scroll"
-        className="flex-1 min-h-0 overflow-y-auto p-4 font-mono text-xs leading-relaxed"
+        className="flex-1 min-h-0 overflow-y-auto p-4 font-mono text-sm leading-relaxed"
+        style={{ fontFamily: 'monospace' }}
       >
         {lines.length === 0 && (
           <p data-testid="console-empty" className="text-slate-500">
@@ -87,7 +103,7 @@ export function ConsoleTerminal({ serverId, serverState }: ConsoleTerminalProps)
         {lines.map((line) => (
           <div key={line.seq} className="whitespace-pre-wrap break-all">
             <span className="text-slate-500">{new Date(line.timestamp).toLocaleTimeString()} </span>
-            <span className="text-slate-200">{line.line}</span>
+            <span className="text-green-400">{line.line}</span>
           </div>
         ))}
       </div>
@@ -113,12 +129,15 @@ export function ConsoleTerminal({ serverId, serverState }: ConsoleTerminalProps)
           )}
           <div className="flex gap-2">
             <Input
+              ref={inputRef}
               value={command}
               onChange={(e) => setCommand(e.target.value)}
               placeholder={isRunning ? 'Escribe un comando…' : 'Servidor no disponible'}
               disabled={!isRunning || sendCommand.isPending}
               data-testid="console-input"
-              className={cn('flex-1 font-mono')}
+              className={cn(
+                'flex-1 font-mono border-white/10 bg-black/50 text-green-400 placeholder:text-slate-500',
+              )}
               maxLength={512}
             />
             <Button

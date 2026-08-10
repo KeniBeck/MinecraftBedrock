@@ -8,6 +8,7 @@ import { Header } from '@/components/layout/Header'
 import { listServers, type Server } from '@/lib/api/servers'
 import { useActiveServer } from '@/stores/servers'
 import { useMonitoringStore } from '@/stores/monitoring'
+import { useAuthStore } from '@/stores/auth'
 
 vi.mock('@/lib/api/servers', () => ({
   listServers: vi.fn(),
@@ -32,14 +33,15 @@ function makeServer(id: string, name: string, state: Server['state']): Server {
   }
 }
 
-function renderHeader() {
+function renderHeader(route = '/') {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[route]}>
         <Header />
         <Routes>
           <Route path="/servers/:serverId" element={<div data-testid="detail-page" />} />
+          <Route path="/servers/:serverId/console" element={<div data-testid="console-page" />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -51,6 +53,7 @@ describe('Header — selector de servidor', () => {
     vi.clearAllMocks()
     useActiveServer.getState().setActiveServer(null)
     useMonitoringStore.getState().clear('s1')
+    useAuthStore.setState({ identity: null })
   })
 
   it('muestra el servidor activo en la pastilla', async () => {
@@ -115,5 +118,28 @@ describe('Header — selector de servidor', () => {
     await waitFor(() => {
       expect(screen.getByText('7 / 10 jugadores')).toBeInTheDocument()
     })
+  })
+})
+
+describe('Header — botón "Crear servidor"', () => {
+  afterEach(() => {
+    vi.clearAllMocks()
+    useAuthStore.setState({ identity: null })
+  })
+
+  it('aparece solo en el detalle exacto /servers/:id', async () => {
+    useAuthStore.setState({ identity: { id: 'u1', username: 'admin', roles: ['admin'] } })
+    renderHeader('/servers/s1')
+    expect(screen.getByTestId('create-server-button')).toBeInTheDocument()
+  })
+
+  it('no aparece en /servers/:id/console ni en la raíz', async () => {
+    useAuthStore.setState({ identity: { id: 'u1', username: 'admin', roles: ['admin'] } })
+
+    renderHeader('/servers/s1/console')
+    expect(screen.queryByTestId('create-server-button')).not.toBeInTheDocument()
+
+    renderHeader('/')
+    expect(screen.queryByTestId('create-server-button')).not.toBeInTheDocument()
   })
 })

@@ -90,6 +90,7 @@ describe('ConsoleTerminal', () => {
     await waitFor(() => {
       expect(screen.getByTestId('console-input')).toHaveValue('')
     })
+    expect(screen.getByTestId('console-input')).toHaveFocus()
   })
 
   it('muestra detail.message del backend si falla con CONSOLE.SERVER_OFFLINE', async () => {

@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom'
+import { useMatch, useNavigate } from 'react-router-dom'
 import {
   Check,
   ChevronDown,
@@ -41,6 +41,10 @@ export function Header() {
   const clear = useAuthStore((state) => state.clear)
   const activeServerId = useActiveServer((state) => state.activeServerId)
   const setActiveServer = useActiveServer((state) => state.setActiveServer)
+
+  // "Crear servidor" solo en el detalle exacto `/servers/:id` (no en consola,
+  // mundos, etc.). `useMatch` no matchea rutas con segmentos extra.
+  const isServerDetail = useMatch('/servers/:serverId')
 
   const { data: servers = [] } = useServers()
   const activeServer = servers.find((server) => server.id === activeServerId)
@@ -141,8 +145,9 @@ export function Header() {
       {/* Separador elástico: empuja el bloque 3 a la derecha. */}
       <div className="flex-1" />
 
-      {/* Acción de creación (oculto si la identidad no tiene server.create). */}
-      <CreateServerDialog/>
+      {/* Acción de creación: solo en la página de detalle del servidor (y si la
+          identidad tiene server.create — el dialog se oculta él mismo). */}
+      {isServerDetail && <CreateServerDialog/>}
 
       {/* Bloque 3 — Campana (badge real de notificaciones), engranaje y perfil (mockup §9.1). */}
       <div className={cn(block, 'gap-0.5')}>

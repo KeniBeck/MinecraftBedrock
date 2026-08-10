@@ -754,5 +754,79 @@ por valor visual: si en la revisión visual sobra, se puede quitar o reemplazar
   Consola/Servidor + activo).
 - `pnpm typecheck` ✅ · `pnpm lint` ✅ · `pnpm build` ✅ (warning de chunk
   conocido).
-- **Pendiente de verificación manual por el usuario** (criterios de parada de
-  Fase 3: logs en vivo y comando visible en `docker logs`).
+- **Verificación manual (2026-08-10) ✅ confirmada por el usuario en
+  navegador**: logs reales en vivo en la UI y comando enviado reflejado en
+  `docker logs`. Además confirmado el comportamiento de la terminal: al enviar
+  un comando el input se vacía y el foco permanece en el campo, y el scroll
+  baja automáticamente para mostrar la respuesta. **Fase 3 cerrada.**
+
+### Fix — Botón "Crear servidor" solo en la página de detalle (2026-08-10)
+
+> **Origen**: revisión tras la Fase 3. El botón "Crear servidor" del header se
+> mostraba en cualquier ruta protegida (también en la consola), cuando la acción
+> pertenece al detalle del servidor.
+
+### Decisiones
+
+- El `Header` ahora renderiza `<CreateServerDialog/>` solo cuando
+  `useMatch('/servers/:serverId')` matchea la ruta exacta del detalle. `useMatch`
+  NO matchea rutas con segmentos extra, así que en `/servers/:id/console` (o
+  cualquier página futura de la Fase 4) el botón no aparece. La visibilidad por
+  permiso (`server.create`) sigue dentro del dialog, sin cambios.
+- Tests del header cubren ambos casos (visible en `/servers/s1`, oculto en
+  `/servers/s1/console` y en la raíz), sembrando `identity.roles: ['admin']` en
+  `useAuthStore` (sin mockear `useCan`).
+
+### Archivos
+
+| Archivo | Contenido |
+|---|---|
+| `src/components/layout/Header.tsx` | `useMatch` + render condicional del dialog |
+| `src/components/layout/Header.test.tsx` | Tests del botón por ruta |
+
+### Verificación
+
+- Tests vitest: **67 passed (14 files)** · `pnpm typecheck` ✅ · `pnpm lint` ✅ ·
+  `pnpm build` ✅.
+
+### Nota — IP mostrada (`172.18.0.1:19136`)
+
+- No es un bug del frontend: `connection.host` viene solo de
+  `server.public_host` (`modules/server/application/results.py:36`,
+  `connection_from_spec`), es decir de la env
+  `BEDROCK_PANEL_SERVER_PUBLIC_HOST` (default `localhost`). El compose de dev
+  ya la reenvía (`docker-compose.dev.yml`: `${BEDROCK_PANEL_SERVER_PUBLIC_HOST:-localhost}`).
+
+### Mejora — Consola: foco persistente tras enviar y estilo terminal (2026-08-10)
+
+### Decisiones
+
+- **Foco tras envío**: al enviar un comando el input se vacía y el foco vuelve
+  al campo. El `ref` se adjunta al `<Input>` con `ref={inputRef}` (faltaba), y
+  `focus()` se llama desde un `useEffect` en lugar de síncronamente: durante el
+  envío el input está `disabled` (por `isPending`), así que enfocar en ese
+  instante es un no-op. El effect se keyea con `[command, sendCommand.isPending]`
+  y un flag `focusOnEnable` garantiza que solo se enfoca tras el commit donde el
+  input ya no está deshabilitado (los commits de `isPending→false` y `command→''`
+  pueden llegar en cualquier orden).
+- **Estilo terminal**: fondo `bg-black`, texto verde claro (`text-green-400`),
+  fuente `font-mono` (`text-sm`), input con `bg-black/50`, borde `border-white/10`
+  y placeholder gris. El auto-scroll se mantiene (se pausa si el usuario sube).
+
+### Archivos
+
+| Archivo | Contenido |
+|---|---|
+| `src/features/console/components/ConsoleTerminal.tsx` | `ref` del input, `useEffect` de foco, estilo terminal |
+| `src/features/console/components/ConsoleTerminal.test.tsx` | Aserción `toHaveFocus()` en el envío exitoso |
+
+### Verificación
+
+- Tests vitest: **67 passed (14 files)** · `pnpm typecheck` ✅ · `pnpm lint` ✅ ·
+  `pnpm build` ✅.
+- Para acceder desde un celular/otro dispositivo: exportar la IP local del host
+  antes de levantar el contenedor, p. ej.
+  `BEDROCK_PANEL_SERVER_PUBLIC_HOST=192.168.1.10 docker compose -f docker-compose.dev.yml up -d`
+  (o fijarla en `.env`). El contenedor se recrea al cambiar la env. No se
+  implementó ningún parche en el frontend: no resolvería el acceso desde otros
+  dispositivos.
