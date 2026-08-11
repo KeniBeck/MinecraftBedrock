@@ -91,6 +91,9 @@ export function CreateWorldDialog({ open, onOpenChange, serverId }: CreateWorldD
               placeholder="Deja vacío para una semilla aleatoria"
               maxLength={64}
             />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Se usa al generar el mundo por primera vez.
+            </p>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>

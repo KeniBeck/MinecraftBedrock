@@ -92,6 +92,9 @@ function EditWorldForm({ serverId, world, onDone }: EditWorldFormProps) {
           onChange={(e) => setSeed(e.target.value)}
           maxLength={64}
         />
+        <p className="mt-1 text-xs text-muted-foreground">
+          Solo se aplica al generar un mundo nuevo; no regenera uno existente.
+        </p>
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div>
