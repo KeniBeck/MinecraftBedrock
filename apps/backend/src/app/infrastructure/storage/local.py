@@ -33,6 +33,10 @@ import zipfile
 from pathlib import Path, PurePath, PurePosixPath
 from typing import Any, BinaryIO
 
+from app.infrastructure.storage.level_reader import (
+    read_server_properties_view_distance,
+    read_world_settings,
+)
 from app.kernel.errors import StorageError
 
 _WORLDS = "worlds"
@@ -108,6 +112,24 @@ class LocalServerStorage:
                 }
             )
         return worlds
+
+    def world_settings(self, world_name: str) -> dict[str, Any]:
+        """Ajustes del mundo leídos del disco (best effort, dict parcial).
+
+        ``seed``/``gamemode``/``difficulty`` salen del ``level.dat``;
+        ``view_distance`` no vive en ``level.dat`` (es ajuste de servidor), así
+        que se respalda con el ``view-distance`` de ``server.properties`` de la
+        raíz. Nunca lanza: si el nivel no se puede leer, devuelve un dict vacío.
+        """
+        world_dir = self._resolve(f"{_WORLDS}/{world_name}")
+        if not world_dir.is_dir() or not (world_dir / "level.dat").is_file():
+            return {}
+        settings = read_world_settings(world_dir)
+        if "view_distance" not in settings:
+            view_distance = read_server_properties_view_distance(self._root)
+            if view_distance is not None:
+                settings["view_distance"] = view_distance
+        return settings
 
     def world_snapshot(self, world_name: str) -> BinaryIO:
         world_dir = self._resolve(f"{_WORLDS}/{world_name}")

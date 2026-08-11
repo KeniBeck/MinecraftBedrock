@@ -19,6 +19,10 @@ def world_to_row(world: World) -> dict[str, Any]:
         "activated": world.activated,
         "created_at": world.created_at,
         "updated_at": world.updated_at,
+        "seed": world.seed,
+        "gamemode": world.gamemode,
+        "difficulty": world.difficulty,
+        "view_distance": world.view_distance,
     }
 
 
@@ -33,4 +37,8 @@ def world_from_row(row: WorldRow) -> World:
         activated=row.activated,
         created_at=row.created_at,
         updated_at=row.updated_at,
+        seed=row.seed,
+        gamemode=row.gamemode,
+        difficulty=row.difficulty,
+        view_distance=row.view_distance,
     )

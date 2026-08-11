@@ -144,6 +144,62 @@ async def test_world_activated_inyecta_level_name_del_mundo_activado() -> None:
     assert runtime.materialized, "el spec cambió → el contenedor debe recrearse"
 
 
+async def test_world_activated_inyecta_ajustes_del_mundo_como_env() -> None:
+    """``WORLD.ACTIVATED`` propaga seed/gamemode/difficulty/view_distance como env."""
+    bus = InProcessEventBus()
+    runtime = FakeRuntime()
+    config = FakeConfigurationReader(env={"MOTD": "viejo"})
+    apply_config, deps = make_harness(bus, config, runtime)
+    await seed(deps)
+    bus.subscribe(WORLD_ACTIVATED_TOPIC, WorldActivatedHandler(apply_config))
+
+    await bus.publish(
+        DomainEvent(
+            type="WORLD.ACTIVATED",
+            server_id="srv-1",
+            payload={
+                "name": "Mundo",
+                "level_name": "Mundo",
+                "seed": "12345",
+                "gamemode": "creative",
+                "difficulty": "hard",
+                "view_distance": 12,
+            },
+        )
+    )
+
+    server = await deps.repository.get_required(ServerId("srv-1"))
+    assert server.spec.environment["LEVEL_NAME"] == "Mundo"
+    assert server.spec.environment["LEVEL_SEED"] == "12345"
+    assert server.spec.environment["GAMEMODE"] == "creative"
+    assert server.spec.environment["DIFFICULTY"] == "hard"
+    assert server.spec.environment["VIEW_DISTANCE"] == "12"
+    assert server.applied_config_rev is None
+
+
+async def test_world_activated_ajustes_vacios_no_inyectan_env() -> None:
+    """Los ajustes ausentes/vacíos del payload no pisan la env actual."""
+    bus = InProcessEventBus()
+    runtime = FakeRuntime()
+    config = FakeConfigurationReader(env={"MOTD": "viejo", "LEVEL_SEED": "semilla"})
+    apply_config, deps = make_harness(bus, config, runtime)
+    await seed(deps)
+    bus.subscribe(WORLD_ACTIVATED_TOPIC, WorldActivatedHandler(apply_config))
+
+    await bus.publish(
+        DomainEvent(
+            type="WORLD.ACTIVATED",
+            server_id="srv-1",
+            payload={"name": "Mundo", "level_name": "Mundo", "seed": "", "view_distance": None},
+        )
+    )
+
+    server = await deps.repository.get_required(ServerId("srv-1"))
+    assert server.spec.environment["LEVEL_NAME"] == "Mundo"
+    assert server.spec.environment["LEVEL_SEED"] == "semilla"
+    assert "GAMEMODE" not in server.spec.environment
+
+
 async def test_world_activated_creado_sin_name_mantiene_el_actual() -> None:
     """Sin ``name`` en el payload no se pisa el ``LEVEL_NAME`` existente."""
     bus = InProcessEventBus()

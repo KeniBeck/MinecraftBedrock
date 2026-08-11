@@ -34,6 +34,7 @@ from app.modules.world.application.commands import (
     DuplicateWorldCommand,
     ExportWorldCommand,
     ImportWorldCommand,
+    UpdateWorldCommand,
 )
 from app.modules.world.application.facade import WorldFacade
 from app.modules.world.application.use_cases import (
@@ -51,9 +52,11 @@ from app.modules.world.domain.events import (
     WORLD_CREATED_TOPIC,
     WORLD_DELETED_TOPIC,
     WORLD_EXPORTED_TOPIC,
+    WORLD_UPDATED_TOPIC,
 )
 from app.modules.world.infrastructure.memory import InMemoryWorldRepository
 from tests.conftest import FakeRuntime, FakeServerReader, FakeSettings, SequenceIds
+from tests.test_level_reader import _int, _level_dat, _long, _string
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 SERVER_ID = "srv-1"
@@ -405,7 +408,156 @@ async def test_activate_de_mundo_desconocido_fracasa(storage_root: Path) -> None
         await fx.facade.activate(ActivateWorldCommand(server_id=SERVER_ID, name="Nope"))
 
 
+async def test_create_persiste_ajustes_opcionales(storage_root: Path) -> None:
+    fx = Fixture(storage_root)
+
+    view = await fx.facade.create(
+        CreateWorldCommand(
+            server_id=SERVER_ID,
+            name="Alpha",
+            seed="42",
+            gamemode="creative",
+            difficulty="hard",
+            view_distance=12,
+        )
+    )
+
+    assert view.seed == "42"
+    assert view.gamemode == "creative"
+    assert view.difficulty == "hard"
+    assert view.view_distance == 12
+    world = await fx.repository.get_world(SERVER_ID, "Alpha")
+    assert world is not None
+    assert world.seed == "42"
+    assert world.gamemode == "creative"
+    assert world.difficulty == "hard"
+    assert world.view_distance == 12
+
+
+async def test_create_sin_ajustes_los_deja_como_none(storage_root: Path) -> None:
+    fx = Fixture(storage_root)
+
+    view = await fx.facade.create(CreateWorldCommand(server_id=SERVER_ID, name="Alpha"))
+
+    assert view.seed is None
+    assert view.gamemode is None
+    assert view.difficulty is None
+    assert view.view_distance is None
+
+
+async def test_activate_incluye_ajustes_en_el_payload(storage_root: Path) -> None:
+    fx = Fixture(storage_root)
+    await fx.facade.create(
+        CreateWorldCommand(
+            server_id=SERVER_ID,
+            name="Alpha",
+            seed="42",
+            gamemode="creative",
+            difficulty="hard",
+            view_distance=12,
+        )
+    )
+    events: list[DomainEvent] = []
+    fx.bus.subscribe(WORLD_ACTIVATED_TOPIC, events.append)
+
+    await fx.facade.activate(ActivateWorldCommand(server_id=SERVER_ID, name="Alpha"))
+
+    payload = events[0].payload
+    assert payload["level_name"] == "Alpha"
+    assert payload["seed"] == "42"
+    assert payload["gamemode"] == "creative"
+    assert payload["difficulty"] == "hard"
+    assert payload["view_distance"] == 12
+
+
+# -- actualizar -----------------------------------------------------------------
+
+
+async def test_update_ajusta_ajustes_sin_renombrar(storage_root: Path) -> None:
+    fx = Fixture(storage_root)
+    await fx.facade.create(
+        CreateWorldCommand(
+            server_id=SERVER_ID,
+            name="Alpha",
+            seed="42",
+            gamemode="creative",
+            difficulty="hard",
+            view_distance=12,
+        )
+    )
+    events: list[DomainEvent] = []
+    fx.bus.subscribe(WORLD_ACTIVATED_TOPIC, events.append)
+
+    view = await fx.facade.update(
+        UpdateWorldCommand(
+            server_id=SERVER_ID,
+            name="Alpha",
+            seed="999",
+            difficulty="peaceful",
+            view_distance=8,
+        )
+    )
+
+    assert view.seed == "999"
+    assert view.gamemode == "creative"
+    assert view.difficulty == "peaceful"
+    assert view.view_distance == 8
+    assert events == []  # inactivo → no re-activa
+
+
+async def test_update_en_activo_reaplica_con_nuevos_ajustes(storage_root: Path) -> None:
+    fx = Fixture(storage_root)
+    await fx.facade.create(
+        CreateWorldCommand(server_id=SERVER_ID, name="Alpha", seed="42", view_distance=12)
+    )
+    await fx.facade.activate(ActivateWorldCommand(server_id=SERVER_ID, name="Alpha"))
+    events: list[DomainEvent] = []
+    fx.bus.subscribe(WORLD_ACTIVATED_TOPIC, events.append)
+
+    await fx.facade.update(
+        UpdateWorldCommand(server_id=SERVER_ID, name="Alpha", gamemode="adventure")
+    )
+
+    payload = events[0].payload
+    assert payload["level_name"] == "Alpha"
+    assert payload["seed"] == "42"
+    assert payload["gamemode"] == "adventure"
+    assert payload["view_distance"] == 12
+
+
+async def test_update_renombra_mueve_directorio_y_reescribe_levelname(
+    storage_root: Path,
+) -> None:
+    fx = Fixture(storage_root)
+    await fx.facade.create(CreateWorldCommand(server_id=SERVER_ID, name="Alpha"))
+    events: list[DomainEvent] = []
+    fx.bus.subscribe(WORLD_UPDATED_TOPIC, events.append)
+
+    view = await fx.facade.update(
+        UpdateWorldCommand(server_id=SERVER_ID, name="Alpha", new_name="Beta")
+    )
+
+    assert view.name == "Beta"
+    assert view.level_name == "Beta"
+    assert fx.storage.exists("worlds/Beta")
+    assert not fx.storage.exists("worlds/Alpha")
+    assert fx.storage.read("worlds/Beta/levelname.txt") == b"Beta"
+    payload = events[0].payload
+    assert payload["renamed"] is True
+    assert payload["previous_name"] == "Alpha"
+
+
+async def test_update_de_mundo_desconocido_fracasa(storage_root: Path) -> None:
+    fx = Fixture(storage_root)
+
+    with pytest.raises(WorldNotFoundError):
+        await fx.facade.update(
+            UpdateWorldCommand(server_id=SERVER_ID, name="Nope", seed="1")
+        )
+
+
 # -- reconciliar ----------------------------------------------------------------
+
 
 
 async def test_sync_descubre_mundos_puestos_en_el_volumen(storage_root: Path) -> None:
@@ -481,3 +633,92 @@ async def test_sync_refresca_level_name_desde_el_disco(storage_root: Path) -> No
 
     refreshed = await fx.repository.get_world(SERVER_ID, "Alpha")
     assert refreshed is not None and refreshed.level_name == "Renombrado"
+
+
+def _world_level_dat(*, seed: int = 12345, gamemode: int = 1, difficulty: int = 3) -> bytes:
+    return _level_dat(
+        [
+            ("LevelName", 8, _string("Alpha")),
+            ("GameType", 3, _int(gamemode)),
+            ("Difficulty", 3, _int(difficulty)),
+            (
+                "WorldGenSettings",
+                10,
+                _compound_of([("seed", 4, _long(seed))]),
+            ),
+        ]
+    )
+
+
+def _compound_of(pairs: list[tuple[str, int, bytes]]) -> bytes:
+    out = b""
+    for name, tag_type, payload in pairs:
+        raw = name.encode("utf-8")
+        out += bytes([tag_type]) + len(raw).to_bytes(2, "little") + raw + payload
+    return out + b"\x00"
+
+
+async def test_sync_rellena_ajustes_del_nivel_al_descubrir(storage_root: Path) -> None:
+    fx = Fixture(storage_root)
+    fx.storage.write("worlds/Alpha/level.dat", _world_level_dat())
+    fx.storage.write("worlds/Alpha/levelname.txt", b"Alpha")
+    fx.storage.write("server.properties", b"view-distance=12\n")
+
+    created = await fx.facade.sync(SERVER_ID)
+
+    world = await fx.repository.get_world(SERVER_ID, "Alpha")
+    assert world is not None
+    assert world.seed == "12345"
+    assert world.gamemode == "creative"
+    assert world.difficulty == "hard"
+    assert world.view_distance == 12
+    assert created[0].seed == "12345"
+    assert created[0].gamemode == "creative"
+    assert created[0].difficulty == "hard"
+    assert created[0].view_distance == 12
+
+
+async def test_sync_rellena_ajustes_de_mundo_ya_conocido(storage_root: Path) -> None:
+    fx = Fixture(storage_root)
+    fx.seed_world("Alpha")
+    await fx.facade.sync(SERVER_ID)
+    world = await fx.repository.get_world(SERVER_ID, "Alpha")
+    assert world is not None and world.seed is None
+
+    fx.storage.write("worlds/Alpha/level.dat", _world_level_dat(seed=999, difficulty=0))
+    fx.storage.write("server.properties", b"view-distance=8\n")
+    await fx.facade.sync(SERVER_ID)
+
+    refreshed = await fx.repository.get_world(SERVER_ID, "Alpha")
+    assert refreshed is not None
+    assert refreshed.seed == "999"
+    assert refreshed.gamemode == "creative"
+    assert refreshed.difficulty == "peaceful"
+    assert refreshed.view_distance == 8
+
+
+async def test_sync_no_pisa_ajustes_configurados_por_el_panel(storage_root: Path) -> None:
+    fx = Fixture(storage_root)
+    await fx.facade.create(
+        CreateWorldCommand(server_id=SERVER_ID, name="Alpha", gamemode="adventure")
+    )
+    fx.storage.write("worlds/Alpha/level.dat", _world_level_dat(gamemode=1))
+
+    await fx.facade.sync(SERVER_ID)
+
+    world = await fx.repository.get_world(SERVER_ID, "Alpha")
+    assert world is not None and world.gamemode == "adventure"
+
+
+async def test_sync_con_nivel_corrupto_deja_ajustes_vacios(storage_root: Path) -> None:
+    fx = Fixture(storage_root)
+    fx.seed_world("Alpha")
+
+    await fx.facade.sync(SERVER_ID)
+
+    world = await fx.repository.get_world(SERVER_ID, "Alpha")
+    assert world is not None
+    assert world.seed is None
+    assert world.gamemode is None
+    assert world.difficulty is None
+    assert world.view_distance is None

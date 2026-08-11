@@ -51,6 +51,7 @@ PERMISSION_CODES: tuple[tuple[str, str], ...] = (
     ("world.activate", "world"),
     ("world.delete", "world"),
     ("world.sync", "world"),
+    ("world.update", "world"),
     # backup
     ("backup.list", "backup"),
     ("backup.view", "backup"),

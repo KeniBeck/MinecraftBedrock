@@ -21,6 +21,10 @@ class WorldView:
     activated: bool
     created_at: datetime
     updated_at: datetime
+    seed: str | None = None
+    gamemode: str | None = None
+    difficulty: str | None = None
+    view_distance: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,4 +54,8 @@ def world_to_view(world: World) -> WorldView:
         activated=world.activated,
         created_at=world.created_at,
         updated_at=world.updated_at,
+        seed=world.seed,
+        gamemode=world.gamemode,
+        difficulty=world.difficulty,
+        view_distance=world.view_distance,
     )

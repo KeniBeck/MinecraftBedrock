@@ -54,13 +54,16 @@ class ApplyConfigCommand:
     recrear con level-name). ``allow_list`` es el toggle de ``ALLOW_LIST`` del
     evento ``PERMISSION.ALLOWLIST_TOGGLED``: se inyecta como env
     ``ALLOW_LIST=<true/false>`` al renderizar el spec (mismo mecanismo que
-    ``LEVEL_NAME``).
+    ``LEVEL_NAME``). ``environment`` es un override genérico de env para los
+    ajustes del mundo activado (``LEVEL_SEED``/``GAMEMODE``/``DIFFICULTY``/
+    ``VIEW_DISTANCE``): se fusiona sobre la env deseada con la mayor prioridad.
     """
 
     server_id: str
     config_rev: int | None = None
     level_name: str | None = None
     allow_list: bool | None = None
+    environment: dict[str, str] | None = None
     actor_id: str | None = None
 
 

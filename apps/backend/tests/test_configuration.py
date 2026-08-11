@@ -59,8 +59,27 @@ async def test_desired_config_devuelve_defaults_sin_perfil() -> None:
     desired = await facade.desired_config("srv-1")
 
     assert desired.version == "LATEST"
-    assert desired.environment == {}
+    assert desired.environment == {"LEVEL_NAME": "Mi Mundo 1"}
     assert desired.config_rev == 0
+
+
+async def test_desired_config_default_level_name_configurable() -> None:
+    facade = make_facade(InProcessEventBus(), settings_values={"defaults.level_name": "Otro"})
+
+    desired = await facade.desired_config("srv-1")
+
+    assert desired.environment == {"LEVEL_NAME": "Otro"}
+
+
+async def test_desired_config_con_perfil_sin_level_name_no_inyecta_default() -> None:
+    """Con perfil, el default no pisa las properties del usuario (§7.2)."""
+    facade = make_facade(InProcessEventBus())
+    await facade.update_properties("srv-1", {"server-name": "Mi Mundo"})
+
+    desired = await facade.desired_config("srv-1")
+
+    assert desired.environment == {"SERVER_NAME": "Mi Mundo"}
+    assert desired.config_rev == 1
 
 
 async def test_update_properties_proyecta_a_env_y_mantiene_revision() -> None:
@@ -71,6 +90,18 @@ async def test_update_properties_proyecta_a_env_y_mantiene_revision() -> None:
 
     assert desired.environment == {"SERVER_NAME": "Mi Mundo", "MAX_PLAYERS": "12"}
     assert desired.config_rev == 1
+
+
+async def test_update_properties_proyecta_level_seed_y_view_distance() -> None:
+    facade = make_facade(InProcessEventBus())
+    await facade.update_properties(
+        "srv-1",
+        {"level-seed": "12345", "view-distance": "12"},
+    )
+
+    desired = await facade.desired_config("srv-1")
+
+    assert desired.environment == {"LEVEL_SEED": "12345", "VIEW_DISTANCE": "12"}
 
 
 async def test_update_properties_publica_config_changed_con_revision() -> None:

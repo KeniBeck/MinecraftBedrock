@@ -29,6 +29,7 @@ from app.kernel.ports.access import Identity
 from app.modules.world.api.schemas import (
     CreateWorldRequest,
     DuplicateWorldRequest,
+    UpdateWorldRequest,
     WorldResponse,
 )
 from app.modules.world.application.commands import (
@@ -38,6 +39,7 @@ from app.modules.world.application.commands import (
     DuplicateWorldCommand,
     ExportWorldCommand,
     ImportWorldCommand,
+    UpdateWorldCommand,
 )
 from app.modules.world.application.facade import WorldFacade
 from app.modules.world.application.results import ExportWorldResult, WorldView
@@ -59,6 +61,10 @@ def _response(view: WorldView) -> WorldResponse:
         activated=view.activated,
         created_at=view.created_at,
         updated_at=view.updated_at,
+        seed=view.seed,
+        gamemode=view.gamemode,
+        difficulty=view.difficulty,
+        view_distance=view.view_distance,
     )
 
 
@@ -90,7 +96,15 @@ async def create_world(
     identity: Identity = Depends(require_server_action("world.create")),
 ) -> WorldResponse:
     view = await _facade(request).create(
-        CreateWorldCommand(server_id=server_id, name=body.name, actor_id=identity.id)
+        CreateWorldCommand(
+            server_id=server_id,
+            name=body.name,
+            seed=body.seed,
+            gamemode=body.gamemode,
+            difficulty=body.difficulty,
+            view_distance=body.view_distance,
+            actor_id=identity.id,
+        )
     )
     return _response(view)
 
@@ -163,6 +177,33 @@ async def export_world(
         ExportWorldCommand(server_id=server_id, name=name, actor_id=identity.id)
     )
     return _export_response(result)
+
+
+@router.patch(
+    "/servers/{server_id}/worlds/{name}",
+    response_model=WorldResponse,
+    summary="Renombrar y/o ajustar un mundo",
+)
+async def update_world(
+    server_id: str,
+    name: str,
+    body: UpdateWorldRequest,
+    request: Request,
+    identity: Identity = Depends(require_server_action("world.update")),
+) -> WorldResponse:
+    view = await _facade(request).update(
+        UpdateWorldCommand(
+            server_id=server_id,
+            name=name,
+            new_name=body.name,
+            seed=body.seed,
+            gamemode=body.gamemode,
+            difficulty=body.difficulty,
+            view_distance=body.view_distance,
+            actor_id=identity.id,
+        )
+    )
+    return _response(view)
 
 
 @router.post(

@@ -42,6 +42,15 @@ class ServerStoragePort(Protocol):
     def list_worlds(self) -> list[dict[str, Any]]:
         """Enumera ``worlds/*`` con tamaño y estructura mínima."""
 
+    def world_settings(self, world_name: str) -> dict[str, Any]:
+        """Ajustes del mundo leídos del disco (best effort, dict parcial).
+
+        ``seed``/``gamemode``/``difficulty`` del ``level.dat`` y, de estar
+        disponible, ``view_distance`` (respaldo de ``server.properties``).
+        Nunca lanza: si el nivel no se puede leer devuelve un dict vacío.
+        Usado por ``ScanWorldsUseCase`` para rellenar la metadata al sync.
+        """
+
     def world_snapshot(self, world_name: str) -> BinaryIO:
         """Abre un stream de lectura del árbol de un mundo (formato zip)."""
 

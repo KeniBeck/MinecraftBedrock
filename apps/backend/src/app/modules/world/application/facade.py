@@ -12,6 +12,7 @@ from app.modules.world.application.commands import (
     DuplicateWorldCommand,
     ExportWorldCommand,
     ImportWorldCommand,
+    UpdateWorldCommand,
 )
 from app.modules.world.application.handlers import (
     SERVER_VERSION_CHANGED_TOPIC,
@@ -26,6 +27,7 @@ from app.modules.world.application.use_cases import (
     ExportWorldUseCase,
     ImportWorldUseCase,
     ScanWorldsUseCase,
+    UpdateWorldUseCase,
     WorldDeps,
 )
 from app.modules.world.domain.repository import WorldRepositoryPort
@@ -42,6 +44,7 @@ class WorldFacade:
         self._duplicate = DuplicateWorldUseCase(deps)
         self._delete = DeleteWorldUseCase(deps)
         self._activate = ActivateWorldUseCase(deps)
+        self._update = UpdateWorldUseCase(deps)
         self._scan = ScanWorldsUseCase(deps)
 
     # -- operaciones ---------------------------------------------------------
@@ -63,6 +66,10 @@ class WorldFacade:
 
     async def activate(self, cmd: ActivateWorldCommand) -> WorldView:
         return await self._activate.activate(cmd)
+
+    async def update(self, cmd: UpdateWorldCommand) -> WorldView:
+        """Renombra y/o ajusta un mundo; reaplica la config si estaba activo."""
+        return await self._update.update(cmd)
 
     # -- consultas -----------------------------------------------------------
 

@@ -344,6 +344,12 @@ class ApplyConfigUseCase:
                     },
                     config_rev=desired.config_rev,
                 )
+            if cmd.environment:
+                desired = DesiredConfig(
+                    version=desired.version,
+                    environment={**desired.environment, **cmd.environment},
+                    config_rev=desired.config_rev,
+                )
             occupied = await _occupied_ports(deps.repository, exclude=server.id.value)
             new_spec = deps.spec_factory.render(
                 server.id.value,

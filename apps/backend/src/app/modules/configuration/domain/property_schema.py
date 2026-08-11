@@ -14,6 +14,8 @@ _PROPERTY_TO_ENV: dict[str, str] = {
     "gamemode": "GAMEMODE",
     "difficulty": "DIFFICULTY",
     "level-name": "LEVEL_NAME",
+    "level-seed": "LEVEL_SEED",
+    "view-distance": "VIEW_DISTANCE",
 }
 
 _MAX_PLAYERS = 40

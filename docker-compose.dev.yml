@@ -23,6 +23,7 @@ services:
     volumes:
       - ./apps/backend/src:/workspace/apps/backend/src
       - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/bedrockpanel:/var/lib/bedrockpanel
     environment:
       BEDROCK_PANEL_DATABASE_URL: postgresql+psycopg://bedrockpanel:bedrockpanel_dev@postgres:5432/bedrockpanel
       BEDROCK_PANEL_DEBUG: "true"

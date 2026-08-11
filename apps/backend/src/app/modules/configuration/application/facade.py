@@ -36,7 +36,15 @@ class ConfigurationFacade:
         self._time = time
 
     async def desired_config(self, server_id: str) -> DesiredConfig:
-        """Vista de solo lectura para Server (protocolo ``ConfigurationReader``)."""
+        """Vista de solo lectura para Server (protocolo ``ConfigurationReader``).
+
+        Sin perfil (servidor recién creado, sin plantilla ni config del
+        usuario) se siembra el ``level-name`` por defecto (``defaults.level_name``,
+        por defecto ``Mi Mundo 1``): así BDS genera el mundo inicial con ese
+        nombre en el primer arranque. Con perfil, solo se proyectan las
+        properties guardadas (si el perfil no define ``level-name``, BDS usa su
+        default — la decisión del usuario gana).
+        """
         profile = await self._repository.get_profile(server_id)
         if profile is None:
             return DesiredConfig(
@@ -45,7 +53,7 @@ class ConfigurationFacade:
                         "defaults.version", self._settings.get("server.default_version", "LATEST")
                     )
                 ),
-                environment={},
+                environment={"LEVEL_NAME": self._default_level_name()},
                 config_rev=0,
             )
         return DesiredConfig(
@@ -53,6 +61,9 @@ class ConfigurationFacade:
             environment=self._schema.to_environment(profile.properties),
             config_rev=profile.config_rev,
         )
+
+    def _default_level_name(self) -> str:
+        return str(self._settings.get("defaults.level_name", "Mi Mundo 1"))
 
     async def get_profile(self, server_id: str) -> ConfigProfile | None:
         return await self._repository.get_profile(server_id)

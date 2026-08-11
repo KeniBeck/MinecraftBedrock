@@ -8,11 +8,20 @@ from typing import BinaryIO
 
 @dataclass(frozen=True, slots=True)
 class CreateWorldCommand:
-    """Crea un mundo nuevo (metadata + directorio vacío con ``levelname.txt``)."""
+    """Crea un mundo nuevo (metadata + directorio vacío con ``levelname.txt``).
+
+    Los ajustes opcionales (``seed``/``gamemode``/``difficulty``/
+    ``view_distance``) se guardan en la metadata y se inyectan como env al
+    activar el mundo. ``None`` = sin configurar (BDS usa sus defaults).
+    """
 
     server_id: str
     name: str
     actor_id: str | None = None
+    seed: str | None = None
+    gamemode: str | None = None
+    difficulty: str | None = None
+    view_distance: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,3 +69,22 @@ class ActivateWorldCommand:
     server_id: str
     name: str
     actor_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateWorldCommand:
+    """Actualiza un mundo: renombra y/o cambia sus ajustes opcionales.
+
+    ``name`` es el nombre actual (clave); ``new_name`` opcional (renombrar el
+    directorio + metadata). ``None`` en los ajustes = no cambiar; no se soporta
+    "limpiar" un ajuste a ``None`` en esta versión (solo volver a escribirlo).
+    """
+
+    server_id: str
+    name: str
+    actor_id: str | None = None
+    new_name: str | None = None
+    seed: str | None = None
+    gamemode: str | None = None
+    difficulty: str | None = None
+    view_distance: int | None = None

@@ -41,4 +41,8 @@ def _deactivate(world: World) -> World:
         activated=False,
         created_at=world.created_at,
         updated_at=world.updated_at,
+        seed=world.seed,
+        gamemode=world.gamemode,
+        difficulty=world.difficulty,
+        view_distance=world.view_distance,
     )

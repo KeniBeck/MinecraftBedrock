@@ -33,12 +33,15 @@ class ConfigChangedHandler:
 
 
 class WorldActivatedHandler:
-    """``WORLD.ACTIVATED`` → applyConfig (level-name cambiado, §7.2).
+    """``WORLD.ACTIVATED`` → applyConfig (level-name + ajustes, §7.2).
 
     El payload de World **no** lleva ``config_rev`` (decisión §22): se
     reaplica la config deseada sin tocar la revisión aplicada. El ``name`` del
     mundo activado (directorio ``worlds/<name>``) se propaga como
-    ``level_name`` para que el spec renderice ``LEVEL_NAME=<name>``.
+    ``level_name`` para que el spec renderice ``LEVEL_NAME=<name>``; los
+    ajustes opcionales del mundo (``seed``/``gamemode``/``difficulty``/
+    ``view_distance``) se propagan como override de env
+    (``LEVEL_SEED``/``GAMEMODE``/``DIFFICULTY``/``VIEW_DISTANCE``).
     """
 
     def __init__(self, apply_config: ApplyConfigUseCase) -> None:
@@ -53,6 +56,7 @@ class WorldActivatedHandler:
                 server_id=server_id,
                 config_rev=_optional_config_rev(event),
                 level_name=_optional_level_name(event),
+                environment=_world_environment(event),
                 actor_id=event.actor_id,
             )
         )
@@ -110,3 +114,27 @@ def _optional_allow_list(event: DomainEvent) -> bool | None:
     if isinstance(raw, bool):
         return raw
     return str(raw).lower() in ("true", "1", "yes")
+
+
+# Claves del payload de ``WORLD.ACTIVATED`` → env que se inyecta al spec.
+_WORLD_ENV_KEYS: tuple[tuple[str, str], ...] = (
+    ("seed", "LEVEL_SEED"),
+    ("gamemode", "GAMEMODE"),
+    ("difficulty", "DIFFICULTY"),
+    ("view_distance", "VIEW_DISTANCE"),
+)
+
+
+def _world_environment(event: DomainEvent) -> dict[str, str] | None:
+    """Ajustes opcionales del mundo activado como override de env (``None`` = sin ajustes).
+
+    Solo incluye claves presentes y no vacías; ``view_distance`` se proyecta a
+    texto (los env del spec son ``str``).
+    """
+    environment: dict[str, str] = {}
+    for payload_key, env_key in _WORLD_ENV_KEYS:
+        raw = event.payload.get(payload_key)
+        if raw is None or raw == "":
+            continue
+        environment[env_key] = str(raw)
+    return environment or None
