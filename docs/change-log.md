@@ -3033,3 +3033,138 @@ comportamiento no cambia (ya estaban por debajo).
   patrón `DEBUG urllib3|docker` desapareció (0 líneas) mientras los logs INFO de
   la app (WS `[accepted]`, `stream_manager`) siguen saliendo.
 - Suite backend: **872 passed**; `ruff` ✅.
+
+## 31. Ajustes por mundo + mundo por defecto "Mi Mundo 1"
+
+> **Fecha**: 2026-08-11. Pedido: al crear un mundo poder configurar semilla,
+> modo de juego, dificultad y distancia de chunks; y que el primer mundo de un
+> servidor nuevo se llame "Mi Mundo 1" en lugar del default "Bedrock level" de
+> BDS.
+
+### Alcance
+
+- **Configuración por mundo** (`seed`, `gamemode`, `difficulty`,
+  `view_distance`) en `CreateWorldCommand`/`UpdateWorldCommand` (renombrar +
+  ajustar). Se guardan en la metadata (`world_metadata` gana 4 columnas) y, al
+  **activar** el mundo, viajan en `WORLD.ACTIVATED` para que Server los
+  inyecte como env al renderizar el spec: `LEVEL_SEED`, `GAMEMODE`,
+  `DIFFICULTY`, `VIEW_DISTANCE`.
+- **Mundo por defecto** "Mi Mundo 1": `ConfigurationFacade.desired_config()`
+  sin perfil siembra `LEVEL_NAME` desde `defaults.level_name` (default
+  "Mi Mundo 1", configurable por settings). Con perfil el default **no** pisa
+  las properties del usuario.
+- **UI**: el diálogo "Crear mundo" incluye semilla/modo/dificultad/chunks; el
+  listado de mundos gana "Ajustar" (edición con renombrado + settings), que usa
+  el `PATCH /servers/{id}/worlds/{name}` ya existente con permiso `world.update`.
+
+### Mecánica del evento (decisión §22)
+
+`WORLD.ACTIVATED` no lleva `config_rev`; se reaplica la config deseada sin
+tocar la revisión de Configuration. El handler `WorldActivatedHandler` propaga:
+`level_name` (directorio del mundo) y `environment` override con los ajustes
+(seed/gamemode/difficulty/view_distance, `view_distance` → texto). El override
+se fusiona sobre la env deseada con la mayor prioridad en `ApplyConfigUseCase`
+(nuevo campo `environment` en `ApplyConfigCommand`).
+
+### Migración
+
+`0015_world_world_settings`: columnas en `world_metadata`, permiso
+`world.update` (operator/admin/super_admin, mismo patrón que 0014) y setting
+`defaults.level_name = "Mi Mundo 1"`.
+
+### Verificación
+
+- Suite backend: **887 passed**; `ruff` ✅; `mypy` ✅ (330 archivos).
+- Frontend: `tsc -b` ✅, `eslint` ✅, `vitest` 68 passed.
+
+### Corrección posterior — el sync trae los datos del mundo desde el disco
+
+> **Fecha**: 2026-08-11. En una BBDD ya migrada los mundos existentes (creados
+> por BDS o importados) tenían `seed`/`gamemode`/`difficulty`/`view_distance`
+> en `NULL`: la metadata se creaba en el primer sync sin leer los ajustes.
+
+**Cambio**: el sync ahora lee los ajustes del mundo del disco de forma
+**best effort** y rellena la metadata cuando esta no los tiene (backfill; lo
+configurado por el usuario **no** se pisa):
+
+- `src/app/infrastructure/storage/level_reader.py` (nuevo): parser NBT
+  little-endian (gzip o crudo) de `level.dat` → `seed` (prefiere
+  `WorldGenSettings.seed`, respaldo `RandomSeed`), `gamemode` (`GameType`:
+  0/1/2 → survival/creative/adventure), `difficulty` (`Difficulty`: 0–3).
+  `view_distance` no vive en `level.dat` (es ajuste de servidor): se respalda
+  con `view-distance` de `server.properties`. Nunca lanza (nivel corrupto →
+  dict vacío).
+- `ServerStoragePort.world_settings()` (nuevo método) + implementación en
+  `LocalServerStorage`.
+- `ScanWorldsUseCase.sync()` pasa los ajustes a `_new_world` (descubrimiento) y
+  a `_refreshed_world` (backfill de campos `None`).
+- UI: el listado de mundos muestra modo/dificultad/chunks/semilla cuando hay.
+
+**Verificación**: suite backend **899 passed**; `ruff`/`mypy` ✅ (331 archivos);
+frontend `tsc`/`eslint`/`vitest` 68 ✅.
+
+### Corrección posterior 2 — formato real de `level.dat` de BDS 1.26.x + orden sync/worlds
+
+> **Fecha**: 2026-08-11. En un servidor real el sync devolvía
+> `seed`/`gamemode`/`difficulty` en `null` (solo `view_distance` salía del
+> `server.properties`). El parser asumía gzip + NBT sin cabecera.
+
+**Hallazgo**: BDS 1.26.43.1 escribe `level.dat` **sin gzip** y con una
+**cabecera de 8 bytes** (`0a 00 00 00` + longitud LE del payload NBT). El
+parser consumía la cabecera como si fuera NBT y terminaba con un compound raíz
+vacío → `{}`.
+
+**Cambios**:
+- `level_reader.py`: `_strip_level_header()` detecta la cabecera moderna (solo
+  cuando el marcador y la longitud declarada son coherentes) y aplica el
+  mismo recorte al payload gzip descomprimido; sigue aceptando gzip clásico y
+  crudo sin cabecera. Verificado contra el `level.dat` real (se extrae
+  `seed=-299205636354301287`, `gamemode=survival`, `difficulty=easy`).
+- Frontend `WorldsPage`: el orden pasa a ser **sync primero, worlds después**
+  (antes era worlds → sync → worlds, 3 llamadas). La query de mundos queda
+  gateada por un flag `synced` que se activa al terminar el sync inicial; el
+  botón "Sincronizar" queda siempre activo (muestra spinner mientras corre).
+
+**Verificación**: suite backend **901 passed**; `ruff`/`mypy` ✅; frontend
+`tsc`/`eslint`/`vitest` 68 ✅.
+
+### Corrección posterior 3 — sync dentro del query de mundos (StrictMode seguro)
+
+> **Fecha**: 2026-08-11. El intento anterior (gate con `syncState` + ref
+> `pendingFor` + `onSettled`) quedaba **atascado en "Sincronizando mundos…"**
+> en desarrollo: tras el sync (201) el `GET /worlds` nunca se disparaba y el
+> sync se repetía en bucle.
+
+**Causa raíz (verificada por test con `StrictMode`)**: en desarrollo React
+desmonta y remonta el componente con **estado nuevo**, así que el ref
+`pendingFor` se resetea y, peor, la mutación iniciada en el primer montaje
+queda **huérfana**: el `MutationObserver` pierde sus listeners al desmontar y
+`MutationObserver.#notify()` descarta el `onSettled` (`hasListeners()` es
+false). Como el ref-guard impedía al segundo montaje relanzar la mutación,
+`setSyncState({done:true})` nunca corría → el gate nunca pasaba. En
+producción (sin StrictMode) funcionaba; en dev (Vite) no.
+
+**Cambio** (`hooks.ts` + `WorldsPage.tsx`): se elimina por completo el
+`useEffect`, el gate y el hook `useSyncWorlds`. El sync vive **dentro del
+`queryFn`** de `useWorlds`: primero `POST /worlds/sync` (que ya devuelve la
+lista reconciliada, 201) y si falla, fallback a `GET /worlds` (metadata). Así:
+- React Query **deduplica por `queryKey`**, de modo que aunque StrictMode
+  monte dos veces el componente, el `queryFn` corre **una sola vez** (sync →
+  lista, sin llamadas duplicadas ni bucles).
+- El botón "Sincronizar" hace `invalidateQueries(worldKeys.all(serverId))` →
+  refetch → re-sync; el spinner se ata a `isFetching`.
+- La pantalla "Sincronizando mundos…" se muestra solo mientras `isLoading`
+  (primera carga, sin datos); con datos se ve la lista con el botón activo.
+
+**Verificación**: test de regresión nuevo
+`apps/frontend/src/features/worlds/WorldsPage.test.tsx` con `StrictMode`
+(sync una sola vez, fallback a metadata, botón re-sync) — **71 tests** ✅,
+`tsc` ✅, `eslint` ✅. Backend sin cambios. En BBDD del servidor real:
+`seed=-299205636354301287`, `gamemode=survival`, `difficulty=easy`,
+`view_distance=32`.
+
+### Pendiente / deuda
+
+- No se soporta "limpiar" un ajuste a `None` desde `UpdateWorldCommand` (solo
+  volver a escribirlo); el default del juego se obtiene enviando el ajuste
+  vacío desde la UI no está soportado — los campos vacíos no se envían.
