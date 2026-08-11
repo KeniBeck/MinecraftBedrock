@@ -3163,6 +3163,57 @@ lista reconciliada, 201) y si falla, fallback a `GET /worlds` (metadata). Así:
 `seed=-299205636354301287`, `gamemode=survival`, `difficulty=easy`,
 `view_distance=32`.
 
+### Corrección posterior 4 — ajustes que no se aplicaban al mundo (2026-08-11)
+
+> **Origen**: probando "Ajustar mundo" en el servidor real, cambiar la semilla,
+> el nombre (`level_name`) o el modo de juego no tenía efecto en el juego; solo
+> la dificultad funcionaba. La propagación al contenedor **sí** ocurría
+> (env + `server.properties` correctos); el problema era cómo BDS trata esos
+> ajustes en **mundos existentes**.
+
+**Diagnóstico** (verificado en el contenedor real):
+
+1. **Modo de juego**: con `force-gamemode=false` (default), BDS usa el modo
+   guardado en `level.dat` (`GameType`), ignorando `gamemode` de
+   `server.properties` en mundos existentes.
+2. **Semilla**: `level-seed` solo se usa al **generar** un mundo nuevo; BDS no
+   regenera uno existente (cambiar la semilla no puede cambiar el mundo).
+3. **Nombre**: el nombre en juego sale del tag `LevelName` de `level.dat`;
+   `LEVEL_NAME`/`level-name` solo indica qué carpeta cargar y BDS reescribe
+   `levelname.txt` desde el nivel, así que renombrar la carpeta no cambiaba el
+   nombre mostrado.
+
+**Cambios**:
+
+- `handlers.py` `_world_environment`: si hay `gamemode` configurado, inyecta
+  además `FORCE_GAMEMODE=true` (el itzg image lo mapea a
+  `force-gamemode=true`) → BDS aplica el modo configurado aunque el mundo ya
+  exista.
+- `level_reader.py` nuevo `patch_level_name()`: reescribe el tag `LevelName`
+  de `level.dat` preservando el resto (NBT secuencial: se rehace solo el
+  tramo del string y la longitud de la cabecera; mantiene gzip/cabecera según
+  viniera; nunca lanza). Puerto `ServerStoragePort.patch_level_name` +
+  `LocalServerStorage.patch_level_name`.
+- `UpdateWorldUseCase`: al renombrar, parchea el `LevelName` del `level.dat`
+  y escribe `levelname.txt`; así el nombre en juego (y la metadata tras el
+  sync) cambia de verdad.
+- Frontend: hint en Crear/Ajustar mundo — la semilla solo se aplica al
+  generar un mundo nuevo, no regenera uno existente.
+
+**Verificación**:
+
+- Backend: **909 passed**; `ruff` ✅; `mypy` ✅. Nuevos tests: `patch_level_name`
+  (formato moderno/gzip/crudo, lossless, corrupto), `FORCE_GAMEMODE` en la
+  propagación y rename que parchea `LevelName`.
+- E2E en el servidor real (JWT firmado con el secreto de dev):
+  - `PATCH gamemode=creative` → contenedor con `GAMEMODE=creative
+    FORCE_GAMEMODE=true`, `server.properties` con `force-gamemode=true` y BDS
+    arrancando en `Game mode: 1 Creative` (revertido a survival después).
+  - Rename `village → village-test → village` (con servidor en marcha):
+    `LevelName` de `level.dat` parcheado y BDS abriendo `worlds/village/db`.
+  - La semilla en un mundo existente no cambia el mundo (inherente a BDS);
+    el hint lo comunica.
+
 ### Pendiente / deuda
 
 - No se soporta "limpiar" un ajuste a `None` desde `UpdateWorldCommand` (solo
