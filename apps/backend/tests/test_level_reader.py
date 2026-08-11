@@ -11,6 +11,8 @@ import gzip
 from pathlib import Path
 
 from app.infrastructure.storage.level_reader import (
+    decode_level_dat,
+    patch_level_name,
     read_server_properties_view_distance,
     read_world_settings,
 )
@@ -185,3 +187,82 @@ def test_read_server_properties_view_distance_ausente_o_invalido(tmp_path: Path)
     assert read_server_properties_view_distance(tmp_path) is None
 
     assert read_server_properties_view_distance(tmp_path / "nope") is None
+
+
+# -- patch_level_name ----------------------------------------------------------
+
+
+def test_patch_level_name_formato_moderno_actualiza_cabecera() -> None:
+    data = _level_dat_modern(
+        [
+            ("LevelName", 8, _string("Bedrock level")),
+            ("GameType", 3, _int(0)),
+            ("Difficulty", 3, _int(1)),
+        ]
+    )
+
+    patched = patch_level_name(data, "village")
+
+    assert patched is not None
+    # Cabecera con longitud coherente y decodificable.
+    assert patched[:4] == b"\x0a\x00\x00\x00"
+    declared = int.from_bytes(patched[4:8], "little")
+    assert 4 + declared <= len(patched)
+    root = decode_level_dat(patched)
+    assert root is not None
+    assert root["LevelName"] == "village"
+    assert root["GameType"] == 0
+    assert root["Difficulty"] == 1
+
+
+def test_patch_level_name_gzip_mantiene_formato() -> None:
+    data = _level_dat([("LevelName", 8, _string("Bedrock level"))])
+
+    patched = patch_level_name(data, "Mi Mundo 1")
+
+    assert patched is not None
+    assert patched[:2] == b"\x1f\x8b"
+    root = decode_level_dat(patched)
+    assert root is not None
+    assert root["LevelName"] == "Mi Mundo 1"
+
+
+def test_patch_level_name_preserva_el_resto_de_tags() -> None:
+    data = _level_dat(
+        [
+            ("LevelName", 8, _string("Bedrock level")),
+            ("GameType", 3, _int(2)),
+            ("Difficulty", 3, _int(3)),
+            ("RandomSeed", 4, _long(-299205636354301287)),
+            ("byte", 1, _byte(1)),
+            ("flags", 11, (1).to_bytes(4, "little") + _int(42)),
+            ("lista", 9, bytes([3]) + (1).to_bytes(4, "little") + _int(7)),
+        ]
+    )
+
+    patched = patch_level_name(data, "Nuevo")
+    before = decode_level_dat(data)
+    after = decode_level_dat(patched)
+
+    assert after is not None
+    assert after["LevelName"] == "Nuevo"
+    for key, value in after.items():
+        if key != "LevelName":
+            assert value == before[key], f"{key} cambió: {value!r} != {before[key]!r}"
+
+
+def test_patch_level_name_crudo_sin_cabecera_no_anade_cabecera() -> None:
+    root_name = _string("level")
+    root = bytes([0x0A]) + root_name + _compound([("LevelName", 8, _string("a"))])
+
+    patched = patch_level_name(root, "b")
+
+    assert patched is not None
+    assert patched[:4] != b"\x0a\x00\x00\x00"
+    assert decode_level_dat(patched) == {"LevelName": "b"}
+
+
+def test_patch_level_name_sin_level_name_o_corrupto_devuelve_none() -> None:
+    assert patch_level_name(_level_dat([("GameType", 3, _int(0))]), "x") is None
+    assert patch_level_name(b"\x0a\x00\x00", "x") is None
+    assert patch_level_name(b"no-sirve", "x") is None

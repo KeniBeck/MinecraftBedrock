@@ -129,7 +129,10 @@ def _world_environment(event: DomainEvent) -> dict[str, str] | None:
     """Ajustes opcionales del mundo activado como override de env (``None`` = sin ajustes).
 
     Solo incluye claves presentes y no vacías; ``view_distance`` se proyecta a
-    texto (los env del spec son ``str``).
+    texto (los env del spec son ``str``). Si hay ``gamemode`` configurado se
+    inyecta además ``FORCE_GAMEMODE=true``: en mundos existentes BDS usa el
+    modo guardado en ``level.dat`` a menos que ``force-gamemode=true`` (el
+    itzg image mapea ``FORCE_GAMEMODE`` → ``force-gamemode``).
     """
     environment: dict[str, str] = {}
     for payload_key, env_key in _WORLD_ENV_KEYS:
@@ -137,4 +140,6 @@ def _world_environment(event: DomainEvent) -> dict[str, str] | None:
         if raw is None or raw == "":
             continue
         environment[env_key] = str(raw)
+    if "GAMEMODE" in environment:
+        environment["FORCE_GAMEMODE"] = "true"
     return environment or None

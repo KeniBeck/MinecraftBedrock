@@ -172,9 +172,33 @@ async def test_world_activated_inyecta_ajustes_del_mundo_como_env() -> None:
     assert server.spec.environment["LEVEL_NAME"] == "Mundo"
     assert server.spec.environment["LEVEL_SEED"] == "12345"
     assert server.spec.environment["GAMEMODE"] == "creative"
+    assert server.spec.environment["FORCE_GAMEMODE"] == "true"
     assert server.spec.environment["DIFFICULTY"] == "hard"
     assert server.spec.environment["VIEW_DISTANCE"] == "12"
     assert server.applied_config_rev is None
+
+
+async def test_world_activated_sin_gamemode_no_inyecta_force_gamemode() -> None:
+    """Sin ``gamemode`` no se fuerza el modo de un mundo existente."""
+    bus = InProcessEventBus()
+    runtime = FakeRuntime()
+    config = FakeConfigurationReader(env={"MOTD": "viejo"})
+    apply_config, deps = make_harness(bus, config, runtime)
+    await seed(deps)
+    bus.subscribe(WORLD_ACTIVATED_TOPIC, WorldActivatedHandler(apply_config))
+
+    await bus.publish(
+        DomainEvent(
+            type="WORLD.ACTIVATED",
+            server_id="srv-1",
+            payload={"name": "Mundo", "level_name": "Mundo", "difficulty": "hard"},
+        )
+    )
+
+    server = await deps.repository.get_required(ServerId("srv-1"))
+    assert server.spec.environment["DIFFICULTY"] == "hard"
+    assert "GAMEMODE" not in server.spec.environment
+    assert "FORCE_GAMEMODE" not in server.spec.environment
 
 
 async def test_world_activated_ajustes_vacios_no_inyectan_env() -> None:

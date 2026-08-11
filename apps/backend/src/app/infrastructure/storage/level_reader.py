@@ -160,6 +160,96 @@ def _decode(reader: _Reader, tag: int) -> Any:
     return None
 
 
+def _skip(reader: _Reader, tag: int) -> None:
+    """Avanza el cursor pasando un valor del tag dado (sin construir estructuras)."""
+    if tag == _TAG_BYTE:
+        reader.pos += 1
+    elif tag == _TAG_SHORT:
+        reader.pos += 2
+    elif tag == _TAG_INT:
+        reader.pos += 4
+    elif tag == _TAG_LONG:
+        reader.pos += 8
+    elif tag == _TAG_FLOAT:
+        reader.pos += 4
+    elif tag == _TAG_DOUBLE:
+        reader.pos += 8
+    elif tag == _TAG_BYTE_ARRAY:
+        reader.pos += 4 + reader.i32()
+    elif tag == _TAG_STRING:
+        reader.utf8()
+    elif tag == _TAG_LIST:
+        element_type = reader.u8()
+        count = reader.i32()
+        for _ in range(count):
+            _skip(reader, element_type)
+    elif tag == _TAG_COMPOUND:
+        while True:
+            element_tag = reader.u8()
+            if element_tag == _TAG_END:
+                return
+            reader.utf8()
+            _skip(reader, element_tag)
+    elif tag == _TAG_INT_ARRAY:
+        reader.pos += 4 + 4 * reader.i32()
+    elif tag == _TAG_LONG_ARRAY:
+        reader.pos += 4 + 8 * reader.i32()
+
+
+def _find_level_name(payload: bytes) -> int | None:
+    """Posición del prefix de longitud del string ``LevelName``, o ``None``.
+
+    NBT es secuencial (todo va prefixado por longitud, sin tablas de offset):
+    localizar el string basta para reescribirlo rehaciendo solo ese tramo.
+    """
+    reader = _Reader(payload)
+    tag = reader.u8()
+    if tag != _TAG_COMPOUND:
+        return None
+    reader.utf8()  # nombre de la raíz
+    while True:
+        element_tag = reader.u8()
+        if element_tag == _TAG_END:
+            return None
+        name = reader.utf8()
+        if name == "LevelName" and element_tag == _TAG_STRING:
+            return reader.pos
+        _skip(reader, element_tag)
+
+
+def patch_level_name(data: bytes, new_name: str) -> bytes | None:
+    """Reemplaza el tag ``LevelName`` de un ``level.dat`` preservando el resto.
+
+    Mantiene el formato de entrada (gzip o crudo y, si venía, la cabecera de
+    8 bytes con la longitud actualizada). Devuelve los bytes reescritos o
+    ``None`` si el nivel no se pudo parsear / no tiene ``LevelName``. Nunca
+    lanza sobre datos inválidos.
+    """
+    try:
+        gzipped = data[:2] == b"\x1f\x8b"
+        raw = gzip.decompress(data) if gzipped else data
+        payload = _strip_level_header(raw)
+        pos = _find_level_name(payload)
+        if pos is None:
+            return None
+        old_len = int.from_bytes(payload[pos : pos + 2], "little")
+        if pos + 2 + old_len > len(payload):
+            return None
+        encoded = new_name.encode("utf-8")
+        patched = (
+            payload[:pos]
+            + len(encoded).to_bytes(2, "little")
+            + encoded
+            + payload[pos + 2 + old_len :]
+        )
+        had_header = len(raw) - len(payload) == 8
+        if had_header:
+            patched = b"\x0a\x00\x00\x00" + len(patched).to_bytes(4, "little") + patched
+        return gzip.compress(patched) if gzipped else patched
+    except (IndexError, OSError, ValueError, gzip.BadGzipFile):
+        return None
+
+
 def read_world_settings(world_dir: Path) -> dict[str, Any]:
     """Ajustes del mundo desde su ``level.dat`` (best effort, dict parcial).
 

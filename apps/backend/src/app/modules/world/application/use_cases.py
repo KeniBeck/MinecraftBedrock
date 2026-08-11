@@ -394,6 +394,9 @@ class UpdateWorldUseCase:
                 )
             storage.move(f"worlds/{world.name}", f"worlds/{target}")
             storage.write(f"worlds/{target}/levelname.txt", target.encode("utf-8"))
+            # El nombre en juego vive en el LevelName del level.dat (BDS
+            # reescribe levelname.txt desde él); se parchea best effort.
+            storage.patch_level_name(target, target)
 
         updated = replace(
             world,

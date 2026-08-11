@@ -18,6 +18,7 @@ from typing import BinaryIO
 import pytest
 
 from app.infrastructure.events.bus import InProcessEventBus
+from app.infrastructure.storage.level_reader import decode_level_dat
 from app.infrastructure.storage.local import LocalServerStorage
 from app.kernel.events.event import DomainEvent
 from app.kernel.ports.runtime import ServerState
@@ -56,7 +57,7 @@ from app.modules.world.domain.events import (
 )
 from app.modules.world.infrastructure.memory import InMemoryWorldRepository
 from tests.conftest import FakeRuntime, FakeServerReader, FakeSettings, SequenceIds
-from tests.test_level_reader import _int, _level_dat, _long, _string
+from tests.test_level_reader import _int, _level_dat, _level_dat_modern, _long, _string
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 SERVER_ID = "srv-1"
@@ -545,6 +546,47 @@ async def test_update_renombra_mueve_directorio_y_reescribe_levelname(
     payload = events[0].payload
     assert payload["renamed"] is True
     assert payload["previous_name"] == "Alpha"
+
+
+async def test_update_renombra_parchea_level_name_del_level_dat(
+    storage_root: Path,
+) -> None:
+    """El rename reescribe el ``LevelName`` del ``level.dat`` (BDS lo usa)."""
+    fx = Fixture(storage_root)
+    fx.seed_world("Alpha")
+    level_dat = _level_dat_modern(
+        [
+            ("LevelName", 8, _string("Alpha")),
+            ("GameType", 3, _int(0)),
+            ("Difficulty", 3, _int(1)),
+        ]
+    )
+    fx.storage.write("worlds/Alpha/level.dat", level_dat)
+    await fx.facade.sync(SERVER_ID)
+
+    await fx.facade.update(
+        UpdateWorldCommand(server_id=SERVER_ID, name="Alpha", new_name="Beta")
+    )
+
+    patched = fx.storage.read("worlds/Beta/level.dat")
+    root = decode_level_dat(patched)
+    assert root is not None
+    assert root["LevelName"] == "Beta"
+    assert root["GameType"] == 0
+    assert root["Difficulty"] == 1
+
+
+async def test_update_renombra_sin_level_dat_no_rompe(storage_root: Path) -> None:
+    """Mundo recién creado (sin level.dat real aún) renombra sin fallar."""
+    fx = Fixture(storage_root)
+    await fx.facade.create(CreateWorldCommand(server_id=SERVER_ID, name="Alpha"))
+
+    view = await fx.facade.update(
+        UpdateWorldCommand(server_id=SERVER_ID, name="Alpha", new_name="Beta")
+    )
+
+    assert view.name == "Beta"
+    assert fx.storage.exists("worlds/Beta")
 
 
 async def test_update_de_mundo_desconocido_fracasa(storage_root: Path) -> None:

@@ -34,6 +34,7 @@ from pathlib import Path, PurePath, PurePosixPath
 from typing import Any, BinaryIO
 
 from app.infrastructure.storage.level_reader import (
+    patch_level_name,
     read_server_properties_view_distance,
     read_world_settings,
 )
@@ -130,6 +131,18 @@ class LocalServerStorage:
             if view_distance is not None:
                 settings["view_distance"] = view_distance
         return settings
+
+    def patch_level_name(self, world_name: str, new_name: str) -> None:
+        """Renombra el tag ``LevelName`` de ``level.dat`` (best effort)."""
+        level_dat = self._resolve(f"{_WORLDS}/{world_name}/level.dat")
+        try:
+            data = level_dat.read_bytes()
+        except OSError:
+            return
+        patched = patch_level_name(data, new_name)
+        if patched is None:
+            return
+        level_dat.write_bytes(patched)
 
     def world_snapshot(self, world_name: str) -> BinaryIO:
         world_dir = self._resolve(f"{_WORLDS}/{world_name}")

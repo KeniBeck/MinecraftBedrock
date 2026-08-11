@@ -51,6 +51,16 @@ class ServerStoragePort(Protocol):
         Usado por ``ScanWorldsUseCase`` para rellenar la metadata al sync.
         """
 
+    def patch_level_name(self, world_name: str, new_name: str) -> None:
+        """Renombra el tag ``LevelName`` de ``level.dat`` del mundo (best effort).
+
+        BDS mantiene el nombre en juego en el ``LevelName`` del nivel (y
+        reescribe ``levelname.txt`` desde él); renombrar solo la carpeta o
+        ``server.properties`` no cambia lo que muestra el juego. Se reescribe
+        el tag preservando el resto del archivo. No lanza: si el nivel no se
+        puede leer o no tiene el tag, no hace nada.
+        """
+
     def world_snapshot(self, world_name: str) -> BinaryIO:
         """Abre un stream de lectura del árbol de un mundo (formato zip)."""
 
