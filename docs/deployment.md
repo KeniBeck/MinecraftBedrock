@@ -172,6 +172,7 @@ Para backup manual del panel: conserva el volumen de Postgres Y el directorio
 |---|---|---|
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `bedrockpanel` / *(requerido)* / `bedrockpanel` | Credenciales de Postgres |
 | `BEDROCK_PANEL_SERVER_PUBLIC_HOST` | `localhost` | IP/LAN/DNS para que conecten los jugadores |
+| `BEDROCK_PANEL_MONITORING_PROBE_HOST` | *(usa public_host)* | Dirección con la que el backend verifica el juego (sondeo RakNet). En Docker: gateway de la red (p. ej. `172.18.0.1`) |
 | `BEDROCK_PANEL_STORAGE_ROOT` | `/var/lib/bedrockpanel/instances` | Ruta host del storage (MUST match inside container) |
 | `BEDROCK_PANEL_IAM_ENCRYPTION_KEY` | *(requerido)* | Clave Fernet de IAM (secrets 2FA/backup codes) |
 | `BEDROCK_PANEL_IAM_JWT_SECRET` | *(fallback dev)* | Clave HMAC de firma de JWT (HS256); recomendable ≥32 bytes |

@@ -108,6 +108,31 @@ async def test_poll_confirma_arranque_cuando_el_juego_responde() -> None:
     assert snapshot.sample.status.value == "online"
 
 
+async def test_poll_usa_host_de_probe_configurado_si_existe() -> None:
+    h = Harness()
+    h.poller = make_poller(
+        h.facade,
+        h.runtime,
+        h.probe,
+        store=h.store,
+        settings_values={"monitoring.probe_host": "172.18.0.1"},
+    )
+    server_id = await h.create_started()
+
+    await h.poller.poll_server(server_id)
+
+    assert h.probe.calls and h.probe.calls[0][0] == "172.18.0.1"
+
+
+async def test_poll_cae_al_host_publico_si_no_hay_probe_host() -> None:
+    h = Harness()
+    server_id = await h.create_started()
+
+    await h.poller.poll_server(server_id)
+
+    assert h.probe.calls and h.probe.calls[0][0] == "localhost"
+
+
 async def test_poll_marca_crashed_cuando_el_juego_no_responde_y_el_runtime_esta_muerto() -> None:
     h = Harness()
     server_id = await h.create_started()

@@ -58,6 +58,12 @@ class Settings(BaseSettings):
     # Monitoring (Fase D paso 9): intervalo del poller y timeout del ping RakNet.
     monitoring_poll_interval_seconds: float = 5.0
     monitoring_probe_timeout: float = 2.0
+    # Host que el probe RakNet usa para verificar el juego, independiente del
+    # host público que ven los clientes (``server.public_host``). Por defecto
+    # cae en ``connection.host``; en despliegues Docker conviene el gateway del
+    # host (p. ej. ``172.18.0.1``), porque la IP LAN puede no ser alcanzable
+    # desde dentro del contenedor del backend.
+    monitoring_probe_host: str | None = None
 
     # Scheduler (Fase G paso 15): intervalo del reloj, ventana para reconciliar
     # fallos de backup y backoff mínimo de la política de reinicio tras crash.

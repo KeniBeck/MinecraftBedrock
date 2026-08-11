@@ -2981,3 +2981,38 @@ datos.
 - `PLAYER.JOINED` de punta a punta con un jugador real sigue pendiente de
   verificación manual en navegador (requiere que un cliente Bedrock se conecte);
   el pipeline (stream attached + detector + regex) ya está confirmado y probado.
+
+---
+
+### Corrección posterior — el probe RakNet usaba `server.public_host`, no una dirección alcanzable
+
+> **Fecha**: 2026-08-10. El fix anterior (punto "Corrección posterior — entorno dev")
+> aconsejaba apuntar `BEDROCK_PANEL_SERVER_PUBLIC_HOST` a una dirección alcanzable desde
+> el backend, lo que **confluyó dos conceptos**: el host público que ven los clientes
+> Bedrock (IP LAN, para que los jugadores se conecten desde fuera) y el destino del ping
+> RakNet del probe, que corre **dentro** del contenedor del backend. Al fijar el env a la
+> IP LAN `10.241.18.26`, el probe pasó a sondear una dirección inalcanzable desde el
+> contenedor (timeout; el gateway Docker `172.18.0.1` sí es alcanzable), por lo que
+> `mark_started` nunca se disparaba: el estado quedaba en `starting` indefinidamente y no
+> se emitían `SERVER.STARTED` ni `PLAYER.JOINED` (diagnóstico vía `noti_event_log`: ningún
+> `SERVER.STARTED` desde las 20:21:47 UTC pese a sesiones reales de juego).
+
+**Causa raíz**: `StatusPoller.poll_server()` sondaba `view.connection.host` (`results.py:36`,
+`connection_from_spec` → `server.public_host`). Un solo host servía a dos usos con
+requisitos de alcance distintos.
+
+**Solución (separación de responsabilidades)**:
+
+- Nuevo setting `BEDROCK_PANEL_MONITORING_PROBE_HOST` (`monitoring.probe_host`,
+  `bootstrap/config.py`), default `None`. `polling.py` resuelve el host del ping:
+  `_probe_host(view)` devuelve `monitoring.probe_host` si está configurado, si no cae en
+  `connection.host` (compatibilidad).
+- `docker-compose.dev.yml` fija `BEDROCK_PANEL_MONITORING_PROBE_HOST=172.18.0.1` (gateway
+  de la red Docker, alcanzable desde el contenedor). `BEDROCK_PANEL_SERVER_PUBLIC_HOST`
+  queda únicamente para lo que los clientes ven (IP LAN p. ej. `10.241.18.26`).
+- Tests: `test_monitoring.py` añade cobertura de `_probe_host` (usa el configurado cuando
+  existe; cae al host público si no). Suite backend: **872 passed**.
+- Verificación real end-to-end: `POST /servers/{id}/start` → estado `running` en ~8 s
+  (antes: `starting` indefinido), evento `SERVER.STARTED` en `noti_event_log` (seq 329),
+  el `ConsoleStreamManager` arranca el stream al recibirlo, y la conexión que ve la UI
+  sigue siendo `10.241.18.26:19132` (host público intacto).

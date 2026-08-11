@@ -28,6 +28,7 @@ services:
       BEDROCK_PANEL_DEBUG: "true"
       BEDROCK_PANEL_LOG_LEVEL: "DEBUG"
       BEDROCK_PANEL_SERVER_PUBLIC_HOST: ${BEDROCK_PANEL_SERVER_PUBLIC_HOST:-localhost}
+      BEDROCK_PANEL_MONITORING_PROBE_HOST: "172.18.0.1"
     depends_on:
       - postgres
 

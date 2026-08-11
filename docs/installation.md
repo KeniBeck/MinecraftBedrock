@@ -100,6 +100,7 @@ Abre `.env.prod` con el Bloc de notas / editor y revisa **al menos estos valores
 | `BEDROCK_PANEL_BOOTSTRAP_ADMIN_USERNAME=` | el usuario administrador (p. ej. `admin`) |
 | `BEDROCK_PANEL_BOOTSTRAP_ADMIN_PASSWORD=` | la contraseña con la que entrarás al panel |
 | `BEDROCK_PANEL_SERVER_PUBLIC_HOST=` | `localhost` si juegas en este mismo PC |
+| `BEDROCK_PANEL_MONITORING_PROBE_HOST=` | (opcional) dirección que usa el backend para verificar el juego; en Docker, el gateway de la red (p. ej. `172.18.0.1`). Si no se define, usa `BEDROCK_PANEL_SERVER_PUBLIC_HOST`. |
 
 > Las otras variables ya traen valores sensatos. No necesitas tocarlas.
 
@@ -214,3 +215,8 @@ Bedrock usa puertos **UDP `19132/19133`** a nivel de red en el contenedor del
 servidor, que el panel gestiona a través del socket de Docker del host.
 Si vas a exponerlo para jugar desde otras máquinas/red, abre también esos puertos
 UDP según tu red y configura `BEDROCK_PANEL_SERVER_PUBLIC_HOST` con tu IP o DNS.
+> El backend corre en su propio contenedor y verifica el juego sondeándolo:
+> ese sondeo no usa `BEDROCK_PANEL_SERVER_PUBLIC_HOST`, sino
+> `BEDROCK_PANEL_MONITORING_PROBE_HOST` (en Docker, el gateway `172.18.0.1`),
+> para que el estado pase a `running` aunque la IP LAN no sea alcanzable desde
+> el contenedor.

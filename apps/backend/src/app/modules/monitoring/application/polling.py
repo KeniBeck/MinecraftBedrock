@@ -83,7 +83,7 @@ class StatusPoller:
             return None
 
         result = self._probe.probe(
-            view.connection.host,
+            self._probe_host(view),
             view.connection.port,
             timeout=self.probe_timeout,
         )
@@ -109,6 +109,12 @@ class StatusPoller:
             if stagger:
                 await asyncio.sleep(stagger)
         return snapshots
+
+    def _probe_host(self, view: ServerView) -> str:
+        """Host para el ping RakNet: ``monitoring.probe_host`` si está
+        configurado, si no el host público de la conexión (``connection.host``)."""
+        configured = self._settings.get("monitoring.probe_host", None)
+        return str(configured) if configured else view.connection.host
 
     def _runtime_snapshot(self, view: ServerView) -> tuple[RuntimeState | None, dict[str, Any]]:
         if view.runtime_id is None:
