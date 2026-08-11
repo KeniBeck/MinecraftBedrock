@@ -81,78 +81,158 @@ export function ConsoleTerminal({ serverId, serverState }: ConsoleTerminalProps)
     }
   }
 
-  return (
-    <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-white/10 bg-black text-green-400">
-      <div className="flex items-center gap-2 border-b border-white/10 px-4 py-2.5">
-        <Terminal className="size-4 text-emerald-300" />
-        <span className="pixel-overline text-slate-300">Consola en vivo</span>
+
+return (
+  <section className="console-terminal flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-white/10 bg-[#080a08] text-green-400 shadow-[0_0_0_1px_rgba(0,0,0,.4),0_12px_40px_rgba(0,0,0,.25)]">
+
+    {/* Header */}
+    <div className="flex shrink-0 items-center justify-between border-b border-white/10 bg-[#0d100d] px-4 py-2.5">
+      <div className="flex items-center gap-2">
+        <Terminal className="size-4 text-emerald-400" />
+
+        <span className="pixel-overline text-slate-300">
+          Consola en vivo
+        </span>
       </div>
 
-      <div
-        ref={scrollRef}
-        onScroll={handleScroll}
-        data-testid="console-scroll"
-        className="flex-1 min-h-0 overflow-y-auto p-4 font-mono text-sm leading-relaxed"
-        style={{ fontFamily: 'monospace' }}
-      >
-        {lines.length === 0 && (
-          <p data-testid="console-empty" className="text-slate-500">
-            Esperando líneas de consola…
-          </p>
-        )}
-        {lines.map((line) => (
-          <div key={line.seq} className="whitespace-pre-wrap break-all">
-            <span className="text-slate-500">{new Date(line.timestamp).toLocaleTimeString()} </span>
-            <span className="text-green-400">{line.line}</span>
-          </div>
-        ))}
-      </div>
+      <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider">
+        <span
+          className={cn(
+            'size-1.5 rounded-full',
+            isRunning
+              ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,.8)]'
+              : 'bg-amber-400',
+          )}
+        />
 
-      {!isRunning && (
+        <span className="text-slate-500">
+          {isRunning ? 'Online' : 'Offline'}
+        </span>
+      </div>
+    </div>
+
+    {/* Terminal */}
+    <div
+      ref={scrollRef}
+      onScroll={handleScroll}
+      data-testid="console-scroll"
+      className={cn(
+        'console-scroll min-h-0 flex-1 overflow-y-auto',
+        'bg-[#050705]',
+        'px-4 py-3',
+        'font-mono text-[13px] leading-6',
+        'selection:bg-emerald-500/20 selection:text-emerald-200',
+      )}
+    >
+      {/* Terminal content */}
+      {lines.length === 0 ? (
         <div
-          data-testid="console-banner"
-          className="border-t border-amber-500/40 bg-amber-500/10 px-4 py-2 text-xs text-amber-300"
+          data-testid="console-empty"
+          className="flex h-full items-center justify-center text-xs text-slate-600"
         >
-          El servidor no está en línea: no se pueden enviar comandos.
+          <span className="animate-pulse">
+            Esperando líneas de consola…
+          </span>
+        </div>
+      ) : (
+        <div className="space-y-0.5">
+          {lines.map((line) => (
+            <div
+              key={line.seq}
+              className="group flex min-w-0 rounded-sm px-1 transition-colors hover:bg-white/[0.025]"
+            >
+              {/* Timestamp */}
+              <span className="mr-3 shrink-0 select-none text-[11px] text-slate-600">
+                {new Date(line.timestamp).toLocaleTimeString()}
+              </span>
+
+              {/* Prompt */}
+              <span className="mr-2 select-none text-emerald-700">
+                ›
+              </span>
+
+              {/* Output */}
+              <span className="min-w-0 whitespace-pre-wrap break-all text-green-400/90">
+                {line.line}
+              </span>
+            </div>
+          ))}
         </div>
       )}
+    </div>
 
-      {canWrite && (
-        <form onSubmit={handleSend} className="border-t border-white/10 p-3">
-          {error && (
-            <div
-              role="alert"
-              className="mb-2 rounded-none border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300"
-            >
-              {error}
-            </div>
-          )}
-          <div className="flex gap-2">
-            <Input
-              ref={inputRef}
-              value={command}
-              onChange={(e) => setCommand(e.target.value)}
-              placeholder={isRunning ? 'Escribe un comando…' : 'Servidor no disponible'}
-              disabled={!isRunning || sendCommand.isPending}
-              data-testid="console-input"
-              className={cn(
-                'flex-1 font-mono border-white/10 bg-black/50 text-green-400 placeholder:text-slate-500',
-              )}
-              maxLength={512}
-            />
-            <Button
-              type="submit"
-              variant="default"
-              pixel
-              disabled={!isRunning || sendCommand.isPending || !command.trim()}
-              data-testid="console-send"
-              className="h-10"
-            >
-              {sendCommand.isPending ? <Loader2 className="animate-spin" /> : 'Enviar'}
-            </Button>
+    {/* Offline banner */}
+    {!isRunning && (
+      <div
+        data-testid="console-banner"
+        className="shrink-0 border-t border-amber-500/20 bg-amber-500/[0.06] px-4 py-2 text-xs text-amber-300"
+      >
+        <span className="mr-2">⚠</span>
+        El servidor no está en línea: no se pueden enviar comandos.
+      </div>
+    )}
+
+    {/* Command input */}
+    {canWrite && (
+      <form
+        onSubmit={handleSend}
+        className="shrink-0 border-t border-white/10 bg-[#0a0d0a] p-3"
+      >
+        {error && (
+          <div
+            role="alert"
+            className="mb-2 border border-red-500/30 bg-red-500/[0.06] px-3 py-2 font-mono text-xs text-red-300"
+          >
+            <span className="mr-2 text-red-400">✕</span>
+            {error}
           </div>
-        </form>
-      )}
-    </section>
-  )
+        )}
+
+        <div className="flex items-center gap-2">
+          {/* Prompt */}
+          <span className="select-none font-mono text-sm font-bold text-emerald-500">
+            &gt;
+          </span>
+
+          <Input
+            ref={inputRef}
+            value={command}
+            onChange={(e) => setCommand(e.target.value)}
+            placeholder={
+              isRunning
+                ? 'Escribe un comando…'
+                : 'Servidor no disponible'
+            }
+            disabled={!isRunning || sendCommand.isPending}
+            data-testid="console-input"
+            className={cn(
+              'h-10 flex-1 rounded-md border-white/10',
+              'bg-[#050705]',
+              'font-mono text-sm text-green-400',
+              'placeholder:text-slate-600',
+              'focus-visible:border-emerald-500/40',
+              'focus-visible:ring-1 focus-visible:ring-emerald-500/20',
+            )}
+            maxLength={512}
+          />
+
+          <Button
+            type="submit"
+            variant="default"
+            pixel
+            disabled={!isRunning || sendCommand.isPending || !command.trim()}
+            data-testid="console-send"
+            className="h-10 min-w-20"
+          >
+            {sendCommand.isPending ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              'Enviar'
+            )}
+          </Button>
+        </div>
+      </form>
+    )}
+  </section>
+)
 }

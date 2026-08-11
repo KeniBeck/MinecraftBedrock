@@ -12,6 +12,11 @@ from __future__ import annotations
 import logging
 import sys
 
+# Loggers de terceros que con DEBUG raíz inundarían el output (p. ej. el SDK de
+# Docker sondeando `/containers/*/stats` cada pocos segundos vía urllib3). Se
+# fijan a WARNING para que el DEBUG quede solo para los logs de la app (`app.*`).
+_QUIET_LOGGERS = ("urllib3", "docker", "watchfiles", "httpcore", "httpx")
+
 
 def configure_logging(*, level: str = "INFO", debug: bool = False) -> None:
     """Configura el logging de raíz del panel.
@@ -27,6 +32,8 @@ def configure_logging(*, level: str = "INFO", debug: bool = False) -> None:
         stream=sys.stdout,
         force=True,
     )
+    for name in _QUIET_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def get_logger(name: str) -> logging.Logger:

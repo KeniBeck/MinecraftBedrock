@@ -73,10 +73,22 @@ function scheduleReconnect(serverId: string, token: string, entry: SharedEntry):
 
 function closeSocket(entry: SharedEntry): void {
   entry.closed = true
-  if (entry.retryRef) clearTimeout(entry.retryRef)
-  entry.retryRef = null
-  entry.socket?.close(1000, 'unmount')
+  if (entry.retryRef) {
+    clearTimeout(entry.retryRef)
+    entry.retryRef = null
+  }
+  const socket = entry.socket
   entry.socket = null
+  if (socket && socket.readyState !== WebSocket.CLOSED) {
+    socket.onclose = null
+    if (socket.readyState === WebSocket.CONNECTING) {
+      // Cerrar en CONNECTING loguea "WebSocket is closed before the connection
+      // is established" (ruido de dev con StrictMode); se difiere al open.
+      socket.onopen = () => socket.close(1000, 'unmount')
+    } else {
+      socket.close(1000, 'unmount')
+    }
+  }
   // No se limpia el buffer: el scrollback persiste en la sesión y el resume por
   // `lastSeq` evita duplicar al volver a conectar.
 }

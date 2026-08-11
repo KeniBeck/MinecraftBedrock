@@ -159,4 +159,19 @@ describe('WebSocketClient', () => {
       JSON.stringify({ action: 'subscribe', channels: ['global'] }),
     )
   })
+
+  it('al cerrar un socket en CONNECTING difiere el cierre hasta que abra', () => {
+    const client = new WebSocketClient()
+    client.connect('token')
+    const socket = socketAt(0)
+    expect(socket.readyState).toBe(FakeWebSocket.CONNECTING)
+
+    client.close(1000, 'unmount')
+
+    // No cierra en CONNECTING (evita "WebSocket is closed before the
+    // connection is established"); el cierre se difiere al onopen.
+    expect(socket.readyState).toBe(FakeWebSocket.CONNECTING)
+    socket.emitOpen()
+    expect(socket.readyState).toBe(FakeWebSocket.CLOSED)
+  })
 })

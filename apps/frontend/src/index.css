@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "./styles/pixel-theme.css" layer(components);
+@import "./styles/console.css" layer(components);
 
 @custom-variant dark (&:is(.dark *));
 

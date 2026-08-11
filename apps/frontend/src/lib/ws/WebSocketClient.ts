@@ -76,8 +76,18 @@ export class WebSocketClient {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
     }
-    this.socket?.close(code, reason)
+    const socket = this.socket
     this.socket = null
+    if (socket && socket.readyState !== WebSocket.CLOSED) {
+      // Cerrar un socket en CONNECTING hace que el navegador loguee
+      // "WebSocket is closed before the connection is established" (ruido en
+      // dev por el doble montaje de StrictMode). Se difiere a que abra.
+      if (socket.readyState === WebSocket.CONNECTING) {
+        socket.onopen = () => socket.close(code, reason)
+      } else {
+        socket.close(code, reason)
+      }
+    }
     this.setStatus('closed')
   }
 

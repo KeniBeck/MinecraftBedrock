@@ -3016,3 +3016,20 @@ requisitos de alcance distintos.
   (antes: `starting` indefinido), evento `SERVER.STARTED` en `noti_event_log` (seq 329),
   el `ConsoleStreamManager` arranca el stream al recibirlo, y la conexión que ve la UI
   sigue siendo `10.241.18.26:19132` (host público intacto).
+
+### Corrección posterior — spam DEBUG de urllib3/SDK Docker en logs del backend
+
+> **Fecha**: 2026-08-11. Con `BEDROCK_PANEL_LOG_LEVEL=DEBUG` (dev), el SDK de
+> Docker logueaba a DEBUG cada sondeo del poller (`GET /v1.55/containers/*/stats`
+> y `/json` cada ~5 s por servidor vía `urllib3.connectionpool`, además de
+> `docker.utils.config`), inundando el output sin aportar nada.
+
+**Cambio**: `configure_logging()` (`app/kernel/logging.py`) fija a **WARNING** los
+loggers de terceros `urllib3`, `docker`, `watchfiles`, `httpcore` y `httpx`,
+dejando el DEBUG raíz solo para la app (`app.*`). Con `INFO`/`WARNING` (prod) el
+comportamiento no cambia (ya estaban por debajo).
+
+- Verificado en contenedor: tras el reload automático (`uvicorn --reload`) el
+  patrón `DEBUG urllib3|docker` desapareció (0 líneas) mientras los logs INFO de
+  la app (WS `[accepted]`, `stream_manager`) siguen saliendo.
+- Suite backend: **872 passed**; `ruff` ✅.

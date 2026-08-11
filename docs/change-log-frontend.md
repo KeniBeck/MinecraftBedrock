@@ -830,3 +830,48 @@ por valor visual: si en la revisión visual sobra, se puede quitar o reemplazar
   (o fijarla en `.env`). El contenedor se recrea al cambiar la env. No se
   implementó ningún parche en el frontend: no resolvería el acceso desde otros
   dispositivos.
+
+---
+
+## Fase 4 — Limpieza de ruido en dev (WS y Button)
+
+> **Fecha**: 2026-08-10/11. Tres problemas de ruido de desarrollo detectados al
+> verificar la consola y las notificaciones tras jugar: warnings de React por el
+> atributo `pixel`, errores "WebSocket is closed before the connection is
+> established" al cerrar sockets aún en `CONNECTING`, y (en el backend) spam
+> DEBUG del SDK de Docker. Este cambio cubre la parte de frontend; el log del
+> backend se trata en `docs/change-log.md`.
+
+### Alcance
+
+- **Button (`components/ui/button.tsx`)**: el componente no desestructuraba las
+  props de variante `pixel` / `pixelTexture` y las reenviaba al DOM como
+  atributos booleanos → warning de React "Received `true` for a non-boolean
+  attribute `pixel`". Ahora se desestructuran y se pasan a `buttonVariants()`
+  (se dejaron de emitir al `<button>`).
+- **Cierre de WebSockets en `CONNECTING`** (ruido de dev por el doble montaje de
+  React StrictMode): `WebSocketClient.close()`, `useServerMonitoring.closeSocket`
+  y `useConsole.closeSocket` ya no llaman `socket.close()` mientras el socket está
+  en `CONNECTING` (el navegador loguea "WebSocket is closed before the
+  connection is established"); el cierre se difiere al `onopen`. En sockets
+  `OPEN` el comportamiento es idéntico al anterior.
+- Los errores `ECONNRESET` del proxy WS de Vite no son un bug: aparecen cuando el
+  backend se reinicia (`uvicorn --reload` al editar archivos o al recrear el
+  contenedor) y las conexiones en vuelo se caen. Los tres clientes WS reconectan
+  con backoff automáticamente (verificado: el backend vuelve a emitir `[accepted]`
+  para el gateway, monitoring y console tras cada reinicio).
+
+### Archivos
+
+| Archivo | Cambio |
+|---|---|
+| `src/components/ui/button.tsx` | Desestructura `pixel`/`pixelTexture` y las pasa a `buttonVariants` |
+| `src/lib/ws/WebSocketClient.ts` | `close()` difiere el cierre en `CONNECTING` |
+| `src/hooks/useServerMonitoring.ts` | `closeSocket` difiere el cierre en `CONNECTING` |
+| `src/features/console/hooks.ts` | `closeSocket` difiere el cierre en `CONNECTING` |
+| `src/lib/ws/WebSocketClient.test.ts` | Test del cierre diferido en `CONNECTING` |
+
+### Verificación
+
+- Tests vitest: **68 passed (14 files)** · `pnpm typecheck` ✅ · `pnpm lint` ✅ ·
+  `pnpm build` ✅.
