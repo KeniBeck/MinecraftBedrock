@@ -38,7 +38,7 @@ const SIDEBAR_ITEMS: SidebarItem[] = [
   { label: 'Servidor', icon: Gamepad2, href: '/servers', disabled: false },
   { label: 'Consola', icon: Keyboard, href: '/servers', sub: 'console', disabled: false },
   { label: 'Jugadores', icon: Users, disabled: true },
-  { label: 'Mundos', icon: Globe, disabled: true },
+  { label: 'Mundos', icon: Globe, href: '/servers', sub: 'worlds', disabled: false },
   { label: 'Backups', icon: Archive, disabled: true },
   { label: 'Programador', icon: CircleGauge, disabled: true },
   { label: 'Monitoreo', icon: Bell, disabled: true },

@@ -875,3 +875,115 @@ por valor visual: si en la revisión visual sobra, se puede quitar o reemplazar
 
 - Tests vitest: **68 passed (14 files)** · `pnpm typecheck` ✅ · `pnpm lint` ✅ ·
   `pnpm build` ✅.
+
+---
+
+## Fase 4 — Parte 1: Módulo World (Mundos)
+
+> **Fecha**: 2026-08-10/11. Implementación del módulo World en el frontend:
+> listar, crear, importar (multipart), sincronizar, exportar, duplicar, activar y
+> eliminar mundos. Contrato verificado contra
+> `apps/backend/src/app/modules/world/api/router.py` y `schemas.py` (no asumido).
+
+### Alcance
+
+- **`lib/api/worlds.ts`**: tipos (`World`, `CreateWorldRequest`,
+  `DuplicateWorldRequest`) y clientes de API. Correcciones sobre el borrador:
+  - `GET/POST /worlds/sync` devuelven **array** (`list[WorldResponse]`), no
+    `{worlds: []}` → `listWorlds`/`syncWorlds` devuelven `World[]`.
+  - `DuplicateWorldRequest` usa el campo **`target`** (schemas.py), no `name`.
+  - El import NO fija `Content-Type` a mano: `apiClient` trae
+    `application/json` por defecto y el navegador debe generar el
+    `multipart/form-data; boundary=…` para que FastAPI parseee el body.
+  - `worldKeys` viven en el módulo de API (evita import circular, patrón de
+    `servers.ts`).
+- **`features/worlds/hooks.ts`**: `useWorlds` (el `queryFn` hace sync primero —
+  `POST /worlds/sync` devuelve la lista reconciliada — con fallback a
+  `GET /worlds`; `refetchOnWindowFocus: false`), `useCreateWorld`,
+  `useImportWorld`, `useExportWorld`, `useDuplicateWorld`, `useActivateWorld`,
+  `useDeleteWorld`. Todas invalidan `worldKeys.all(serverId)` al escribir.
+- **Componentes**: `WorldList` (lista + badge Activo + menú exportar/duplicar/
+  eliminar), `CreateWorldDialog` e `ImportWorldDialog` (errores inline con
+  `getApiMessage`, sin toasts — sonner no está instalado).
+- **`WorldsPage`**: usa `useParams<{ serverId }>` (la ruta real usa `:serverId`,
+  no `:id`); estados de carga/error inline; export dispara la descarga del blob
+  como `.mcworld`.
+- **`lib/utils.ts`**: nuevo helper `formatBytes`.
+- **Ruta y navegación**: `{ path: '/servers/:serverId/worlds', element:
+  <WorldsPage /> }` en `router.tsx`; ítem "Mundos" del Sidebar habilitado con
+  `sub: 'worlds'`.
+
+### Archivos
+
+| Archivo | Cambio |
+|---|---|
+| `src/lib/api/worlds.ts` | Nuevo — tipos y clientes de API World |
+| `src/features/worlds/hooks.ts` | Nuevo — hooks de TanStack Query |
+| `src/features/worlds/WorldsPage.tsx` | Nuevo — página de mundos |
+| `src/features/worlds/components/WorldList.tsx` | Nuevo — lista de mundos |
+| `src/features/worlds/components/CreateWorldDialog.tsx` | Nuevo — crear mundo |
+| `src/features/worlds/components/ImportWorldDialog.tsx` | Nuevo — importar `.mcworld` |
+| `src/lib/utils.ts` | `formatBytes` añadido |
+| `src/app/router.tsx` | Ruta `/servers/:serverId/worlds` |
+| `src/components/layout/Sidebar.tsx` | ítem Mundos habilitado |
+
+### Verificación
+
+- `pnpm typecheck` ✅ · `pnpm lint` ✅ · `pnpm test` (71 passed) ✅ ·
+  `pnpm build` ✅.
+- Smoke test contra el backend real: `GET/POST /worlds`, `POST /worlds/sync`
+  devuelven exactamente los shapes del contrato; `DELETE` responde 204.
+- Tests de componente: `WorldsPage.test.tsx` con `StrictMode` (sync una sola
+  vez, fallback a metadata si el sync falla, re-sync con el botón).
+
+---
+
+## Fix — El mundo por defecto no aparecía en la lista de Mundos (2026-08-11)
+
+> **Origen**: tras la Parte 1, el mundo por defecto que el servidor Bedrock
+> auto-crea en su primer arranque ("Bedrock level") no aparecía en la lista,
+> ni siquiera pulsando "Sincronizar". Diagnóstico en dos capas (backend y
+> storage dev); el arreglo del frontend es el auto-sync al cargar la página.
+
+### Causa raíz (backend/storage, tratada en `docs/change-log.md`)
+
+1. **La lista es metadata de BD, no disco**: `GET /worlds` lee la tabla de
+   mundos de Postgres; el mundo por defecto vive en disco (`/data/worlds/`) y
+   solo se registra en la BD al llamar `POST /worlds/sync`. El create de
+   servidor NO lo siembra.
+2. **Desajuste de storage en dev**: el backend resolvía su raíz desde la fila
+   `storage.base_path` de la BD (`/var/lib/bedrockpanel/data`), mientras los
+   contenedores de juego montan `/var/lib/bedrockpanel/{id}` (sin `data/`) →
+   `sync` escaneaba un directorio vacío y devolvía `[]`. Se alineó la fila a
+   `/var/lib/bedrockpanel` y `docker-compose.dev.yml` ahora monta el storage
+   del host en el contenedor del backend.
+
+### Decisión (frontend)
+
+- **Auto-sync al cargar la página de Mundos**: el sync vive **dentro del
+  `queryFn` de `useWorlds`** (primero `POST /worlds/sync`, que ya devuelve la
+  lista reconciliada, y si falla fallback a `GET /worlds`). Al ser parte de la
+  query, React Query lo deduplica por `queryKey` y no hay que gatear el
+  render: mientras la primera carga está en curso se muestra
+  "Sincronizando mundos…". El botón "Sincronizar" hace
+  `invalidateQueries(worldKeys.all(serverId))` → re-sync → refresco, y queda
+  siempre activo con el spinner atado a `isFetching`. El diseño inicial usó
+  un `useEffect` + `useRef` guard, pero quedaba atascado en dev porque
+  StrictMode remonta el componente y la mutación del primer montaje queda
+  huérfana (su `onSettled` no corre); ver corrección en `docs/change-log.md`.
+
+### Archivos
+
+| Archivo | Cambio |
+|---|---|
+| `src/features/worlds/hooks.ts` | `useWorlds` con sync dentro del `queryFn` (dedup + fallback) |
+| `src/features/worlds/WorldsPage.tsx` | Sin `useEffect`; botón Sincronizar con `invalidateQueries` |
+| `src/features/worlds/WorldsPage.test.tsx` | Tests con `StrictMode`: sync una sola vez, fallback, re-sync |
+
+### Verificación
+
+- `pnpm typecheck` ✅ · `pnpm lint` ✅ · `pnpm test` (68 passed) ✅ ·
+  `pnpm build` ✅.
+- Backend verificado en vivo: `POST /worlds/sync` devuelve
+  `{"name":"Bedrock level", ...}` y `GET /worlds` lo lista (antes devolvían
+  `[]`).
