@@ -58,6 +58,13 @@ class Settings(BaseSettings):
     # Monitoring (Fase D paso 9): intervalo del poller y timeout del ping RakNet.
     monitoring_poll_interval_seconds: float = 5.0
     monitoring_probe_timeout: float = 2.0
+    # Timeout de las llamadas SÍNCRONAS al runtime (get_state/get_resources) y al
+    # probe dentro del poller. Se ejecutan en un hilo (asyncio.to_thread) y se
+    # cortan a este límite: si el daemon Docker tarda (el cliente puede esperar
+    # hasta `docker_timeout` = 300 s), el poller no bloquea el event loop y la
+    # muestra se descarta a los `monitoring_runtime_timeout` segundos. Las
+    # operaciones largas (materialize, pull) siguen usando el timeout global.
+    monitoring_runtime_timeout: float = 5.0
     # Host que el probe RakNet usa para verificar el juego, independiente del
     # host público que ven los clientes (``server.public_host``). Por defecto
     # cae en ``connection.host``; en despliegues Docker conviene el gateway del

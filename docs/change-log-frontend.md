@@ -1603,3 +1603,16 @@ real baja (ej. 2%) la barra se llenaba casi entera. Corregido: ahora se pasa
 ### Verificación
 
 - `tsc` ✅ · `eslint` ✅ · `vitest` (**125 passed**) ✅ · `build` ✅.
+
+## Fase 6 — Monitoring: fix de intervalo del WS (2 min → ~5 s)
+
+> **Fecha**: 2026-08-12. **Backend, sin cambios de frontend.** La página de
+> Monitoring recibía muestras cada ~2 minutos: `get_state()`/`get_resources()`
+> del adaptador Docker (síncronos) bloqueaban el event loop hasta `docker_timeout`
+> (300 s). Se ejecutan ahora en un hilo (`asyncio.to_thread`) con timeout de 5 s
+> (`monitoring.runtime_timeout`). Detalle en `docs/change-log.md`
+> (Fix — Timeout de llamadas al runtime en el poller de Monitoring).
+>
+> Impacto en la UI: las muestras llegan cada ~5 s (servidor activo) o ~7 s
+> (parado, por el timeout del ping RakNet) en lugar de ~2 min. Verificado por
+> E2E contra el WS real.

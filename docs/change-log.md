@@ -3275,6 +3275,60 @@ lista reconciliada, 201) y si falla, fallback a `GET /worlds` (metadata). Así:
 
 - Frontend: `tsc` ✅ · `eslint` ✅ · `vitest` **125 passed** ✅ · `build` ✅.
 
+## Fix — Timeout de llamadas al runtime en el poller de Monitoring
+
+> **Fecha**: 2026-08-12
+> **Origen**: el WS de monitoring enviaba muestras cada ~2 minutos en lugar de
+> cada 5 s. La causa: `get_state()` y `get_resources()` del adaptador Docker
+> son **síncronos** (docker-py) y pueden bloquear hasta `docker_timeout = 300`
+> s si el daemon o el contenedor no responden. Como `poll_server` las llamaba
+> desde corrutinas `async`, **bloqueaban el event loop completo** (WS + poller
+> de fondo + todo el servidor) durante ese tiempo.
+
+### Diagnóstico (verificado)
+
+- `config.py`: `monitoring_poll_interval_seconds = 5.0` — sin sobrescritura por
+  entorno.
+- `infrastructure/runtime/settings.py`: `docker_timeout = 300`.
+- `kernel/ports/runtime.py`: `get_state`/`get_resources` son **síncronos**
+  (`def`, no `async def`); `StatusProbePort.probe` también.
+- Conclusión clave: un `asyncio.wait_for(await sync_call())` NO interrumpe una
+  llamada síncrona (no cede el control al event loop). La solución correcta es
+  ejecutarla en un **hilo** (`asyncio.to_thread`) y envolver con
+  `asyncio.wait_for`.
+
+### Cambio
+
+- `modules/monitoring/application/polling.py`:
+  - `probe`, `get_state` y `get_resources` se ejecutan con
+    `asyncio.to_thread(...)` (no congelan el event loop) y se cortan con
+    `asyncio.wait_for(timeout=runtime_timeout)`.
+  - Si una llamada excede el límite, se loguea un `warning` (con `get_logger`)
+    y se continúa: probe → `ProbeResult(online=False)`, `get_state` →
+    `(None, {})`, `get_resources` → `(state, {})`.
+  - El timeout es configurable vía `monitoring.runtime_timeout` (default 5 s,
+    nuevo campo en `config.py`).
+- NO se tocó el timeout global del cliente Docker (300 s): las operaciones
+  largas (materialize, pull, stop) siguen con su margen.
+
+### Impacto
+
+- El WS de monitoring envía muestras cada `poll_interval` (~5 s con servidor
+  activo; ~7 s con servidor parado porque el probe RakNet tarda su propio
+  timeout de 2 s) aunque el daemon Docker esté lento.
+- Si hay timeout del runtime, las métricas salen `null` esa pasada pero el
+  poller no se congela.
+
+### Verificación
+
+- Backend: **912 passed** (3 nuevos) · `ruff` ✅ · `mypy` ✅.
+- Tests nuevos en `tests/test_monitoring.py` (`SlowRuntime` + timeout de 0.05 s):
+  corta `get_state`, descarta recursos tras timeout, y la pasada total no
+  supera el timeout acumulado (no se congela en los 0.3 s del sleep simulado).
+- E2E contra el backend real (WS `/servers/{id}/monitoring/ws`): intervalos
+  ~5-7 s (antes ~2 min). Con servidor parado el 7 s es `probe_timeout` (2 s) +
+  `poll_interval` (5 s), esperado.
+
 ## 33. UI de Backups (cierre de la Fase 4)
 
 > **Fecha**: 2026-08-12. Sin cambios de backend: el módulo Backup (paso 13)

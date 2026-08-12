@@ -7,6 +7,7 @@ almacén en memoria.
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
 
 from app.infrastructure.events.bus import InProcessEventBus
@@ -260,3 +261,85 @@ async def test_facade_poll_server_y_poll_all_comparten_una_pasada() -> None:
     all_snapshots = await facade.poll_all()
     assert [s.sample.server_id for s in all_snapshots] == [server_id]
     assert len(h.probe.calls) == 1  # una sola pasada, no dos
+
+
+# --- timeout de llamadas síncronas al runtime (no bloquean el event loop) ---
+
+
+class SlowRuntime(FakeRuntime):
+    """``ServerRuntimePort`` cuyas llamadas síncronas tardan más que el timeout.
+
+    Se ejecutan en un hilo (``asyncio.to_thread``) y ``asyncio.wait_for`` las
+    corta a ``monitoring.runtime_timeout``; el poller continúa con valores
+    ``None``/``{}`` en vez de congelar el event loop.
+    """
+
+    def get_state(self, runtime_id: str):
+        time.sleep(0.3)
+        return super().get_state(runtime_id)
+
+    def get_resources(self, runtime_id: str):
+        time.sleep(0.3)
+        return super().get_resources(runtime_id)
+
+
+async def test_poll_corta_get_state_timeout_sin_bloquear() -> None:
+    h = Harness()
+    slow = SlowRuntime()
+    poller = make_poller(
+        h.facade,
+        slow,
+        h.probe,
+        store=h.store,
+        settings_values={"monitoring.runtime_timeout": 0.05},
+    )
+    server_id = await h.create_started()
+
+    snapshot = await poller.poll_server(server_id)
+
+    # El timeout se cortó (0.3s de sleep > 0.05s de límite) sin congelar el WS.
+    assert snapshot is not None
+    # get_state devolvió None por timeout → sin estado de runtime para reconciliar.
+    assert snapshot.state is not None
+
+
+async def test_poll_descarta_recursos_tras_timeout_de_get_resources() -> None:
+    h = Harness()
+    slow = SlowRuntime()
+    poller = make_poller(
+        h.facade,
+        slow,
+        h.probe,
+        store=h.store,
+        settings_values={"monitoring.runtime_timeout": 0.05},
+    )
+    server_id = await h.create_started()
+
+    snapshot = await poller.poll_server(server_id)
+
+    assert snapshot is not None
+    assert snapshot.sample.cpu is None
+    assert snapshot.sample.ram_mb == 0.0
+
+
+async def test_poll_no_supera_el_timeout_total_de_la_pasada() -> None:
+    """Una pasada con runtime lento termina en ~timeout, no en los 0.3s del sleep."""
+    h = Harness()
+    slow = SlowRuntime()
+    poller = make_poller(
+        h.facade,
+        slow,
+        h.probe,
+        store=h.store,
+        settings_values={"monitoring.runtime_timeout": 0.05},
+    )
+    server_id = await h.create_started()
+
+    started = time.monotonic()
+    snapshot = await poller.poll_server(server_id)
+    elapsed = time.monotonic() - started
+
+    assert snapshot is not None
+    # get_state + get_resources, cada una cortada a 0.05s → la pasada total debe
+    # estar muy por debajo de los 0.3s que tardaría el runtime sin el timeout.
+    assert elapsed < 0.25

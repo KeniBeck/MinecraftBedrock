@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from app.kernel.errors import AppError
+from app.kernel.logging import get_logger
 from app.kernel.ports.runtime import (
     RuntimeState,
     ServerRuntimePort,
@@ -32,6 +33,8 @@ from app.modules.server.domain.errors import ServerStateError
 # Estados del runtime que indican proceso muerto sin parada controlada: si
 # además el juego no responde al ping, Monitoring lo reporta como caído.
 _DEAD_RUNTIME_STATES = frozenset({RuntimeState.STOPPED, RuntimeState.DYING, RuntimeState.ABSENT})
+
+logger = get_logger(__name__)
 
 
 def _bytes_to_mb(value: object) -> float:
@@ -77,17 +80,18 @@ class StatusPoller:
     def probe_timeout(self) -> float:
         return float(cast(float, self._settings.get("monitoring.probe_timeout", 2.0)))
 
+    @property
+    def runtime_timeout(self) -> float:
+        """Timeout de las llamadas síncronas al runtime/probe dentro del poller."""
+        return float(cast(float, self._settings.get("monitoring.runtime_timeout", 5.0)))
+
     async def poll_server(self, server_id: str) -> StatusSnapshot | None:
         view = await self._server.get_server(server_id)
         if view is None:
             return None
 
-        result = self._probe.probe(
-            self._probe_host(view),
-            view.connection.port,
-            timeout=self.probe_timeout,
-        )
-        runtime_state, resources = self._runtime_snapshot(view)
+        result = await self._probe_with_timeout(view)
+        runtime_state, resources = await self._runtime_snapshot(view)
         await self._reconcile(view, result, runtime_state)
 
         refreshed = await self._server.get_server(server_id)
@@ -116,14 +120,76 @@ class StatusPoller:
         configured = self._settings.get("monitoring.probe_host", None)
         return str(configured) if configured else view.connection.host
 
-    def _runtime_snapshot(self, view: ServerView) -> tuple[RuntimeState | None, dict[str, Any]]:
+    async def _probe_with_timeout(self, view: ServerView) -> ProbeResult:
+        """Ping RakNet (síncrono) en un hilo, cortado a ``runtime_timeout``.
+
+        El probe es síncrono (sockets de bloqueo); se ejecuta en
+        ``asyncio.to_thread`` para no bloquear el event loop y se corta con
+        ``asyncio.wait_for``. Si excede el límite, la muestra se reporta como
+        offline (timeout del probe ≠ juego caído, pero el WS no se congela).
+        """
+        host = self._probe_host(view)
+        port = view.connection.port
+        timeout = self.probe_timeout
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._probe.probe, host, port, timeout),
+                timeout=self.runtime_timeout,
+            )
+        except TimeoutError:
+            logger.warning(
+                "monitoring: probe timeout para %s (%s:%s) tras %.1fs",
+                view.id,
+                host,
+                port,
+                self.runtime_timeout,
+            )
+            return ProbeResult(online=False)
+
+    async def _runtime_snapshot(
+        self, view: ServerView
+    ) -> tuple[RuntimeState | None, dict[str, Any]]:
+        """Estado y recursos del runtime, cada uno en un hilo con timeout.
+
+        ``get_state``/``get_resources`` son síncronos (docker-py) y pueden
+        bloquear hasta ``docker_timeout`` (300 s). Se ejecutan en
+        ``asyncio.to_thread`` (no congelan el event loop) y se cortan a
+        ``runtime_timeout`` (5 s): si el daemon no responde, se descarta la
+        muestra de esa pasada (estado ``None``/recursos ``{}``) y el poller
+        sigue.
+        """
         if view.runtime_id is None:
             return None, {}
         try:
-            state = self._runtime.get_state(view.runtime_id)
-            resources = self._runtime.get_resources(view.runtime_id)
+            state = await asyncio.wait_for(
+                asyncio.to_thread(self._runtime.get_state, view.runtime_id),
+                timeout=self.runtime_timeout,
+            )
+        except TimeoutError:
+            logger.warning(
+                "monitoring: get_state timeout para server %s tras %.1fs",
+                view.id,
+                self.runtime_timeout,
+            )
+            return None, {}
         except AppError:
             return None, {}
+
+        try:
+            resources = await asyncio.wait_for(
+                asyncio.to_thread(self._runtime.get_resources, view.runtime_id),
+                timeout=self.runtime_timeout,
+            )
+        except TimeoutError:
+            logger.warning(
+                "monitoring: get_resources timeout para server %s tras %.1fs",
+                view.id,
+                self.runtime_timeout,
+            )
+            return state, {}
+        except AppError:
+            return state, {}
+
         return state, resources
 
     async def _reconcile(
