@@ -1024,3 +1024,64 @@ backend no podía parsear el formulario.
 ### Verificación
 
 - `tsc` ✅ · `eslint` ✅ · `vitest` (**74 passed**, 3 nuevos) ✅.
+
+## Fase 4 — Parte 2: Plantillas (Templates)
+
+> **Fecha**: 2026-08-12
+> **Origen**: Parte 2 de la Fase 4 (después de Mundos). Página de plantillas:
+> capturar el estado de un servidor (mundo + config) como `.mctemplate`,
+> listarlas, aplicarlas a un servidor (reproduce el mundo y la config) y
+> eliminarlas.
+
+### Alcance
+
+- `lib/api/templates.ts`: tipos y llamadas de la API de plantillas.
+- `features/templates/`: `hooks.ts`, `TemplatesPage.tsx`, `TemplateList.tsx`,
+  `CaptureTemplateDialog.tsx` y tests.
+- Ruta `/servers/:serverId/templates` + ítem de sidebar "Plantillas"
+  habilitado.
+
+### Discrepancias con el plan detectadas contra el backend real
+
+> Regla transversal §123-127: el plan proponía una API que **no** coincide con
+> `apps/backend/src/app/modules/template/api/`; se implementó lo que el backend
+> expone realmente:
+
+| Aspecto | Propuesto | Backend real (implementado) |
+|---|---|---|
+| Rutas | Globales `/templates`, `/templates/{id}` | Scoped: `/servers/{id}/templates...` |
+| `Template` | `description`, `kind`, `artifact_ref`, `tags` | `id, name, version, size_bytes, origin_server_id, origin_world, created_at, updated_at` |
+| Listado | `{templates: []}` | array directo `list[TemplateResponse]` |
+| Capture | `name` + `description`/`kind`/`include_world`/`tags` | solo `name` |
+| Apply | devuelve `void`, `world_name` requerido | devuelve `TemplateResponse`, `world_name` opcional (vacío = el capturado) |
+| UI | `Switch` y `sonner` | no instalados → switch eliminado, errores con el patrón de alerta del resto del frontend |
+
+### Decisiones
+
+- Los errores se muestran con el mismo patrón que `WorldsPage`
+  (alerta roja con `getApiMessage`), no con toasts.
+- Aplicar una plantilla invalida también `worldKeys` para que el mundo
+  reproducido aparezca en Mundos sin pedir sync manual.
+- El diálogo de captura solo pide el nombre (el backend no acepta más
+  campos). Aplicar pregunta por el nombre del mundo destino con `prompt`
+  (opcional: vacío = el capturado en la plantilla).
+
+### Archivos
+
+| Archivo | Cambio |
+|---|---|
+| `src/lib/api/templates.ts` | API de plantillas (keys + tipos + llamadas) |
+| `src/features/templates/hooks.ts` | `useTemplates`, `useCaptureTemplate`, `useApplyTemplate`, `useDeleteTemplate` |
+| `src/features/templates/TemplatesPage.tsx` | Página: listar, capturar, aplicar, eliminar |
+| `src/features/templates/components/TemplateList.tsx` | Lista con aplicar y menú eliminar |
+| `src/features/templates/components/CaptureTemplateDialog.tsx` | Diálogo de captura (nombre) |
+| `src/features/templates/TemplatesPage.test.tsx` | Tests: listado, vacío, capturar, aplicar, eliminar |
+| `src/app/router.tsx` | Ruta `/servers/:serverId/templates` |
+| `src/components/layout/Sidebar.tsx` | Ítem "Plantillas" habilitado → `/servers/:id/templates` |
+
+### Verificación
+
+- `tsc` ✅ · `eslint` ✅ · `vitest` (**79 passed**, 5 nuevos) ✅ · `build` ✅.
+- E2E contra el backend real (JWT admin, servidor `5cd56500`): `capture` 201
+  (mundo `village` capturado), `apply` crea `tpl-e2e-mundo` (visible tras
+  `sync`), `delete` 204 del mundo y de la plantilla. Residuos limpiados.

@@ -5,6 +5,7 @@ import { LoginPage } from '@/features/auth/LoginPage'
 import { ServerDetailPage } from '@/features/servers/ServerDetailPage'
 import { ConsolePage } from '@/features/console/ConsolePage'
 import { WorldsPage } from '@/features/worlds/WorldsPage'
+import { TemplatesPage } from '@/features/templates/TemplatesPage'
 import { RequireAuth, RequireGuest } from '@/lib/auth/guards'
 import { ServerRedirect } from '@/features/servers/ServerRedirect'
 
@@ -26,6 +27,7 @@ export const router = createBrowserRouter([
           { path: '/servers/:serverId', element: <ServerDetailPage /> },
           { path: '/servers/:serverId/console', element: <ConsolePage /> },
           { path: '/servers/:serverId/worlds', element: <WorldsPage /> },
+          { path: '/servers/:serverId/templates', element: <TemplatesPage /> },
         ],
       },
     ],

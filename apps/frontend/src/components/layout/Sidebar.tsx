@@ -42,7 +42,7 @@ const SIDEBAR_ITEMS: SidebarItem[] = [
   { label: 'Backups', icon: Archive, disabled: true },
   { label: 'Programador', icon: CircleGauge, disabled: true },
   { label: 'Monitoreo', icon: Bell, disabled: true },
-  { label: 'Plantillas', icon: Boxes, disabled: true },
+  { label: 'Plantillas', icon: Boxes, href: '/servers', sub: 'templates', disabled: false },
   { label: 'Permisos', icon: Shield, disabled: true },
   { label: 'Configuración', icon: Settings2, disabled: true },
   { label: 'Logs', icon: Database, disabled: true },
