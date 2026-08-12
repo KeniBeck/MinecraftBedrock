@@ -37,7 +37,7 @@ export interface CaptureTemplateRequest {
 /** Cuerpo de `POST /servers/{id}/templates/{template_id}/apply`. */
 export interface ApplyTemplateRequest {
   /** Si se omite, se usa el nombre del mundo capturado en la plantilla. */
-  world_name?: string
+  world_name?: string | undefined
 }
 
 /** `GET /servers/{id}/templates`. */

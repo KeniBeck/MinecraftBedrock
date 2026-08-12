@@ -1,18 +1,11 @@
-import { useState, type FormEvent } from 'react'
+import { useState } from 'react'
 
 import { Gauge } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { FormDialog } from '@/components/ui/form-dialog'
+import { FormField } from '@/components/ui/form-field'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { getApiMessage } from '@/lib/api/client'
 import { useUpdateResources } from '@/features/servers/hooks'
 import { useCan } from '@/lib/auth/useCan'
@@ -43,7 +36,6 @@ export function UpdateResourcesDialog({ server, disabled = false }: UpdateResour
   const [ramMb, setRamMb] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [fieldError, setFieldError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
 
   if (!canUpdate) return null
 
@@ -64,8 +56,7 @@ export function UpdateResourcesDialog({ server, disabled = false }: UpdateResour
     setFieldError(null)
   }
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault()
+  async function handleSubmit() {
     setError(null)
     setFieldError(null)
 
@@ -94,20 +85,17 @@ export function UpdateResourcesDialog({ server, disabled = false }: UpdateResour
       return
     }
 
-    setBusy(true)
     try {
       await updateResources.mutateAsync({ serverId: server.id, payload })
       closeDialog()
     } catch (err) {
       // SERVER.BUSY (409) y demás: el mensaje legible del backend tal cual.
       setError(getApiMessage(err, 'No se pudieron actualizar los recursos'))
-    } finally {
-      setBusy(false)
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={(next) => { if (!next) closeDialog() }}>
+    <>
       <Button
         variant="secondary"
         size="default"
@@ -116,80 +104,55 @@ export function UpdateResourcesDialog({ server, disabled = false }: UpdateResour
         onClick={openDialog}
         data-testid="update-resources-button"
         title="Cambiar CPU y RAM asignadas"
-        className="w-full h-10 text-sm"
+        className="h-10 w-full text-sm"
       >
         <Gauge className="size-4" />
         Actualizar recursos
       </Button>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Actualizar recursos</DialogTitle>
-          <DialogDescription>
-            Cambia la CPU y la RAM asignadas al servidor. Si está corriendo, se reiniciará
-            para aplicar el cambio.
-          </DialogDescription>
-        </DialogHeader>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {error && (
-            <div
-              role="alert"
-              className="rounded-none border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300"
-            >
-              {error}
-            </div>
-          )}
-          {fieldError && (
-            <p role="alert" className="text-xs text-red-300">{fieldError}</p>
-          )}
-          <div className="space-y-2">
-            <Label htmlFor="update-resources-cpu">CPU (núcleos)</Label>
-            <Input
-              id="update-resources-cpu"
-              inputMode="decimal"
-              placeholder="1 – 64"
-              value={cpuCores}
-              onChange={(e) => setCpuCores(e.target.value)}
-              data-testid="update-resources-cpu"
-            />
+      <FormDialog
+        open={open}
+        onOpenChange={(next) => {
+          if (!next) closeDialog()
+        }}
+        title="Actualizar recursos"
+        description="Cambia la CPU y la RAM asignadas al servidor. Si está corriendo, se reiniciará para aplicar el cambio."
+        onSubmit={handleSubmit}
+        busy={updateResources.isPending}
+        error={fieldError ?? error}
+        submitLabel="Aplicar cambios"
+        submittingLabel="Guardando…"
+        submitTestId="update-resources-submit"
+      >
+        <FormField label="CPU (núcleos)" htmlFor="update-resources-cpu">
+          <Input
+            id="update-resources-cpu"
+            inputMode="decimal"
+            placeholder="1 – 64"
+            value={cpuCores}
+            onChange={(e) => setCpuCores(e.target.value)}
+            data-testid="update-resources-cpu"
+          />
+        </FormField>
+        <FormField label="RAM (MB)" htmlFor="update-resources-ram">
+          <Input
+            id="update-resources-ram"
+            inputMode="numeric"
+            placeholder="512 – 65536"
+            value={ramMb}
+            onChange={(e) => setRamMb(e.target.value)}
+            data-testid="update-resources-ram"
+          />
+        </FormField>
+        {running && (
+          <div
+            data-testid="recreate-warning"
+            className="rounded-none border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300"
+          >
+            El servidor está en línea: se detendrá, se recreará el contenedor con los nuevos
+            recursos y se volverá a arrancar.
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="update-resources-ram">RAM (MB)</Label>
-            <Input
-              id="update-resources-ram"
-              inputMode="numeric"
-              placeholder="512 – 65536"
-              value={ramMb}
-              onChange={(e) => setRamMb(e.target.value)}
-              data-testid="update-resources-ram"
-            />
-          </div>
-          {running && (
-            <div
-              data-testid="recreate-warning"
-              className="rounded-none border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300"
-            >
-              El servidor está en línea: se detendrá, se recreará el contenedor con los nuevos
-              recursos y se volverá a arrancar.
-            </div>
-          )}
-
-          <DialogFooter>
-            <Button type="button" variant="ghost" onClick={closeDialog} disabled={busy}>
-              Cancelar
-            </Button>
-            <Button
-              type="submit"
-              variant="secondary"
-              pixel
-              disabled={busy}
-              data-testid="update-resources-submit"
-            >
-              {busy ? 'Guardando…' : 'Aplicar cambios'}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+        )}
+      </FormDialog>
+    </>
   )
 }

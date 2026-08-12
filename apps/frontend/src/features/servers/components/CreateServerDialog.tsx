@@ -1,18 +1,11 @@
-import { useState, type FormEvent } from 'react'
+import { useState } from 'react'
 
 import { Plus } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { FormDialog } from '@/components/ui/form-dialog'
+import { FormField } from '@/components/ui/form-field'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { getApiCode, getApiMessage } from '@/lib/api/client'
 import { useCreateServer } from '@/features/servers/hooks'
 import { useCan } from '@/lib/auth/useCan'
@@ -34,7 +27,6 @@ export function CreateServerDialog() {
   const [version, setVersion] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [fieldError, setFieldError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
 
   if (!canCreate) return null
 
@@ -43,12 +35,9 @@ export function CreateServerDialog() {
     setVersion('')
     setError(null)
     setFieldError(null)
-    setBusy(false)
   }
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault()
-    setBusy(true)
+  async function handleSubmit() {
     setError(null)
     setFieldError(null)
     try {
@@ -62,13 +51,11 @@ export function CreateServerDialog() {
       } else {
         setError(getApiMessage(err, 'No se pudo crear el servidor'))
       }
-    } finally {
-      setBusy(false)
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (!next) reset() }}>
+    <>
       <Button
         variant="create"
         pixel
@@ -79,55 +66,40 @@ export function CreateServerDialog() {
         <Plus className="size-4" />
         <span className="hidden sm:inline">Crear servidor</span>
       </Button>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Crear servidor</DialogTitle>
-          <DialogDescription>
-            El puerto lo asigna el sistema automáticamente.
-          </DialogDescription>
-        </DialogHeader>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {error && (
-            <div
-              role="alert"
-              className="rounded-none border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300"
-            >
-              {error}
-            </div>
-          )}
-          <div className="space-y-2">
-            <Label htmlFor="server-name">Nombre</Label>
-            <Input
-              id="server-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              maxLength={128}
-              required
-              aria-invalid={Boolean(fieldError)}
-            />
-            {fieldError && <p className="text-xs text-red-300">{fieldError}</p>}
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="server-version">Versión (opcional)</Label>
-            <Input
-              id="server-version"
-              placeholder="Ej. 1.21.1"
-              value={version}
-              onChange={(e) => setVersion(e.target.value)}
-            />
-          </div>
-
-          <DialogFooter>
-            <Button type="button" variant="ghost" onClick={() => setOpen(false)} disabled={busy}>
-              Cancelar
-            </Button>
-            <Button type="submit" variant="create" pixel disabled={busy} data-testid="create-server-submit">
-              {busy ? 'Creando…' : 'Crear'}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+      <FormDialog
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next)
+          if (!next) reset()
+        }}
+        title="Crear servidor"
+        description="El puerto lo asigna el sistema automáticamente."
+        onSubmit={handleSubmit}
+        busy={createServer.isPending}
+        error={error}
+        submitLabel="Crear"
+        submittingLabel="Creando…"
+        submitTestId="create-server-submit"
+      >
+        <FormField label="Nombre" htmlFor="server-name" error={fieldError ?? undefined}>
+          <Input
+            id="server-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={128}
+            required
+            aria-invalid={Boolean(fieldError)}
+          />
+        </FormField>
+        <FormField label="Versión (opcional)" htmlFor="server-version">
+          <Input
+            id="server-version"
+            placeholder="Ej. 1.21.1"
+            value={version}
+            onChange={(e) => setVersion(e.target.value)}
+          />
+        </FormField>
+      </FormDialog>
+    </>
   )
 }

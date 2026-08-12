@@ -14,7 +14,7 @@ export interface PromptDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   title: string
-  description?: string
+  description?: string | undefined
   label: string
   placeholder?: string
   defaultValue?: string

@@ -11,7 +11,7 @@ export interface ConfirmDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   title: string
-  description?: string
+  description?: string | undefined
   confirmLabel?: string
   cancelLabel?: string
   destructive?: boolean

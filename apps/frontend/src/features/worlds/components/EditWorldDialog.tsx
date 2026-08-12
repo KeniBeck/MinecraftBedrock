@@ -1,11 +1,10 @@
 import { useState } from 'react'
 
-import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { FormDialog } from '@/components/ui/form-dialog'
+import { FormField } from '@/components/ui/form-field'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { Select } from '@/components/ui/select'
 import { getApiMessage } from '@/lib/api/client'
-import { cn } from '@/lib/utils'
 import type { UpdateWorldRequest, World } from '@/lib/api/worlds'
 
 import { useUpdateWorld } from '../hooks'
@@ -19,13 +18,6 @@ interface EditWorldDialogProps {
 
 const GAMEMODES = ['survival', 'creative', 'adventure'] as const
 const DIFFICULTIES = ['peaceful', 'easy', 'normal', 'hard'] as const
-
-const selectClass = cn(
-  'h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors',
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-  'disabled:cursor-not-allowed disabled:opacity-50',
-  '[&>option]:bg-slate-900 [&>option]:text-slate-100',
-)
 
 interface EditWorldFormProps {
   serverId: string
@@ -44,8 +36,7 @@ function EditWorldForm({ serverId, world, onDone }: EditWorldFormProps) {
   const [error, setError] = useState<string | null>(null)
   const update = useUpdateWorld(serverId)
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleSubmit = async () => {
     setError(null)
     const payload: UpdateWorldRequest = {}
     if (name.trim() && name.trim() !== world.name) payload.name = name.trim()
@@ -74,36 +65,44 @@ function EditWorldForm({ serverId, world, onDone }: EditWorldFormProps) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <div>
-        <Label htmlFor="edit-world-name">Nombre del mundo</Label>
+    <FormDialog
+      open
+      onOpenChange={(next) => {
+        if (!next) onDone()
+      }}
+      title="Ajustar mundo"
+      onSubmit={handleSubmit}
+      busy={update.isPending}
+      error={error}
+      submitLabel="Guardar"
+      submittingLabel="Guardando…"
+    >
+      <FormField label="Nombre del mundo" htmlFor="edit-world-name">
         <Input
           id="edit-world-name"
           value={name}
           onChange={(e) => setName(e.target.value)}
           maxLength={64}
         />
-      </div>
-      <div>
-        <Label htmlFor="edit-world-seed">Semilla (opcional)</Label>
+      </FormField>
+      <FormField
+        label="Semilla (opcional)"
+        htmlFor="edit-world-seed"
+        hint="Solo se aplica al generar un mundo nuevo; no regenera uno existente."
+      >
         <Input
           id="edit-world-seed"
           value={seed}
           onChange={(e) => setSeed(e.target.value)}
           maxLength={64}
         />
-        <p className="mt-1 text-xs text-muted-foreground">
-          Solo se aplica al generar un mundo nuevo; no regenera uno existente.
-        </p>
-      </div>
+      </FormField>
       <div className="grid grid-cols-2 gap-4">
-        <div>
-          <Label htmlFor="edit-world-gamemode">Modo de juego</Label>
-          <select
+        <FormField label="Modo de juego" htmlFor="edit-world-gamemode">
+          <Select
             id="edit-world-gamemode"
             value={gamemode}
             onChange={(e) => setGamemode(e.target.value)}
-            className={selectClass}
           >
             <option value="">Por defecto</option>
             {GAMEMODES.map((mode) => (
@@ -111,15 +110,13 @@ function EditWorldForm({ serverId, world, onDone }: EditWorldFormProps) {
                 {mode}
               </option>
             ))}
-          </select>
-        </div>
-        <div>
-          <Label htmlFor="edit-world-difficulty">Dificultad</Label>
-          <select
+          </Select>
+        </FormField>
+        <FormField label="Dificultad" htmlFor="edit-world-difficulty">
+          <Select
             id="edit-world-difficulty"
             value={difficulty}
             onChange={(e) => setDifficulty(e.target.value)}
-            className={selectClass}
           >
             <option value="">Por defecto</option>
             {DIFFICULTIES.map((level) => (
@@ -127,11 +124,10 @@ function EditWorldForm({ serverId, world, onDone }: EditWorldFormProps) {
                 {level}
               </option>
             ))}
-          </select>
-        </div>
+          </Select>
+        </FormField>
       </div>
-      <div>
-        <Label htmlFor="edit-world-view-distance">Distancia de chunks (2–64)</Label>
+      <FormField label="Distancia de chunks (2–64)" htmlFor="edit-world-view-distance">
         <Input
           id="edit-world-view-distance"
           type="number"
@@ -140,36 +136,19 @@ function EditWorldForm({ serverId, world, onDone }: EditWorldFormProps) {
           value={viewDistance}
           onChange={(e) => setViewDistance(e.target.value)}
         />
-      </div>
-      {error && <p className="text-sm text-red-400">{error}</p>}
-      <div className="flex justify-end gap-2">
-        <Button type="button" variant="ghost" onClick={onDone}>
-          Cancelar
-        </Button>
-        <Button type="submit" variant="create" pixel disabled={update.isPending}>
-          {update.isPending ? 'Guardando…' : 'Guardar'}
-        </Button>
-      </div>
-    </form>
+      </FormField>
+    </FormDialog>
   )
 }
 
 export function EditWorldDialog({ open, onOpenChange, serverId, world }: EditWorldDialogProps) {
+  if (!open || !world) return null
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Ajustar mundo</DialogTitle>
-        </DialogHeader>
-        {world && (
-          <EditWorldForm
-            key={world.id}
-            serverId={serverId}
-            world={world}
-            onDone={() => onOpenChange(false)}
-          />
-        )}
-      </DialogContent>
-    </Dialog>
+    <EditWorldForm
+      key={world.id}
+      serverId={serverId}
+      world={world}
+      onDone={() => onOpenChange(false)}
+    />
   )
 }

@@ -1128,3 +1128,64 @@ backend no podía parsear el formulario.
 - `tsc` ✅ · `eslint` ✅ · `vitest` (**79 passed**) ✅.
 - `rg "window.(confirm|prompt|alert)"` → solo referencias en comentarios de
   los propios componentes, cero usos reales.
+
+## Refactor — Formularios estandarizados (`FormDialog` + `FormField` + `Select`)
+
+> **Fecha**: 2026-08-12
+> **Origen**: continuación del refactor de diálogos. Los diálogos de
+> creación/ajustes de Servidores, Mundos y Plantillas repetían la misma
+> estructura (Dialog + alerta de error + footer Cancelar/Guardar + Label+Input)
+> y cada uno la mantenía a mano. Se extrae el patrón a componentes
+> reutilizables para que todos los formularios del frontend sean idénticos.
+
+### Cambios
+
+- Nuevo `src/components/ui/form-dialog.tsx`: extiende `Modal` — envuelve el
+  contenido en un `<form>` real (submit con Enter incluido) con la alerta de
+  error (`role="alert"`), el footer Cancelar/Confirmar y el estado `busy`.
+  Props: `onSubmit`, `busy`, `error`, `submitLabel`/`submittingLabel`,
+  `submitVariant`, `submitDisabled`, `submitTestId`, `cancelLabel`.
+- Nuevo `src/components/ui/form-field.tsx`: estandariza cada campo
+  (label + control + hint + error) para no repetir el marcado `space-y-2`.
+- Nuevo `src/components/ui/select.tsx`: `Select` reutilizable que unifica el
+  `selectClass` que `CreateWorldDialog` y `EditWorldDialog` duplicaban (mismas
+  clases de focus/disabled y opciones con fondo oscuro legibles sobre el panel).
+- Refactor a `FormDialog`/`FormField`/`Select`:
+  - `CreateServerDialog` (Nombre + Versión; `SERVER.ALREADY_EXISTS` resalta el
+    campo nombre).
+  - `UpdateResourcesDialog` (CPU/RAM; aviso "se reiniciará" si el servidor está
+    en línea; testids conservados).
+  - `CreateWorldDialog` / `EditWorldDialog` (Modo de juego y Dificultad con el
+    `Select` compartido; constantes `GAMEMODES`/`DIFFICULTIES` ahora duplicadas
+    en el mismo archivo de cada diálogo).
+  - `CaptureTemplateDialog` (nombre) y `ImportWorldDialog` (nombre + archivo
+    `.mcworld`; submit deshabilitado hasta elegir archivo).
+- Fix de tipos preexistentes por `exactOptionalPropertyTypes`: props opcionales
+  de `Modal`/`ConfirmDialog`/`PromptDialog` (`description`, `className`) y de
+  `ApplyTemplateRequest.world_name` aceptan `| undefined` (rompían `tsc` desde
+  el commit de modales).
+- `EditWorldDialog`: se re-monta el formulario con `key={world.id}` al abrir
+  para precargar los valores actuales del mundo.
+
+### Archivos
+
+| Archivo | Cambio |
+|---|---|
+| `src/components/ui/form-dialog.tsx` | Nuevo: modal de formulario con submit + error + footer |
+| `src/components/ui/form-field.tsx` | Nuevo: label + control + hint + error |
+| `src/components/ui/select.tsx` | Nuevo: select estándar reutilizable |
+| `src/features/servers/components/CreateServerDialog.tsx` | Refactor a `FormDialog`/`FormField` |
+| `src/features/servers/components/UpdateResourcesDialog.tsx` | Refactor (testids intactos) |
+| `src/features/worlds/components/CreateWorldDialog.tsx` | Refactor + `Select` compartido |
+| `src/features/worlds/components/EditWorldDialog.tsx` | Refactor + remount por `key` |
+| `src/features/worlds/components/ImportWorldDialog.tsx` | Refactor |
+| `src/features/templates/components/CaptureTemplateDialog.tsx` | Refactor |
+| `src/components/ui/{modal,confirm-dialog,prompt-dialog}.tsx` | Props opcionales `\| undefined` (fix `tsc`) |
+| `src/lib/api/templates.ts` | `world_name?: string \| undefined` (fix `tsc`) |
+
+### Verificación
+
+- `tsc` ✅ (arregla errores `exactOptionalPropertyTypes` que ya estaban desde
+  el commit de modales) · `eslint` ✅ · `vitest` (**79 passed**) ✅ · `build` ✅.
+- `rg "DialogContent|DialogHeader|<Label htmlFor"` en los diálogos refactorizados
+  → cero (todo pasa por `Modal`/`FormDialog`/`FormField`).

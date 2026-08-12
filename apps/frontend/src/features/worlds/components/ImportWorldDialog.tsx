@@ -1,9 +1,8 @@
 import { useRef, useState } from 'react'
 
-import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { FormDialog } from '@/components/ui/form-dialog'
+import { FormField } from '@/components/ui/form-field'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { getApiMessage } from '@/lib/api/client'
 
 import { useImportWorld } from '../hooks'
@@ -21,8 +20,7 @@ export function ImportWorldDialog({ open, onOpenChange, serverId }: ImportWorldD
   const fileInputRef = useRef<HTMLInputElement>(null)
   const importWorld = useImportWorld(serverId)
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleSubmit = async () => {
     if (!file) return
     setError(null)
     try {
@@ -37,45 +35,37 @@ export function ImportWorldDialog({ open, onOpenChange, serverId }: ImportWorldD
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Importar mundo</DialogTitle>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <Label htmlFor="import-name">Nombre del mundo</Label>
-            <Input
-              id="import-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Mi mundo importado"
-              required
-              maxLength={64}
-            />
-          </div>
-          <div>
-            <Label htmlFor="import-file">Archivo .mcworld</Label>
-            <Input
-              id="import-file"
-              type="file"
-              accept=".mcworld,.zip"
-              ref={fileInputRef}
-              onChange={(e) => setFile(e.target.files?.[0] || null)}
-              required
-            />
-          </div>
-          {error && <p className="text-sm text-red-400">{error}</p>}
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-              Cancelar
-            </Button>
-            <Button type="submit" variant="create" pixel disabled={importWorld.isPending || !file}>
-              {importWorld.isPending ? 'Importando…' : 'Importar'}
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <FormDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Importar mundo"
+      onSubmit={handleSubmit}
+      busy={importWorld.isPending}
+      error={error}
+      submitLabel="Importar"
+      submittingLabel="Importando…"
+      submitDisabled={!file}
+    >
+      <FormField label="Nombre del mundo" htmlFor="import-name">
+        <Input
+          id="import-name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Mi mundo importado"
+          required
+          maxLength={64}
+        />
+      </FormField>
+      <FormField label="Archivo .mcworld" htmlFor="import-file">
+        <Input
+          id="import-file"
+          type="file"
+          accept=".mcworld,.zip"
+          ref={fileInputRef}
+          onChange={(e) => setFile(e.target.files?.[0] || null)}
+          required
+        />
+      </FormField>
+    </FormDialog>
   )
 }

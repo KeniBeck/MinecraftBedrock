@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
+
+import { FormDialog } from '@/components/ui/form-dialog'
+import { FormField } from '@/components/ui/form-field'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { useCaptureTemplate } from '../hooks'
 import { getApiMessage } from '@/lib/api/client'
+import { useCaptureTemplate } from '../hooks'
 
 interface CaptureTemplateDialogProps {
   open: boolean
@@ -17,8 +17,7 @@ export function CaptureTemplateDialog({ open, onOpenChange, serverId }: CaptureT
   const [error, setError] = useState<string | null>(null)
   const capture = useCaptureTemplate(serverId)
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleSubmit = async () => {
     setError(null)
     try {
       await capture.mutateAsync({ name })
@@ -30,38 +29,28 @@ export function CaptureTemplateDialog({ open, onOpenChange, serverId }: CaptureT
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Capturar plantilla</DialogTitle>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <Label htmlFor="template-name">Nombre</Label>
-            <Input
-              id="template-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Mi plantilla"
-              required
-              maxLength={255}
-            />
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Se guarda una copia del mundo activo y de la configuración del
-            servidor para poder reproducirla en otro servidor.
-          </p>
-          {error && <p className="text-sm text-red-400">{error}</p>}
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-              Cancelar
-            </Button>
-            <Button type="submit" variant="create" pixel disabled={capture.isPending || !name}>
-              {capture.isPending ? 'Capturando…' : 'Capturar'}
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <FormDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Capturar plantilla"
+      description="Se guarda una copia del mundo activo y de la configuración del servidor para poder reproducirla en otro."
+      onSubmit={handleSubmit}
+      busy={capture.isPending}
+      error={error}
+      submitLabel="Capturar"
+      submittingLabel="Capturando…"
+      submitDisabled={!name.trim()}
+    >
+      <FormField label="Nombre" htmlFor="template-name">
+        <Input
+          id="template-name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Mi plantilla"
+          required
+          maxLength={255}
+        />
+      </FormField>
+    </FormDialog>
   )
 }
