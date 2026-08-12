@@ -162,3 +162,64 @@ describe('interceptor de autenticación', () => {
     expect(useAuthStore.getState().accessToken).toBeNull()
   })
 })
+
+describe('Content-Type según el payload (regresión import)', () => {
+  const originalHref = window.location.href
+
+  beforeEach(() => {
+    useAuthStore.getState().clear()
+    Object.defineProperty(window, 'location', {
+      value: { href: 'http://localhost:5173/', pathname: '/', assign: vi.fn() },
+      writable: true,
+    })
+  })
+
+  afterEach(() => {
+    Object.defineProperty(window, 'location', {
+      value: { href: originalHref },
+      writable: true,
+    })
+    vi.restoreAllMocks()
+  })
+
+  it('NO fuerza application/json a nivel de instancia (no hay default)', () => {
+    expect(apiClient.defaults.headers).toBeDefined()
+    expect(apiClient.defaults.headers['Content-Type']).toBeUndefined()
+    expect(apiClient.defaults.headers['content-type']).toBeUndefined()
+  })
+
+  it('un FormData llega al adapter como FormData (multipart), no serializado a JSON', async () => {
+    let seenData: unknown
+    let seenContentType: unknown
+    apiClient.defaults.adapter = async (config: InternalAxiosRequestConfig) => {
+      seenData = config.data
+      seenContentType = (config.headers as AxiosHeaders).get('Content-Type')
+      return { status: 201, statusText: 'created', data: {}, headers: {}, config }
+    }
+
+    const form = new FormData()
+    form.append('file', new File(['content'], 'world.mcworld'))
+    form.append('name', 'prueba')
+    await apiClient.post('/servers/s1/worlds/import', form)
+
+    expect(seenData).toBeInstanceOf(FormData)
+    expect(seenData).not.toBeInstanceOf(String)
+    expect(String(seenContentType)).not.toContain('application/json')
+  })
+
+  it('un objeto plano sigue mandándose como JSON', async () => {
+    let seenData: unknown
+    let seenContentType: unknown
+    apiClient.defaults.adapter = async (config: InternalAxiosRequestConfig) => {
+      seenData = config.data
+      seenContentType = (config.headers as AxiosHeaders).get('Content-Type')
+      return { status: 201, statusText: 'created', data: {}, headers: {}, config }
+    }
+
+    await apiClient.post('/servers/s1/worlds', { name: 'x' })
+
+    expect(typeof seenData).toBe('string')
+    expect(seenData).toContain('"name":"x"')
+    expect(String(seenContentType)).toContain('application/json')
+  })
+})

@@ -10,9 +10,15 @@ import { useAuthStore } from '@/stores/auth'
 /** Base de la API — el proxy de Vite reenvía `/api` al backend (ver vite.config). */
 export const API_BASE = '/api/v1'
 
+/**
+ * Sin `Content-Type` por defecto a nivel de instancia: axios fija
+ * `application/json` automáticamente para payloads JSON (transformRequest) y
+ * deja que el navegador genere `multipart/form-data; boundary=…` para
+ * `FormData`. Forzarlo aquí rompía los uploads: con `application/json`,
+ * axios serializaba el FormData a JSON y el backend no encontraba los campos.
+ */
 export const apiClient = axios.create({
   baseURL: API_BASE,
-  headers: { 'Content-Type': 'application/json' },
 })
 
 /** Parsea `{detail: {code, message}}` al mensaje legible (frontend-standards §8). */

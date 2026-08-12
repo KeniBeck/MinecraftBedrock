@@ -86,9 +86,9 @@ export async function updateWorld(
 
 /**
  * `POST /servers/{id}/worlds/import` (201) — multipart con `file` + `name`.
- * NO se fija `Content-Type` a mano: `apiClient` trae `application/json` por
- * defecto y el navegador necesita generar el `multipart/form-data; boundary=…`
- * para que el backend parseee el body.
+ * NO se fija `Content-Type` a mano: el navegador genera el
+ * `multipart/form-data; boundary=…` y `apiClient` (sin default JSON) no lo
+ * pisa, así el backend parsea los campos.
  */
 export async function importWorld(serverId: string, data: ImportWorldRequest): Promise<World> {
   const form = new FormData()

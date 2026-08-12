@@ -987,3 +987,40 @@ por valor visual: si en la revisión visual sobra, se puede quitar o reemplazar
 - Backend verificado en vivo: `POST /worlds/sync` devuelve
   `{"name":"Bedrock level", ...}` y `GET /worlds` lo lista (antes devolvían
   `[]`).
+
+## Fix — La importación de mundos no subía el archivo (2026-08-11)
+
+> **Origen**: al importar un `.mcworld`, el backend respondía
+> `HTTP.VALIDATION_ERROR` ("Field required" para `file` y `name`) aunque el
+> archivo se hubiera adjuntado. La petición salía con cuerpo
+> `{"file": {}, "name": "prueba importacion"}` — JSON, no multipart — así que
+> FastAPI no encontraba los campos `UploadFile`/`Form`.
+
+### Causa raíz
+
+`src/lib/api/client.ts` fijaba `Content-Type: application/json` por defecto en
+la instancia de axios. En axios, si el `Content-Type` ya es JSON y el payload
+es un `FormData`, `transformRequest` lo **serializa a JSON**
+(`formDataToJSON`) en vez de pasarlo como multipart; el archivo se perdía y el
+backend no podía parsear el formulario.
+
+### Cambio
+
+- Se quitó el default global `Content-Type: application/json` de `apiClient`.
+  Axios fija `application/json` automáticamente para payloads de objeto
+  (`transformRequest`), y deja que el navegador genere el
+  `multipart/form-data; boundary=…` cuando el payload es `FormData`.
+- `importWorld` no cambia: ya construía el `FormData` con `file` + `name`;
+  ahora el header correcto llega al backend.
+
+### Archivos
+
+| Archivo | Cambio |
+|---|---|
+| `src/lib/api/client.ts` | Quitado el default `Content-Type: application/json` de la instancia |
+| `src/lib/api/worlds.ts` | Comentario del multipart actualizado |
+| `src/lib/api/client.test.ts` | Tests de regresión: sin default JSON, FormData llega como FormData, objetos siguen como JSON |
+
+### Verificación
+
+- `tsc` ✅ · `eslint` ✅ · `vitest` (**74 passed**, 3 nuevos) ✅.
