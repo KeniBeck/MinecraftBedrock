@@ -99,12 +99,13 @@ describe('TemplatesPage', () => {
     const user = userEvent.setup()
     vi.mocked(listTemplates).mockResolvedValue([TEMPLATE])
     vi.mocked(applyTemplate).mockResolvedValue(TEMPLATE)
-    vi.spyOn(window, 'prompt').mockReturnValue('mundo2')
 
     renderPage()
     await screen.findByText('Server plano')
 
     await user.click(screen.getByRole('button', { name: /aplicar/i }))
+    await user.type(screen.getByLabelText(/nombre del mundo destino/i), 'mundo2')
+    await user.click(screen.getByRole('button', { name: /^aplicar$/i }))
 
     await waitFor(() => {
       expect(applyTemplate).toHaveBeenCalledWith('srv-1', 't-1', { world_name: 'mundo2' })
@@ -115,7 +116,6 @@ describe('TemplatesPage', () => {
     const user = userEvent.setup()
     vi.mocked(listTemplates).mockResolvedValue([TEMPLATE])
     vi.mocked(deleteTemplate).mockResolvedValue(undefined)
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
 
     renderPage()
     await screen.findByText('Server plano')
@@ -123,6 +123,7 @@ describe('TemplatesPage', () => {
     const trigger = screen.getByRole('button', { name: '' })
     await user.click(trigger)
     await user.click(await screen.findByText('Eliminar'))
+    await user.click(await screen.findByRole('button', { name: /^eliminar$/i }))
 
     await waitFor(() => {
       expect(deleteTemplate).toHaveBeenCalledWith('srv-1', 't-1')

@@ -3,22 +3,26 @@ import { useParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 
 import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { PromptDialog } from '@/components/ui/prompt-dialog'
 import { getApiMessage } from '@/lib/api/client'
 import { worldKeys } from '@/lib/api/worlds'
 import { Plus, RefreshCw, Upload } from 'lucide-react'
+import type { World } from '@/lib/api/worlds'
 
 import { CreateWorldDialog } from './components/CreateWorldDialog'
 import { EditWorldDialog } from './components/EditWorldDialog'
 import { ImportWorldDialog } from './components/ImportWorldDialog'
 import { WorldList } from './components/WorldList'
 import { useActivateWorld, useDeleteWorld, useDuplicateWorld, useExportWorld, useWorlds } from './hooks'
-import type { World } from '@/lib/api/worlds'
 
 export function WorldsPage() {
   const { serverId } = useParams<{ serverId: string }>()
   const [createOpen, setCreateOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [editingWorld, setEditingWorld] = useState<World | null>(null)
+  const [duplicating, setDuplicating] = useState<World | null>(null)
+  const [deleting, setDeleting] = useState<World | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const queryClient = useQueryClient()
 
@@ -49,6 +53,23 @@ export function WorldsPage() {
         {getApiMessage(error, 'No se pudieron cargar los mundos')}
       </div>
     )
+  }
+
+  const handleDuplicate = (newName: string) => {
+    if (!duplicating) return
+    const name = duplicating.name
+    setDuplicating(null)
+    duplicate.mutate(
+      { name, newName },
+      { onError: (err) => setActionError(getApiMessage(err)) },
+    )
+  }
+
+  const handleDelete = () => {
+    if (!deleting) return
+    const name = deleting.name
+    setDeleting(null)
+    deleteWorld.mutate(name, { onError: (err) => setActionError(getApiMessage(err)) })
   }
 
   return (
@@ -86,15 +107,7 @@ export function WorldsPage() {
           activate.mutate(name, { onError: (err) => setActionError(getApiMessage(err)) })
         }
         onEdit={(world) => setEditingWorld(world)}
-        onDuplicate={(name) => {
-          const newName = window.prompt('Nombre del nuevo mundo:')
-          if (newName) {
-            duplicate.mutate(
-              { name, newName },
-              { onError: (err) => setActionError(getApiMessage(err)) },
-            )
-          }
-        }}
+        onDuplicate={(name) => setDuplicating(worlds?.find((w) => w.name === name) ?? null)}
         onExport={(name) => {
           exportWorld.mutate(
             { name },
@@ -111,15 +124,39 @@ export function WorldsPage() {
             },
           )
         }}
-        onDelete={(name) => {
-          if (window.confirm(`¿Eliminar el mundo "${name}"? Esta acción no se puede deshacer.`)) {
-            deleteWorld.mutate(name, { onError: (err) => setActionError(getApiMessage(err)) })
-          }
-        }}
+        onDelete={(name) => setDeleting(worlds?.find((w) => w.name === name) ?? null)}
         isActivating={activate.isPending}
         isDuplicating={duplicate.isPending}
         isExporting={exportWorld.isPending}
         isDeleting={deleteWorld.isPending}
+      />
+
+      <PromptDialog
+        open={duplicating !== null}
+        onOpenChange={(next) => {
+          if (!next) setDuplicating(null)
+        }}
+        title="Duplicar mundo"
+        description={duplicating ? `Se copiará el mundo "${duplicating.name}".` : undefined}
+        label="Nombre del nuevo mundo"
+        confirmLabel="Duplicar"
+        busy={duplicate.isPending}
+        onConfirm={handleDuplicate}
+      />
+
+      <ConfirmDialog
+        open={deleting !== null}
+        onOpenChange={(next) => {
+          if (!next) setDeleting(null)
+        }}
+        title="Eliminar mundo"
+        description={
+          deleting ? `¿Eliminar el mundo "${deleting.name}"? Esta acción no se puede deshacer.` : undefined
+        }
+        confirmLabel="Eliminar"
+        destructive
+        busy={deleteWorld.isPending}
+        onConfirm={handleDelete}
       />
 
       <CreateWorldDialog open={createOpen} onOpenChange={setCreateOpen} serverId={serverId} />

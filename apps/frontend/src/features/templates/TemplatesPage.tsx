@@ -2,8 +2,11 @@ import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 
 import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { PromptDialog } from '@/components/ui/prompt-dialog'
 import { getApiMessage } from '@/lib/api/client'
 import { Plus } from 'lucide-react'
+import type { Template } from '@/lib/api/templates'
 
 import { CaptureTemplateDialog } from './components/CaptureTemplateDialog'
 import { TemplateList } from './components/TemplateList'
@@ -12,6 +15,8 @@ import { useApplyTemplate, useDeleteTemplate, useTemplates } from './hooks'
 export function TemplatesPage() {
   const { serverId } = useParams<{ serverId: string }>()
   const [captureOpen, setCaptureOpen] = useState(false)
+  const [applying, setApplying] = useState<Template | null>(null)
+  const [deleting, setDeleting] = useState<Template | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
   const { data: templates, isLoading, isError, error } = useTemplates(serverId)
@@ -35,6 +40,23 @@ export function TemplatesPage() {
     )
   }
 
+  const handleApply = (worldName: string) => {
+    if (!applying) return
+    const id = applying.id
+    setApplying(null)
+    apply.mutate(
+      { templateId: id, payload: { world_name: worldName.trim() || undefined } },
+      { onError: (err) => setActionError(getApiMessage(err)) },
+    )
+  }
+
+  const handleDelete = () => {
+    if (!deleting) return
+    const id = deleting.id
+    setDeleting(null)
+    deleteTemplate.mutate(id, { onError: (err) => setActionError(getApiMessage(err)) })
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -56,27 +78,45 @@ export function TemplatesPage() {
 
       <TemplateList
         templates={templates ?? []}
-        onApply={(id) => {
-          const worldName = window.prompt(
-            'Nombre del mundo destino (vacío = el capturado en la plantilla):',
-          )
-          if (worldName !== null) {
-            apply.mutate(
-              {
-                templateId: id,
-                payload: { world_name: worldName.trim() || undefined },
-              },
-              { onError: (err) => setActionError(getApiMessage(err)) },
-            )
-          }
-        }}
-        onDelete={(id) => {
-          if (window.confirm('¿Eliminar esta plantilla? Esta acción no se puede deshacer.')) {
-            deleteTemplate.mutate(id, { onError: (err) => setActionError(getApiMessage(err)) })
-          }
-        }}
+        onApply={(id) => setApplying(templates?.find((t) => t.id === id) ?? null)}
+        onDelete={(id) => setDeleting(templates?.find((t) => t.id === id) ?? null)}
         isApplying={apply.isPending}
         isDeleting={deleteTemplate.isPending}
+      />
+
+      <PromptDialog
+        open={applying !== null}
+        onOpenChange={(next) => {
+          if (!next) setApplying(null)
+        }}
+        title="Aplicar plantilla"
+        description={
+          applying
+            ? `Se reproducirá "${applying.name}" en este servidor con el mundo y la configuración capturados.`
+            : undefined
+        }
+        label="Nombre del mundo destino"
+        placeholder="Vacío = el capturado en la plantilla"
+        confirmLabel="Aplicar"
+        busy={apply.isPending}
+        onConfirm={handleApply}
+      />
+
+      <ConfirmDialog
+        open={deleting !== null}
+        onOpenChange={(next) => {
+          if (!next) setDeleting(null)
+        }}
+        title="Eliminar plantilla"
+        description={
+          deleting
+            ? `¿Eliminar la plantilla "${deleting.name}"? Esta acción no se puede deshacer.`
+            : undefined
+        }
+        confirmLabel="Eliminar"
+        destructive
+        busy={deleteTemplate.isPending}
+        onConfirm={handleDelete}
       />
 
       <CaptureTemplateDialog

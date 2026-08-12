@@ -1085,3 +1085,46 @@ backend no podía parsear el formulario.
 - E2E contra el backend real (JWT admin, servidor `5cd56500`): `capture` 201
   (mundo `village` capturado), `apply` crea `tpl-e2e-mundo` (visible tras
   `sync`), `delete` 204 del mundo y de la plantilla. Residuos limpiados.
+
+## Refactor — Diálogos componentizados (sin `window.prompt`/`confirm`)
+
+> **Fecha**: 2026-08-12
+> **Origen**: feedback en la revisión de Plantillas — la UI usaba
+> `window.prompt`/`window.confirm` del navegador para "Aplicar plantilla"
+> (nombre del mundo destino) y para confirmar eliminaciones. El frontend debe
+> usar modales React propios, con un componente padre que tenga los estilos y
+> reciba el contenido (inputs, botones…) por props.
+
+### Cambios
+
+- Nuevo `src/components/ui/modal.tsx`: **modal base** (componente padre) que
+  concentra el contenedor con estilos (overlay + panel pixel + encabezado);
+  recibe `title`, `description`, `children` y `footer` por props.
+- Nuevo `src/components/ui/confirm-dialog.tsx`: extiende `Modal` — reemplaza
+  `window.confirm`. Props: título, descripción, labels de los botones,
+  `destructive` (botón rojo) y `busy` (muestra "Confirmando…" y bloquea).
+- Nuevo `src/components/ui/prompt-dialog.tsx`: extiende `Modal` — reemplaza
+  `window.prompt`. Props: label + placeholder del campo, labels de los botones
+  y `onConfirm(value)`.
+- `TemplatesPage`: "Aplicar plantilla" usa `PromptDialog` (nombre del mundo
+  destino, opcional) y "Eliminar" usa `ConfirmDialog`.
+- `WorldsPage`: "Duplicar" usa `PromptDialog` y "Eliminar" usa
+  `ConfirmDialog` (se eliminaron los `window.prompt`/`window.confirm`
+  restantes del frontend).
+
+### Archivos
+
+| Archivo | Cambio |
+|---|---|
+| `src/components/ui/modal.tsx` | Nuevo: modal base reutilizable |
+| `src/components/ui/confirm-dialog.tsx` | Nuevo: confirmación con variante destructiva |
+| `src/components/ui/prompt-dialog.tsx` | Nuevo: prompt de un campo de texto |
+| `src/features/templates/TemplatesPage.tsx` | Aplicar/Eliminar con los diálogos |
+| `src/features/worlds/WorldsPage.tsx` | Duplicar/Eliminar con los diálogos |
+| `src/features/templates/TemplatesPage.test.tsx` | Tests con los diálogos (sin mock de `prompt`/`confirm`) |
+
+### Verificación
+
+- `tsc` ✅ · `eslint` ✅ · `vitest` (**79 passed**) ✅.
+- `rg "window.(confirm|prompt|alert)"` → solo referencias en comentarios de
+  los propios componentes, cero usos reales.
