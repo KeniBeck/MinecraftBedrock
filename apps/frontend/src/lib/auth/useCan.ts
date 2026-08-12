@@ -25,6 +25,14 @@ const PANEL_MIN_ROLES: Record<string, readonly string[]> = {
   'permission.write': ['operator', 'admin', 'super_admin'],
   // `player.ban.global` es PANEL_ACTION → solo admin/super_admin.
   'player.ban.global': ['admin', 'super_admin'],
+  // `backup.list/view/download` son READ_ACTION (viewer+); `backup.create/
+  // restore/delete/validate/prune` son WRITE_ACTION → operator+.
+  'backup.create': ['operator', 'admin', 'super_admin'],
+  'backup.restore': ['operator', 'admin', 'super_admin'],
+  'backup.delete': ['operator', 'admin', 'super_admin'],
+  'backup.validate': ['operator', 'admin', 'super_admin'],
+  'backup.prune': ['operator', 'admin', 'super_admin'],
+  'backup.download': ['viewer', 'operator', 'admin', 'super_admin'],
 }
 
 export function rolesCan(action: string, roles: readonly string[] | undefined): boolean {

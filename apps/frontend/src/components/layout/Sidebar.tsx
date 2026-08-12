@@ -39,7 +39,7 @@ const SIDEBAR_ITEMS: SidebarItem[] = [
   { label: 'Consola', icon: Keyboard, href: '/servers', sub: 'console', disabled: false },
   { label: 'Jugadores', icon: Users, href: '/servers', sub: 'players', disabled: false },
   { label: 'Mundos', icon: Globe, href: '/servers', sub: 'worlds', disabled: false },
-  { label: 'Backups', icon: Archive, disabled: true },
+  { label: 'Backups', icon: Archive, href: '/servers', sub: 'backups', disabled: false },
   { label: 'Programador', icon: CircleGauge, disabled: true },
   { label: 'Monitoreo', icon: Bell, disabled: true },
   { label: 'Plantillas', icon: Boxes, href: '/servers', sub: 'templates', disabled: false },

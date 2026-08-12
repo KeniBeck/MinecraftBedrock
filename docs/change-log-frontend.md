@@ -1327,3 +1327,83 @@ backend no podía parsear el formulario.
   - ban por servidor 204 → `GET .../players/bans` lista el ban → DELETE 204 →
     lista `[]` ✅
   - ban global 201 → `GET /players/bans/global` lista → DELETE 204 → `[]` ✅
+
+## Fase 4 — Parte 4: Backups (cierre de la Fase 4)
+
+> **Fecha**: 2026-08-12
+> **Origen**: Última pieza pendiente de la Fase 4. El backend ya tenía el
+> módulo Backup completo (paso 13 del change-log); faltaba la UI. Se verificó
+> el contrato real contra `apps/backend/src/app/modules/backup/api/router.py`
+> y `schemas.py` ANTES de escribir nada; el borrador del plan difería del
+> backend real en varios puntos (ver Discrepancias).
+
+### Alcance
+
+- Ruta `/servers/:serverId/backups` + ítem de sidebar "Backups" habilitado.
+- Lista de backups: `GET /servers/{id}/backups` (badge de estado, tamaño,
+  fecha, duración, nº de entradas, marca "Protegido").
+- Acciones por backup (según permiso): Restaurar (confirmación destructiva),
+  Validar, Descargar (`.tar.zst`, dispara el `<a download>` con el nombre que
+  envía el backend), Eliminar (deshabilitado si `protected`).
+- "Crear backup": `POST /servers/{id}/backups` con selector de mundo (reusa
+  `useWorlds` — el módulo Backup no expone listado propio) + preselección del
+  primer mundo.
+- "Retención" (prune): `POST /servers/{id}/backups/prune` con input
+  `keep_last_n` (default 10), destructivo con confirmación.
+- Tipos/API en `src/lib/api/backups.ts`, hooks en
+  `src/features/backups/hooks.ts` (invalidación de listas; restore también
+  invalida `worldKeys` porque reescribe el mundo en disco).
+- `useCan`: mínimos `backup.create/restore/delete/validate/prune` → operator+,
+  `backup.download` → viewer+.
+
+### Discrepancias con el borrador del plan (verificadas contra el backend real)
+
+1. **`BackupResponse` real** no tiene `kind/type/status/checksum_sha256/
+   compression/entries_count/duration_ms/metadata/started_at`. Tiene:
+   `{id, server_id, world_name, state, size_bytes, checksum, entries: list[str],
+   duration_seconds, protected, orphaned, error, created_at, updated_at}`.
+2. **`CreateBackupRequest` real** = `{world_name, protected?: bool}` (el borrador
+   solo pedía `world_name`).
+3. **Restore NO tiene body** (`{world_name?}` no existe): restaura sobre
+   `worlds/<world_name>/` del propio backup y responde `BackupResponse`. El
+   diálogo es una confirmación simple, sin campo de nombre.
+4. **Validate responde `BackupResponse` (200)**, no 204.
+5. **Prune usa `keep_last_n`** (no `keep_last`) y responde `list[BackupResponse]`.
+6. **Download** es `application/zstd` (no octet-stream) y SÍ envía
+   `Content-Disposition: attachment; filename="{world_name}-{id}.tar.zst"` —
+   se reusa ese nombre para el `<a download>`.
+7. **Errores**: `BACKUP.NOT_FOUND` (404); `BACKUP.INVALID_PAYLOAD`,
+   `BACKUP.CORRUPT`, `BACKUP.IN_PROGRESS` son `ValidationError` → **422**, no 409.
+8. Estados reales: `running | completed | failed | corrupt | deleted` (no hay
+   `pending`).
+
+### Archivos
+
+| Archivo | Cambio |
+|---|---|
+| `apps/frontend/src/lib/api/backups.ts` | Nuevo: tipos + funciones de la API Backup |
+| `apps/frontend/src/features/backups/hooks.ts` | Nuevo: queries/mutations Backup |
+| `apps/frontend/src/features/backups/BackupsPage.tsx` | Nuevo: página de backups |
+| `apps/frontend/src/features/backups/components/BackupList.tsx` | Nuevo: lista con badges y acciones por permiso |
+| `apps/frontend/src/features/backups/components/CreateBackupDialog.tsx` | Nuevo: selector de mundo |
+| `apps/frontend/src/features/backups/components/RestoreBackupDialog.tsx` | Nuevo: confirmación destructiva |
+| `apps/frontend/src/features/backups/components/PruneDialog.tsx` | Nuevo: retención keep-last-N |
+| `apps/frontend/src/features/backups/BackupsPage.test.tsx` | Nuevo: 10 tests |
+| `apps/frontend/src/app/router.tsx` | Ruta `/servers/:serverId/backups` |
+| `apps/frontend/src/components/layout/Sidebar.tsx` | Ítem "Backups" habilitado |
+| `apps/frontend/src/lib/auth/useCan.ts` | Mínimos `backup.*` |
+
+### Verificación
+
+- `tsc` ✅ · `eslint` ✅ · `vitest` (**103 passed**, 10 nuevos) ✅ · `build` ✅.
+- E2E contra el backend real (JWT dev `super_admin`, servidor `…c39a2`):
+  - `GET /backups` → 200 (vacío al inicio) ✅
+  - `POST /backups {world_name: village}` → 201, `state=completed`, 21 MB,
+    `entries` 20 ficheros, `checksum` SHA-256 ✅
+  - `GET /backups/{id}` → 200 ✅
+  - `GET /backups/{id}/download` → 200 `application/zstd`, header
+    `filename="village-{id}.tar.zst"` ✅
+  - `POST /backups/{id}/validate` → 200 (íntegro) ✅
+  - `POST /backups/{id}/restore` → 200 ✅
+  - `DELETE /backups/{id}` → 204 ✅
+  - `POST /backups/prune {keep_last_n: 0}` → 200 ✅

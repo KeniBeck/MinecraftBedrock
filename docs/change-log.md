@@ -3220,6 +3220,22 @@ lista reconciliada, 201) y si falla, fallback a `GET /worlds` (metadata). Así:
   volver a escribirlo); el default del juego se obtiene enviando el ajuste
   vacío desde la UI no está soportado — los campos vacíos no se envían.
 
+## 33. UI de Backups (cierre de la Fase 4)
+
+> **Fecha**: 2026-08-12. Sin cambios de backend: el módulo Backup (paso 13)
+> ya estaba completo. Se añadió la UI frontend de Backups verificando el
+> contrato real (router/schemas) y se documentan las diferencias con el
+> borrador del plan en `docs/change-log-frontend.md` (Fase 4 — Parte 4).
+
+### Verificación
+
+- Frontend: `tsc` ✅ · `eslint` ✅ · `vitest` **103 passed** (10 nuevos) ✅ ·
+  `build` ✅.
+- E2E contra el backend real (JWT dev `super_admin`): crear backup (201,
+  `state=completed`, checksum + entries) → detalle → descarga
+  (`application/zstd`, `filename="{world}-{id}.tar.zst"`) → validate (200) →
+  restore (200) → delete (204) → prune (`keep_last_n`) ✅.
+
 ## 32. Búsqueda parcial de jugadores + listado de bans (Player)
 
 > **Fecha**: 2026-08-12. Pedido desde QA del front: (1) búsqueda de jugadores
