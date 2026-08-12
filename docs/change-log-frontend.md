@@ -1569,3 +1569,37 @@ con el mismo bisel de bloque pixelado.
 - `tsc` ✅ · `eslint` ✅ · `vitest` (**125 passed**, 5 nuevos) ✅ · `build` ✅.
 - Backend sin cambios; el test `test_get_resources_computes_cpu_percent_from_delta`
   sigue documentando el % por núcleo como contrato.
+
+## Fase 6 — Monitoring cuarta iteración: overshoot de la curva + barra de CPU
+
+> **Fecha**: 2026-08-12
+> **Origen**: QA tras el fix de CPU por núcleo. (1) La curva bajaba
+> ligeramente por debajo de 0 al conectar un jugador (pico de CPU). (2) La
+> barra de la card de CPU del servidor se llenaba de más.
+
+### Overshoot de la curva (bajaba de 0)
+
+La curva `type="natural"` (Catmull-Rom) overshotea: entre puntos en 0 y un
+pico, crea un valle artificial por debajo de 0. Se cambió a `type="monotone"`
+(cúbica monótona), que NO overshotea — respeta el rango de los datos — y se
+añadió `clipPath` al `AreaChart` por si acaso el área intentara dibujar fuera
+del área de trazado. Sigue siendo suave.
+
+### Barra de CPU llena de más (bug introducido en la iteración anterior)
+
+`StatCard.progress` espera una **fracción 0..1** (lo multiplica ×100 para el
+ancho), igual que `ramPct`/`diskPct`. En la iteración anterior, al normalizar
+la CPU dejé `cpuPct` en **percent 0..100** y lo pasé como `progress` → con CPU
+real baja (ej. 2%) la barra se llenaba casi entera. Corregido: ahora se pasa
+`cpuFraction` (0..1) y el label usa `(fraction * 100)`.
+
+### Archivos
+
+| Archivo | Cambio |
+|---|---|
+| `src/features/monitoring/components/MetricsChart.tsx` | Curva `monotone` (sin overshoot) + `clipPath` |
+| `src/features/servers/components/StatCards.tsx` | `progress` de CPU como fracción 0..1 (era percent) |
+
+### Verificación
+
+- `tsc` ✅ · `eslint` ✅ · `vitest` (**125 passed**) ✅ · `build` ✅.

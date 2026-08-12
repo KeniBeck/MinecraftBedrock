@@ -55,8 +55,10 @@ function tickEvery(dataLength: number): number {
  *   mayor visto si no hay límite configurado).
  * - Disco: `disk_mb / (diskLimitGb * 1024) * 100`.
  * - Jugadores: `players / players_max * 100`.
- * Curvas `natural` (spline) con `baseValue="dataMin"` para un look fluido y
- * sin "picos rotos" (el área arranca en el mínimo de los datos, no en 0).
+ * Curvas `monotone` (cúbica monótona) con `baseValue="dataMin"` para un look
+ * fluido SIN overshoot: a diferencia de `natural`, no crea valles/picos
+ * artificiales por debajo de 0 entre un pico y valores planos. El dominio del
+ * eje Y se fija en `[0, 100]` y el área se recorta al área de trazado.
  */
 export function MetricsChart({
   data,
@@ -163,7 +165,11 @@ export function MetricsChart({
       </div>
 
       <ResponsiveContainer width="100%" height={height}>
-        <AreaChart data={chartData} margin={{ top: 5, right: 8, left: 0, bottom: 0 }}>
+        <AreaChart
+          data={chartData}
+          margin={{ top: 5, right: 8, left: 0, bottom: 0 }}
+          style={{ clipPath: 'url(#metric-chart-clip)' }}
+        >
           <defs>
             {series.map((s) => (
               <linearGradient key={s.key} id={`grad-${s.key}`} x1="0" y1="0" x2="0" y2="1">
@@ -171,6 +177,9 @@ export function MetricsChart({
                 <stop offset="100%" stopColor={s.color} stopOpacity={0.02} />
               </linearGradient>
             ))}
+            <clipPath id="metric-chart-clip">
+              <rect x="0" y="0" width="100%" height="100%" />
+            </clipPath>
           </defs>
           <CartesianGrid stroke="#ffffff14" strokeDasharray="3 3" />
           <XAxis
@@ -212,7 +221,7 @@ export function MetricsChart({
             return (
               <Area
                 key={s.key}
-                type="natural"
+                type="monotone"
                 dataKey={s.key}
                 name={s.key}
                 stroke={s.color}

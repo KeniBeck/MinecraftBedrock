@@ -3263,6 +3263,18 @@ lista reconciliada, 201) y si falla, fallback a `GET /worlds` (metadata). Así:
 - Frontend: `tsc` ✅ · `eslint` ✅ · `vitest` **125 passed** (5 nuevos) ✅ ·
   `build` ✅.
 
+## 37. Overshoot de la curva + barra de CPU (QA Monitoring)
+
+> **Fecha**: 2026-08-12. Solo frontend. (1) La curva `natural` bajaba de 0 en
+> los picos de CPU → se cambió a `monotone` + `clipPath`. (2) La barra de la
+> card de CPU se llenaba de más: `StatCard.progress` espera fracción 0..1 y se
+> le pasaba el percent → se corrige a fracción. Detalle en
+> `docs/change-log-frontend.md` (Fase 6 — Monitoring cuarta iteración).
+
+### Verificación
+
+- Frontend: `tsc` ✅ · `eslint` ✅ · `vitest` **125 passed** ✅ · `build` ✅.
+
 ## 33. UI de Backups (cierre de la Fase 4)
 
 > **Fecha**: 2026-08-12. Sin cambios de backend: el módulo Backup (paso 13)
