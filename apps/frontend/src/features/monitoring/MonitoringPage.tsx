@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 
 import { useServerMonitoring } from '@/hooks/useServerMonitoring'
+import { useServer } from '@/features/servers/hooks'
 import { currentSnapshot, useMonitoringStore } from '@/stores/monitoring'
 import { MetricsChart } from './components/MetricsChart'
 import { TimeRangeSelector } from './components/TimeRangeSelector'
@@ -27,6 +28,10 @@ export function MonitoringPage() {
   const history = useMonitoringHistory(serverId)
   const snapshots = useMonitoringStore((state) => state.snapshots)
   const snap = currentSnapshot(snapshots, serverId)
+
+  // Límites configurados del servidor (resources del detalle) para normalizar
+  // RAM/Disco a % en el gráfico.
+  const { data: server } = useServer(serverId)
 
   const filtered = useMemo(() => {
     const rangeMs = rangeDurationMs(range)
@@ -77,7 +82,11 @@ export function MonitoringPage() {
 
       {filtered.length > 0 && (
         <div className="rounded-xl border border-white/10 bg-slate-900/60 p-4 backdrop-blur-xl">
-          <MetricsChart data={filtered} />
+          <MetricsChart
+            data={filtered}
+            ramLimitMb={server?.resources?.ram_mb}
+            diskLimitGb={server?.resources?.disk_gb}
+          />
         </div>
       )}
 

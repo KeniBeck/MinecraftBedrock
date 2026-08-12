@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
 import { MonitoringPage } from './MonitoringPage'
@@ -8,6 +9,12 @@ import { useMonitoringStore, type MonitoringSnapshot } from '@/stores/monitoring
 
 vi.mock('@/hooks/useServerMonitoring', () => ({
   useServerMonitoring: vi.fn(),
+}))
+
+vi.mock('@/lib/api/servers', () => ({
+  getServer: vi.fn(),
+  listServers: vi.fn(),
+  serverKeys: { all: ['servers'], detail: (id: string) => ['server', id] },
 }))
 
 vi.mock('recharts', async (importOriginal) => {
@@ -35,12 +42,15 @@ function snapshot(overrides: Partial<MonitoringSnapshot> = {}): MonitoringSnapsh
 }
 
 function renderPage() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
-    <MemoryRouter initialEntries={['/servers/srv-1/monitoring']}>
-      <Routes>
-        <Route path="/servers/:serverId/monitoring" element={<MonitoringPage />} />
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/servers/srv-1/monitoring']}>
+        <Routes>
+          <Route path="/servers/:serverId/monitoring" element={<MonitoringPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   )
 }
 

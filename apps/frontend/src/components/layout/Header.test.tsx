@@ -42,6 +42,7 @@ function renderHeader(route = '/') {
         <Routes>
           <Route path="/servers/:serverId" element={<div data-testid="detail-page" />} />
           <Route path="/servers/:serverId/console" element={<div data-testid="console-page" />} />
+          <Route path="/servers/:serverId/monitoring" element={<div data-testid="monitoring-page" />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -83,6 +84,28 @@ describe('Header — selector de servidor', () => {
     await user.click(screen.getByTestId('server-option-s2'))
 
     expect(useActiveServer.getState().activeServerId).toBe('s2')
+  })
+
+  it('conserva la subpágina al cambiar de servidor desde una ruta hija', async () => {
+    const user = userEvent.setup()
+    vi.mocked(listServers).mockResolvedValue([
+      makeServer('s1', 'Survival', 'running'),
+      makeServer('s2', 'Skyblock', 'stopped'),
+    ])
+    useActiveServer.getState().setActiveServer('s1')
+
+    renderHeader('/servers/s1/monitoring')
+    await waitFor(() => expect(screen.getByTestId('server-selector')).toBeInTheDocument())
+    expect(screen.getByTestId('monitoring-page')).toBeInTheDocument()
+
+    await user.click(screen.getByTestId('server-selector'))
+    await waitFor(() => expect(screen.getByTestId('server-option-s2')).toBeInTheDocument())
+    await user.click(screen.getByTestId('server-option-s2'))
+
+    expect(useActiveServer.getState().activeServerId).toBe('s2')
+    // Sigue en la misma subpágina, con el id del nuevo servidor.
+    expect(screen.getByTestId('monitoring-page')).toBeInTheDocument()
+    expect(screen.queryByTestId('detail-page')).not.toBeInTheDocument()
   })
 
   it('muestra el estado de cada servidor en el dropdown', async () => {

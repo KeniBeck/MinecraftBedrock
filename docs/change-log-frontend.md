@@ -1474,3 +1474,50 @@ backend no podía parsear el formulario.
   `ws://…/monitoring/ws?token=` emite `SERVER.STATE` scope `monitoring` con
   `{state, status, latency_ms, players, players_max, cpu, ram_mb, disk_mb}`,
   `ts` y `seq` crecientes cada ~5 s ✅.
+
+## Fase 6 — Monitoring bis: fixes de QA (dropdown + gráficos)
+
+> **Fecha**: 2026-08-12
+> **Origen**: QA de la página de Monitoring. (1) El dropdown de servidores, al
+> estar en una subpágina (monitoring/backups/mundos/…), llevaba SIEMPRE al
+> detalle `/servers/:id` en vez de cambiar el id manteniendo la página actual.
+> (2) Los gráficos se veían "toscos" (áreas que arrancan en 0, picos angulosos)
+> y la RAM sin límite dominaba el eje Y con valores absolutos (MB), dando la
+> impresión de que algo fallaba.
+
+### Fix 1 — Dropdown conserva la subpágina
+
+`Header.selectServer` detecta la subpágina actual con `pathname.match(/^\/servers\/[^/]+\/([^/]+)/)`
+y navega a `/servers/{nuevoId}/{subpagina}` en vez de `/servers/{nuevoId}`. Si
+no hay subpágina (detalle exacto u otra ruta), sigue yendo al detalle. Los
+datos del nuevo servidor cargan en la misma página.
+
+### Fix 2 — Gráficos fluidos y eje coherente
+
+- **Curvas `natural`** (spline) + `baseValue="dataMin"`: las áreas arrancan en
+  el mínimo de los datos, no en 0 → look moderno, sin "picos rotos".
+- **Normalización a % con límite del servidor** (la idea pedida: el límite lo
+  pone el servidor):
+  - CPU: ya viene en %.
+  - RAM: `ram_mb / ramLimitMb * 100` (límite de `useServer().resources.ram_mb`).
+  - Disco: `disk_mb / (diskLimitGb * 1024) * 100`.
+  - Jugadores: `players / players_max * 100`.
+  - Fallback sin límite configurado: RAM usa el máximo visto (evita el pico).
+- Eje Y fijo `[0, 100] %` → todas las series comparables, sin que `ram_mb`
+  bruto descoloque la escala.
+- `MonitoringPage` ahora consulta `useServer(serverId)` para pasar los límites
+  al chart.
+
+### Archivos
+
+| Archivo | Cambio |
+|---|---|
+| `src/components/layout/Header.tsx` | `selectServer` conserva la subpágina |
+| `src/components/layout/Header.test.tsx` | Test nuevo: subpágina conservada al cambiar servidor |
+| `src/features/monitoring/components/MetricsChart.tsx` | Curvas natural + baseValue dataMin + normalización a % (props `ramLimitMb`/`diskLimitGb`) |
+| `src/features/monitoring/MonitoringPage.tsx` | Pasa `useServer(...).resources` al chart |
+| `src/features/monitoring/MonitoringPage.test.tsx` | Wrapper `QueryClientProvider` (la página usa `useServer`) |
+
+### Verificación
+
+- `tsc` ✅ · `eslint` ✅ · `vitest` (**120 passed**, 1 nuevo) ✅ · `build` ✅.

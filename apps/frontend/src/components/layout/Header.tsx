@@ -1,4 +1,4 @@
-import { useMatch, useNavigate } from 'react-router-dom'
+import { useLocation, useMatch, useNavigate } from 'react-router-dom'
 import {
   Check,
   ChevronDown,
@@ -37,6 +37,7 @@ import { cn } from '@/lib/utils'
  */
 export function Header() {
   const navigate = useNavigate()
+  const { pathname } = useLocation()
   const identity = useAuthStore((state) => state.identity)
   const clear = useAuthStore((state) => state.clear)
   const activeServerId = useActiveServer((state) => state.activeServerId)
@@ -58,9 +59,19 @@ export function Header() {
 
   const isOnline = activeServer?.state === 'running' || activeServer?.state === 'starting'
 
+  /** Subpágina actual dentro de `/servers/:id/...` (o `null` si no la hay). */
+  const currentSub = (() => {
+    const match = pathname.match(/^\/servers\/[^/]+\/([^/]+)/)
+    return match?.[1] ?? null
+  })()
+
   function selectServer(serverId: string) {
     setActiveServer(serverId)
-    navigate(`/servers/${serverId}`)
+    // Conservar la subpágina actual: si estamos en `/servers/:id/monitoring`,
+    // cambiar solo el id → `/servers/:nuevoId/monitoring` (los datos del nuevo
+    // servidor cargan en la misma página). En el detalle exacto o fuera de una
+    // ruta de servidor, ir al detalle.
+    navigate(currentSub ? `/servers/${serverId}/${currentSub}` : `/servers/${serverId}`)
   }
 
   function handleLogout() {

@@ -3237,6 +3237,18 @@ lista reconciliada, 201) y si falla, fallback a `GET /worlds` (metadata). Así:
   `SERVER.STATE` scope `monitoring` con el payload de 8 campos, `ts` y `seq`
   crecientes cada ~5 s ✅.
 
+## 35. Fixes de QA de Monitoring (dropdown + gráficos)
+
+> **Fecha**: 2026-08-12. Solo frontend (sin cambios de backend): el dropdown de
+> servidores perdía la subpágina al cambiar de servidor, y los gráficos usaban
+> valores absolutos (RAM en MB) con curvas angulosas. Se documentan en
+> `docs/change-log-frontend.md` (Fase 6 — Monitoring bis).
+
+### Verificación
+
+- Frontend: `tsc` ✅ · `eslint` ✅ · `vitest` **120 passed** (1 nuevo) ✅ ·
+  `build` ✅.
+
 ## 33. UI de Backups (cierre de la Fase 4)
 
 > **Fecha**: 2026-08-12. Sin cambios de backend: el módulo Backup (paso 13)
