@@ -49,7 +49,7 @@ function openSocket(serverId: string, token: string, entry: SharedEntry): void {
       disk_mb: typeof p.disk_mb === 'number' ? p.disk_mb : null,
     }
     entry.attempt = 0
-    useMonitoringStore.getState().setSnapshot(serverId, snapshot)
+    useMonitoringStore.getState().setSnapshot(serverId, snapshot, message.ts)
   }
   entry.socket.onclose = () => {
     if (entry.closed) return

@@ -3220,6 +3220,23 @@ lista reconciliada, 201) y si falla, fallback a `GET /worlds` (metadata). Así:
   volver a escribirlo); el default del juego se obtiene enviando el ajuste
   vacío desde la UI no está soportado — los campos vacíos no se envían.
 
+## 34. UI de Monitoring (Fase 6 — parte 1)
+
+> **Fecha**: 2026-08-12. Sin cambios de backend: el WS de monitoring (ADR-002)
+> ya estaba completo. Se añadió la página frontend de monitoreo con gráficos
+> Recharts. Se verificó que **no existe** `GET /servers/{id}/metrics` (ni en el
+> router ni en la facade) → el frontend usa solo el WS en vivo y filtra el
+> histórico en memoria; discrepancias documentadas en `docs/change-log-frontend.md`
+> (Fase 6 — Monitoring).
+
+### Verificación
+
+- Frontend: `tsc` ✅ · `eslint` ✅ · `vitest` **119 passed** (16 nuevos) ✅ ·
+  `build` ✅.
+- E2E contra el backend real: el WS `/servers/{id}/monitoring/ws?token=` emite
+  `SERVER.STATE` scope `monitoring` con el payload de 8 campos, `ts` y `seq`
+  crecientes cada ~5 s ✅.
+
 ## 33. UI de Backups (cierre de la Fase 4)
 
 > **Fecha**: 2026-08-12. Sin cambios de backend: el módulo Backup (paso 13)

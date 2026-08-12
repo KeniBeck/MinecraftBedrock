@@ -1407,3 +1407,70 @@ backend no podía parsear el formulario.
   - `POST /backups/{id}/restore` → 200 ✅
   - `DELETE /backups/{id}` → 204 ✅
   - `POST /backups/prune {keep_last_n: 0}` → 200 ✅
+
+## Fase 6 — Monitoring (métricas y gráficos)
+
+> **Fecha**: 2026-08-12
+> **Alcance**: página de monitoreo con gráficos en tiempo real de
+> CPU/RAM/Jugadores/Disco, selector de rango temporal e integración con el WS
+> de monitoring. Primera pieza de la Fase 6 (Scheduler, Permission y
+> Configuration quedan pendientes de confirmación).
+
+### Decisiones
+
+- **No existe REST histórico**: se verificó `modules/monitoring/api/router.py`
+  (solo el WS `/servers/{id}/monitoring/ws`), `schemas.py` (docstring: "No hay
+  REST en esta iteración") y la facade (sin `get_metrics`). El plan asumía un
+  `GET /servers/{id}/metrics` opcional → **no se implementa polling REST**; los
+  datos vienen solo del WS en vivo y el selector de rango filtra el histórico
+  en memoria.
+- **Se amplió `useMonitoringStore`**: el plan asumía `snapshots:
+  Record<string, MetricSample[]>` con histórico, pero el store real solo
+  guardaba el ÚLTIMO snapshot (`Record<string, MonitoringSnapshot>`). Se añadió
+  `history: Record<string, MetricSample[]>` (con `ts`, tope `MAX_SNAPSHOTS`
+  = 2000 ≈ 2.7 h a 5 s) manteniendo `snapshots`/`currentSnapshot`/`clear`
+  intactos para no romper StatCards/Header.
+- **`useServerMonitoring`** ahora pasa el `ts` del envelope al store (campo que
+  ya venía del WS).
+- Gráficos de área con gradiente (Recharts), tema oscuro: CPU = cyan, RAM =
+  violeta, Jugadores = verde, Disco = naranja; cada serie tiene toggle.
+- El rango filtra en memoria por `ts` (`filterByRange`); el rango más largo
+  (7d) muestra solo lo acumulado (aceptable, no hay histórico persistente).
+
+### Discrepancias con el plan (verificadas contra el backend real)
+
+1. **`GET /servers/{id}/metrics` NO existe** (ni en el router ni en la facade).
+   Se usa solo el WS; no hay histórico persistente.
+2. **`useMonitoringStore.snapshots` era `Record<string, MonitoringSnapshot>`
+   (solo el último), no `Record<string, MetricSample[]>`**. Se añadió `history`
+   sin romper los consumidores existentes (`currentSnapshot(snapshots,
+   serverId)` mantiene su firma real).
+3. **Payload WS real** = `{state, status, latency_ms, players, players_max,
+   cpu, ram_mb, disk_mb}` — 8 campos, sin campos extra. Con el servidor parado
+   `ram_mb`/`disk_mb` vienen `0.0` (número) y `cpu` `null`.
+
+### Archivos
+
+| Archivo | Cambio |
+|---|---|
+| `src/stores/monitoring.ts` | Añadido `history: Record<string, MetricSample[]>` + `MAX_SNAPSHOTS`; `setSnapshot` con `ts` |
+| `src/hooks/useServerMonitoring.ts` | Pasa `message.ts` al `setSnapshot` |
+| `src/features/monitoring/hooks.ts` | `TIME_RANGES`, `rangeDurationMs`, `filterByRange`, `useMonitoringHistory` |
+| `src/features/monitoring/MonitoringPage.tsx` | Página: stat cards en vivo + selector + chart |
+| `src/features/monitoring/components/MetricsChart.tsx` | Área Recharts con 4 series toggleables |
+| `src/features/monitoring/components/TimeRangeSelector.tsx` | Botones 15m/1h/6h/24h/7d |
+| `src/features/monitoring/hooks.test.ts` | 7 tests (rangos + filtro) |
+| `src/features/monitoring/components/TimeRangeSelector.test.tsx` | 2 tests |
+| `src/features/monitoring/components/MetricsChart.test.tsx` | 3 tests |
+| `src/features/monitoring/MonitoringPage.test.tsx` | 4 tests |
+| `src/app/router.tsx` | Ruta `/servers/:serverId/monitoring` |
+| `src/components/layout/Sidebar.tsx` | Ítem "Monitoreo" habilitado |
+
+### Verificación
+
+- `tsc` ✅ · `eslint` ✅ · `vitest` (**119 passed**, 16 nuevos) ✅ ·
+  `build` ✅.
+- E2E contra el backend real (JWT dev `super_admin`, servidor `…c39a2`):
+  `ws://…/monitoring/ws?token=` emite `SERVER.STATE` scope `monitoring` con
+  `{state, status, latency_ms, players, players_max, cpu, ram_mb, disk_mb}`,
+  `ts` y `seq` crecientes cada ~5 s ✅.

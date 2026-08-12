@@ -41,7 +41,7 @@ const SIDEBAR_ITEMS: SidebarItem[] = [
   { label: 'Mundos', icon: Globe, href: '/servers', sub: 'worlds', disabled: false },
   { label: 'Backups', icon: Archive, href: '/servers', sub: 'backups', disabled: false },
   { label: 'Programador', icon: CircleGauge, disabled: true },
-  { label: 'Monitoreo', icon: Bell, disabled: true },
+  { label: 'Monitoreo', icon: Bell, href: '/servers', sub: 'monitoring', disabled: false },
   { label: 'Plantillas', icon: Boxes, href: '/servers', sub: 'templates', disabled: false },
   { label: 'Permisos', icon: Shield, disabled: true },
   { label: 'Configuración', icon: Settings2, disabled: true },
