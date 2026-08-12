@@ -1189,3 +1189,73 @@ backend no podía parsear el formulario.
   el commit de modales) · `eslint` ✅ · `vitest` (**79 passed**) ✅ · `build` ✅.
 - `rg "DialogContent|DialogHeader|<Label htmlFor"` en los diálogos refactorizados
   → cero (todo pasa por `Modal`/`FormDialog`/`FormField`).
+
+## Fase 4 — Parte 3: Jugadores (bans/kick)
+
+> **Fecha**: 2026-08-12
+> **Origen**: Parte 3 de la Fase 4 (después de Plantillas). Página de jugadores:
+> jugadores online, resolución gamertag → XUID, kick y bans (por servidor y
+> global). El contrato se verificó contra el router real
+> (`apps/backend/src/app/modules/player/api/router.py`), que difiere del
+> borrador del plan en varios puntos (ver Discrepancias).
+
+### Alcance
+
+- Ruta `/servers/:serverId/players` + ítem de sidebar "Jugadores" habilitado.
+- Buscador de jugador por gamertag: `GET /servers/{id}/players/search?name=`
+  (resuelve a XUID; `PLAYER.NOT_FOUND` = no está en la caché del panel).
+- Jugadores online: `GET /servers/{id}/players/online` → sesiones abiertas
+  (solo XUID + joined_at + playtime; el gamertag NO viene en este endpoint).
+- Acciones por jugador online: Kick (`player.manage`) y Ban por servidor
+  (`permission.write`) — botones visibles según `useCan`.
+- Ban global: `POST /players/bans/global` (solo admin/super_admin,
+  `player.ban.global`) — botón oculto para viewer/operator.
+- Nuevos tipos/API en `src/lib/api/players.ts` y hooks en
+  `src/features/players/hooks.ts` (query keys, retry `false` para que el 404
+  de `PLAYER.NOT_FOUND` no reintente).
+
+### Discrepancias con el borrador (verificadas contra el backend real)
+
+1. **Ban por servidor usa `permission.write`, no `player.manage`** — el
+   `player.manage` solo autoriza el kick (`router.py:249/274/298`).
+2. **No hay endpoint para LISTAR bans** (ni globales ni por servidor). Solo se
+   puede banear/desbanear por id conocido; la página no muestra una lista de
+   bans activos.
+3. **Ban por servidor responde 204 SIN body** (no `GlobalBanResponse`); el path
+   usa `{player_id}` (el XUID), mientras el kick usa `{xuid}`.
+4. **`GET /players/search` devuelve UN objeto** `ResolvePlayerResponse
+   {server_id, name, xuid}`, no una lista; y 404 si no resuelve.
+5. **`online` devuelve `PlaySessionResponse`** sin gamertag → los nombres se
+   resuelven con el buscador, no en la lista online.
+6. **Kick devuelve `CommandAckResponse`** `{server_id, command, priority, seq,
+   at}` (202) sin body de entrada; `BanPlayerRequest` = `{reason?, expires_at?}`.
+7. **Errores**: `PLAYER.NOT_FOUND`/`PLAYER.BAN_NOT_FOUND` (404),
+   `PLAYER.INVALID_PAYLOAD`. No existe `CONSOLE.SERVER_OFFLINE` en el dominio.
+
+### Archivos
+
+| Archivo | Cambio |
+|---|---|
+| `src/lib/api/players.ts` | Nuevo: tipos + funciones de la API Player |
+| `src/features/players/hooks.ts` | Nuevo: queries/mutations Player |
+| `src/features/players/PlayersPage.tsx` | Nuevo: página de jugadores |
+| `src/features/players/components/OnlinePlayerRow.tsx` | Nuevo: fila de jugador online |
+| `src/features/players/components/BanPlayerDialog.tsx` | Nuevo: ban por servidor |
+| `src/features/players/components/GlobalBanDialog.tsx` | Nuevo: ban global (admin) |
+| `src/features/players/PlayersPage.test.tsx` | Nuevo: 8 tests |
+| `src/lib/format.ts` | Nuevo: `formatDuration` |
+| `src/app/router.tsx` | Ruta `/servers/:serverId/players` |
+| `src/components/layout/Sidebar.tsx` | Ítem "Jugadores" habilitado |
+| `src/lib/auth/useCan.ts` | Mínimos de rol: `player.manage`, `permission.write`, `player.ban.global` |
+
+### Verificación
+
+- `tsc` ✅ · `eslint` ✅ · `vitest` (**87 passed**, 8 nuevos) ✅ · `build` ✅.
+- E2E contra el backend real (token JWT dev de `super_admin`):
+  - `GET /players/online` → `[]` (lista, sin wrapper) ✅
+  - `GET /players/search?name=Notch` → 404 `PLAYER.NOT_FOUND` ✅
+  - `POST /players/bans/global` → 201 con `GlobalBanResponse`; `DELETE` → 204 ✅
+  - `POST /servers/{id}/players/{xuid}/ban` y `/kick` con XUID fake → 404
+    `PLAYER.NOT_FOUND` (validación de caché) ✅
+- Criterio de parada del plan ("banear a un jugador conectado lo expulsa en
+  vivo") pendiente de prueba manual en navegador con un jugador real.

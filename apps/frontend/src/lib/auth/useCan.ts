@@ -19,6 +19,12 @@ const PANEL_MIN_ROLES: Record<string, readonly string[]> = {
   // `server.console.write` también es WRITE_ACTION (operator+) — oculta el
   // input de comandos de la consola sin permiso.
   'server.console.write': ['operator', 'admin', 'super_admin'],
+  // `player.manage` (kick) es WRITE_ACTION → operator+.
+  'player.manage': ['operator', 'admin', 'super_admin'],
+  // `permission.write` (ban/unban por servidor) es WRITE_ACTION → operator+.
+  'permission.write': ['operator', 'admin', 'super_admin'],
+  // `player.ban.global` es PANEL_ACTION → solo admin/super_admin.
+  'player.ban.global': ['admin', 'super_admin'],
 }
 
 export function rolesCan(action: string, roles: readonly string[] | undefined): boolean {
