@@ -1259,3 +1259,71 @@ backend no podía parsear el formulario.
     `PLAYER.NOT_FOUND` (validación de caché) ✅
 - Criterio de parada del plan ("banear a un jugador conectado lo expulsa en
   vivo") pendiente de prueba manual en navegador con un jugador real.
+
+## Fase 4 — Parte 3 bis: Jugadores (search parcial + listado de bans)
+
+> **Fecha**: 2026-08-12
+> **Origen**: Feedback de QA sobre la Parte 3: (1) el ban global no cerraba con
+> la X ni Cancelar, (2) la búsqueda era exacta (no encontraba "Cra" →
+> "CrafterTec"), (3) no había lista de baneados → imposible desbanear, (4) el
+> buscador nunca mostraba "Desbanear". Se aprobó resolverlo en el backend
+> (search parcial + endpoints de listado) en lugar de solo maquillar el front.
+
+### Backend (nuevo contrato)
+
+- `GET /servers/{id}/players/search?name=` ahora devuelve **`list[ResolvePlayerResponse]`**
+  por coincidencia parcial case-insensitive (ILIKE, orden por `last_seen_at`
+  desc, límite 10). Ya no 404 ni devuelve un solo objeto. Mover la ruta ANTES
+  de `/servers/{id}/players/{xuid}` para que `bans` no colisione con `{xuid}`.
+- `GET /servers/{id}/players/bans` → `list[ServerBanResponse]` (nuevo schema:
+  id, scope, server_id, gamertag, xuid, reason, banned_by, created_at,
+  expires_at), `player.list`, orden por `created_at` desc.
+- `GET /players/bans/global` → `list[GlobalBanResponse]`, admin global
+  (`player.ban.global`), orden por `created_at` desc.
+- `PlayerRepositoryPort.search_players(term, limit=10)`; `PlayerBanRepositoryPort`
+  `list_global_bans()` / `list_server_bans(server_id)` — implementados en
+  Postgres (`ilike`, `%term%`) y en memoria.
+
+### Frontend
+
+- `searchPlayer` ahora devuelve lista; los resultados se muestran como filas.
+- Sección "Jugadores baneados" (globales + este servidor combinados, más
+  recientes primero) siempre visible para quien puede escribir/admin — "a la
+  mano", sin depender del buscador. Botón "Desbanear" con confirmación.
+- Un resultado de búsqueda que está baneado muestra "Desbanear" en vez de
+  Kick/Ban; si no, mantiene Kick/Ban.
+- Fix del cierre: `GlobalBanDialog`/`BanPlayerDialog` ahora propagan SIEMPRE
+  `onOpenChange(next)` al padre (antes se tragaban el close → no cerraban con
+  X ni Cancelar).
+- Nuevo `ServerBanResponse`, `formatDateTime` en `src/lib/format.ts`, keys de
+  caché `serverBans`/`globalBans`, invalidación de listas tras ban/unban.
+
+### Archivos
+
+| Archivo | Cambio |
+|---|---|
+| `apps/backend/.../player/domain/repository.py` | Ports: `search_players`, `list_global_bans`, `list_server_bans` |
+| `apps/backend/.../player/infrastructure/postgres_repository.py` | Implementaciones (ILIKE + orden) |
+| `apps/backend/.../player/infrastructure/memory.py` | Implementaciones en memoria |
+| `apps/backend/.../player/application/facade.py` | `search_players`, `list_global_bans`, `list_server_bans` |
+| `apps/backend/.../player/api/schemas.py` | Nuevo `ServerBanResponse` |
+| `apps/backend/.../player/api/router.py` | Search → lista; rutas `GET */players/bans` |
+| `apps/backend/tests/test_api_integration.py` | Search parcial + listados (6 tests Player) |
+| `apps/frontend/src/lib/api/players.ts` | Search → lista, `ServerBanResponse`, `listGlobalBans`/`listServerBans`, keys |
+| `apps/frontend/src/features/players/hooks.ts` | `useGlobalBans`, `useServerBans`; invalidación de listas |
+| `apps/frontend/src/features/players/PlayersPage.tsx` | Resultados en lista, sección de baneados, desbanear |
+| `apps/frontend/src/features/players/banRows.ts` | Nuevo: `toBanRows` (conversión/fusión de listas) |
+| `apps/frontend/src/features/players/components/BanListSection.tsx` | Nuevo: lista de baneados con "Desbanear" |
+| `apps/frontend/src/features/players/PlayersPage.test.tsx` | 6 tests nuevos (14 total) |
+| `apps/frontend/src/lib/format.ts` | Nuevo `formatDateTime` |
+
+### Verificación
+
+- Backend: `pytest` **909 passed** · `ruff` ✅ · `mypy` ✅.
+- Frontend: `tsc` ✅ · `eslint` ✅ · `vitest` (**93 passed**, 6 nuevos) ✅ ·
+  `build` ✅.
+- E2E contra backend real (JWT dev `super_admin`):
+  - `search?name=Cra` → `[{"name":"CrafterTec","xuid":"2535473172645342"}]` ✅
+  - ban por servidor 204 → `GET .../players/bans` lista el ban → DELETE 204 →
+    lista `[]` ✅
+  - ban global 201 → `GET /players/bans/global` lista → DELETE 204 → `[]` ✅

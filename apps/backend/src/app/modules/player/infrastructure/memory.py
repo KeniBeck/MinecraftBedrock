@@ -29,6 +29,12 @@ class InMemoryPlayerRepository:
             return None
         return max(matches, key=lambda p: p.last_seen_at)
 
+    async def search_players(self, term: str, limit: int = 10) -> list[Player]:
+        lowered = term.lower()
+        matches = [p for p in self._players.values() if lowered in p.name.lower()]
+        matches.sort(key=lambda p: p.last_seen_at, reverse=True)
+        return matches[:limit]
+
     async def save_player(self, player: Player) -> None:
         self._players[player.xuid] = player
 
@@ -95,6 +101,9 @@ class InMemoryPlayerBanRepository:
                 return ban
         return None
 
+    async def list_global_bans(self) -> list[GlobalBan]:
+        return sorted(self._global_bans.values(), key=lambda b: b.created_at, reverse=True)
+
     async def save_global_ban(self, ban: GlobalBan) -> None:
         self._global_bans[ban.id] = ban
 
@@ -136,6 +145,10 @@ class InMemoryPlayerBanRepository:
             ):
                 return ban
         return None
+
+    async def list_server_bans(self, server_id: str) -> list[ServerBan]:
+        bans = [b for b in self._server_bans.values() if b.server_id == server_id]
+        return sorted(bans, key=lambda b: b.created_at, reverse=True)
 
     async def save_server_ban(self, ban: ServerBan) -> None:
         self._server_bans[ban.id] = ban

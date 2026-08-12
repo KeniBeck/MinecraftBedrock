@@ -23,6 +23,9 @@ class PlayerRepositoryPort(Protocol):
 
     async def get_player_by_name(self, name: str) -> Player | None: ...
 
+    async def search_players(self, term: str, limit: int = 10) -> list[Player]:
+        """Búsqueda por gamertag parcial (case-insensitive), más recientes primero."""
+
     async def save_player(self, player: Player) -> None: ...
 
     async def get_open_session(self, server_id: str, xuid: str) -> PlaySession | None: ...
@@ -50,6 +53,9 @@ class PlayerBanRepositoryPort(Protocol):
 
     async def get_active_global_ban_by_gamertag(self, gamertag: str) -> GlobalBan | None: ...
 
+    async def list_global_bans(self) -> list[GlobalBan]:
+        """Todos los bans globales, más recientes primero."""
+
     async def save_global_ban(self, ban: GlobalBan) -> None: ...
 
     async def delete_global_ban(self, ban_id: str) -> bool: ...
@@ -69,6 +75,9 @@ class PlayerBanRepositoryPort(Protocol):
     async def get_active_server_ban_by_gamertag(
         self, server_id: str, gamertag: str
     ) -> ServerBan | None: ...
+
+    async def list_server_bans(self, server_id: str) -> list[ServerBan]:
+        """Bans por servidor, más recientes primero."""
 
     async def save_server_ban(self, ban: ServerBan) -> None: ...
 

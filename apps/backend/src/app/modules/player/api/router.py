@@ -31,6 +31,7 @@ from app.modules.player.api.schemas import (
     PlayerResponse,
     PlaySessionResponse,
     ResolvePlayerResponse,
+    ServerBanResponse,
 )
 from app.modules.player.application.commands import (
     BanPlayerGloballyCommand,
@@ -40,7 +41,11 @@ from app.modules.player.application.commands import (
     UnbanPlayerOnServerCommand,
 )
 from app.modules.player.application.facade import PlayerFacade
-from app.modules.player.application.results import GlobalBanView, PlaySessionView
+from app.modules.player.application.results import (
+    GlobalBanView,
+    PlaySessionView,
+    ServerBanView,
+)
 from app.modules.player.domain.errors import (
     PlayerBanNotFoundError,
     PlayerNotFoundError,
@@ -88,6 +93,20 @@ def _global_ban_response(view: GlobalBanView) -> GlobalBanResponse:
     )
 
 
+def _server_ban_response(view: ServerBanView) -> ServerBanResponse:
+    return ServerBanResponse(
+        id=view.id,
+        scope=view.scope,
+        server_id=view.server_id,
+        gamertag=view.gamertag,
+        xuid=view.xuid,
+        reason=view.reason,
+        banned_by=view.banned_by,
+        created_at=view.created_at,
+        expires_at=view.expires_at,
+    )
+
+
 def _not_found(server_id: str, subject: str) -> HttpError:
     return http_error(
         404,
@@ -117,20 +136,21 @@ def _handle_player_errors(exc: Exception) -> None:
 
 @router.get(
     "/servers/{server_id}/players/search",
-    response_model=ResolvePlayerResponse,
-    summary="Resolver gamertag → XUID",
+    response_model=list[ResolvePlayerResponse],
+    summary="Buscar jugadores por gamertag (coincidencia parcial)",
 )
 async def search_player(
     server_id: str,
     request: Request,
     name: str,
     identity: Identity = Depends(require_server_action("player.list")),
-) -> ResolvePlayerResponse:
+) -> list[ResolvePlayerResponse]:
     del identity
-    xuid = await _facade(request).resolve_xuid(name)
-    if xuid is None:
-        raise _not_found(server_id, name)
-    return ResolvePlayerResponse(server_id=server_id, name=name, xuid=xuid)
+    views = await _facade(request).search_players(name, limit=10)
+    return [
+        ResolvePlayerResponse(server_id=server_id, name=view.name, xuid=view.xuid)
+        for view in views
+    ]
 
 
 @router.get(
@@ -146,6 +166,21 @@ async def online_players(
     del identity
     sessions = await _facade(request).online_players(server_id)
     return [_session_response(session) for session in sessions]
+
+
+@router.get(
+    "/servers/{server_id}/players/bans",
+    response_model=list[ServerBanResponse],
+    summary="Listar bans de un servidor",
+)
+async def list_server_bans(
+    server_id: str,
+    request: Request,
+    identity: Identity = Depends(require_server_action("player.list")),
+) -> list[ServerBanResponse]:
+    del identity
+    views = await _facade(request).list_server_bans(server_id)
+    return [_server_ban_response(view) for view in views]
 
 
 @router.get(
@@ -231,6 +266,20 @@ async def unban_player_globally(
         )
     except PlayerBanNotFoundError as exc:
         _handle_player_errors(exc)
+
+
+@router.get(
+    "/players/bans/global",
+    response_model=list[GlobalBanResponse],
+    summary="Listar bans globales (panel-wide)",
+)
+async def list_global_bans(
+    request: Request,
+    identity: Identity = Depends(require_action("player.ban.global")),
+) -> list[GlobalBanResponse]:
+    del identity
+    views = await _facade(request).list_global_bans()
+    return [_global_ban_response(view) for view in views]
 
 
 # -- bans por servidor y kick (operator+, ACL por servidor) -------------------

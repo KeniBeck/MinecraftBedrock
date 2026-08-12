@@ -33,7 +33,9 @@ from app.modules.player.application.results import (
     PlayerView,
     PlaySessionView,
     ServerBanView,
+    global_ban_to_view,
     player_to_view,
+    server_ban_to_view,
     session_to_view,
 )
 from app.modules.player.application.use_cases import (
@@ -75,6 +77,11 @@ class PlayerFacade:
         player = await self.deps.repository.get_player_by_name(name)
         return player.xuid if player is not None else None
 
+    async def search_players(self, term: str, limit: int = 10) -> list[PlayerView]:
+        """Búsqueda de jugadores por gamertag parcial (case-insensitive)."""
+        players = await self.deps.repository.search_players(term, limit=limit)
+        return [player_to_view(player) for player in players]
+
     async def find_player(self, xuid: str) -> PlayerView | None:
         """Proyección del jugador por XUID (o ``None`` si no está cacheado)."""
         player = await self.deps.repository.get_player(xuid)
@@ -89,6 +96,16 @@ class PlayerFacade:
         """Jugadores con sesión abierta (presencia en vivo) en un servidor."""
         sessions = await self.deps.repository.list_open_sessions(server_id)
         return [session_to_view(session) for session in sessions]
+
+    async def list_global_bans(self) -> list[GlobalBanView]:
+        """Todos los bans globales, más recientes primero."""
+        bans = await self.deps.ban_repository.list_global_bans()
+        return [global_ban_to_view(ban) for ban in bans]
+
+    async def list_server_bans(self, server_id: str) -> list[ServerBanView]:
+        """Bans de un servidor, más recientes primero."""
+        bans = await self.deps.ban_repository.list_server_bans(server_id)
+        return [server_ban_to_view(ban) for ban in bans]
 
     async def ban_globally(self, cmd: BanPlayerGloballyCommand) -> GlobalBanView:
         return await self._ban_global.ban(cmd)

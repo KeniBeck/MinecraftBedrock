@@ -53,7 +53,9 @@ export function BanPlayerDialog({ open, onOpenChange, serverId, xuid }: BanPlaye
     <FormDialog
       open={open}
       onOpenChange={(next) => {
+        // Propagar SIEMPRE el cierre al padre (X o Cancelar), además de reset.
         if (!next) reset()
+        onOpenChange(next)
       }}
       title="Banear jugador"
       description={`Se bloqueará al jugador ${xuid} en ESTE servidor.`}

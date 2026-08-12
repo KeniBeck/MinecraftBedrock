@@ -58,6 +58,18 @@ class PostgresPlayerRepository:
             row = (await session.execute(stmt)).scalars().first()
         return player_from_row(row) if row is not None else None
 
+    async def search_players(self, term: str, limit: int = 10) -> list[Player]:
+        pattern = f"%{term}%"
+        stmt = (
+            select(PlayerRow)
+            .where(PlayerRow.name.ilike(pattern))
+            .order_by(PlayerRow.last_seen_at.desc())
+            .limit(limit)
+        )
+        async with self._session_factory() as session:
+            rows = (await session.execute(stmt)).scalars().all()
+        return [player_from_row(row) for row in rows]
+
     async def save_player(self, player: Player) -> None:
         values = player_to_row(player)
         stmt = pg_insert(PlayerRow).values(**values)
@@ -171,6 +183,12 @@ class PostgresPlayerBanRepository:
             row = (await session.execute(stmt)).scalars().first()
         return global_ban_from_row(row) if row is not None else None
 
+    async def list_global_bans(self) -> list[GlobalBan]:
+        stmt = select(GlobalBanRow).order_by(GlobalBanRow.created_at.desc())
+        async with self._session_factory() as session:
+            rows = (await session.execute(stmt)).scalars().all()
+        return [global_ban_from_row(row) for row in rows]
+
     async def save_global_ban(self, ban: GlobalBan) -> None:
         values = global_ban_to_row(ban)
         stmt = pg_insert(GlobalBanRow).values(**values)
@@ -242,6 +260,16 @@ class PostgresPlayerBanRepository:
         async with self._session_factory() as session:
             row = (await session.execute(stmt)).scalars().first()
         return server_ban_from_row(row) if row is not None else None
+
+    async def list_server_bans(self, server_id: str) -> list[ServerBan]:
+        stmt = (
+            select(ServerBanRow)
+            .where(ServerBanRow.server_id == server_id)
+            .order_by(ServerBanRow.created_at.desc())
+        )
+        async with self._session_factory() as session:
+            rows = (await session.execute(stmt)).scalars().all()
+        return [server_ban_from_row(row) for row in rows]
 
     async def save_server_ban(self, ban: ServerBan) -> None:
         values = server_ban_to_row(ban)

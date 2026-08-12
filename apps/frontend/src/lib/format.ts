@@ -12,3 +12,10 @@ export function formatDuration(totalSeconds: number): string {
   if (m > 0 || parts.length === 0) parts.push(`${m}m`)
   return parts.join(' ')
 }
+
+/** Formatea una fecha ISO como fecha+hora local legible. */
+export function formatDateTime(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleString()
+}

@@ -5,6 +5,8 @@ import {
   banPlayerOnServer,
   getPlayer,
   kickPlayer,
+  listGlobalBans,
+  listServerBans,
   onlinePlayers,
   playerKeys,
   playerSessions,
@@ -28,7 +30,7 @@ export function useOnlinePlayers(serverId: string | undefined) {
 }
 
 /**
- * `GET /servers/{id}/players/search?name=` — resuelve un gamertag a XUID.
+ * `GET /servers/{id}/players/search?name=` — búsqueda parcial de gamertags.
  * Query controlada: solo se dispara cuando `name` tiene contenido (debounce en
  * el componente); `keepPreviousData` evita el flash de loading entre términos.
  */
@@ -38,6 +40,28 @@ export function useSearchPlayer(serverId: string | undefined, name: string) {
     queryKey: playerKeys.search(serverId ?? '', trimmed),
     queryFn: () => searchPlayer(serverId!, trimmed),
     enabled: Boolean(serverId) && trimmed.length > 0,
+    refetchOnWindowFocus: false,
+    retry: false,
+  })
+}
+
+/** `GET /players/bans/global` — bans panel-wide (admin/super_admin). */
+export function useGlobalBans(enabled = true) {
+  return useQuery({
+    queryKey: playerKeys.globalBans(),
+    queryFn: () => listGlobalBans(),
+    enabled,
+    refetchOnWindowFocus: false,
+    retry: false,
+  })
+}
+
+/** `GET /servers/{id}/players/bans` — bans de un servidor. */
+export function useServerBans(serverId: string | undefined) {
+  return useQuery({
+    queryKey: playerKeys.serverBans(serverId ?? ''),
+    queryFn: () => listServerBans(serverId!),
+    enabled: Boolean(serverId),
     refetchOnWindowFocus: false,
     retry: false,
   })
@@ -71,7 +95,7 @@ export function useBanPlayerGlobally() {
   return useMutation({
     mutationFn: (data: GlobalBanRequest) => banPlayerGlobally(data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: playerKeys.all('') })
+      queryClient.invalidateQueries({ queryKey: playerKeys.globalBans() })
     },
   })
 }
@@ -82,7 +106,7 @@ export function useUnbanPlayerGlobally() {
   return useMutation({
     mutationFn: (banId: string) => unbanPlayerGlobally(banId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: playerKeys.all('') })
+      queryClient.invalidateQueries({ queryKey: playerKeys.globalBans() })
     },
   })
 }
@@ -95,6 +119,7 @@ export function useBanPlayerOnServer(serverId: string) {
       banPlayerOnServer(serverId, playerId, payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: playerKeys.online(serverId) })
+      queryClient.invalidateQueries({ queryKey: playerKeys.serverBans(serverId) })
     },
   })
 }
@@ -106,6 +131,7 @@ export function useUnbanPlayerOnServer(serverId: string) {
     mutationFn: (playerId: string) => unbanPlayerOnServer(serverId, playerId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: playerKeys.online(serverId) })
+      queryClient.invalidateQueries({ queryKey: playerKeys.serverBans(serverId) })
     },
   })
 }

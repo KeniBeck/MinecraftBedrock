@@ -3219,3 +3219,46 @@ lista reconciliada, 201) y si falla, fallback a `GET /worlds` (metadata). Así:
 - No se soporta "limpiar" un ajuste a `None` desde `UpdateWorldCommand` (solo
   volver a escribirlo); el default del juego se obtiene enviando el ajuste
   vacío desde la UI no está soportado — los campos vacíos no se envían.
+
+## 32. Búsqueda parcial de jugadores + listado de bans (Player)
+
+> **Fecha**: 2026-08-12. Pedido desde QA del front: (1) búsqueda de jugadores
+> por **coincidencia parcial** ("Cra" debe encontrar "CrafterTec"), (2) una
+> **lista de baneados** consultable para poder desbanear sin conocer el ban id.
+> Se toca backend (search + listados) y front (sección de baneados + botón
+> desbanear).
+
+### Cambios backend
+
+- `GET /servers/{id}/players/search?name=` ahora devuelve **`list[ResolvePlayerResponse]`**
+  (antes un solo objeto o 404). Coincidencia parcial case-insensitive por
+  `ilike('%term%')`, orden por `last_seen_at` desc, límite 10. La ruta se
+  declara ANTES de `/servers/{id}/players/{xuid}` para que `bans` no colisione
+  con el path param.
+- Nuevo `GET /servers/{id}/players/bans` → `list[ServerBanResponse]`
+  (`player.list`), orden `created_at` desc. Nuevo schema `ServerBanResponse`
+  (antes el ban por servidor solo respondía 204).
+- Nuevo `GET /players/bans/global` → `list[GlobalBanResponse]`
+  (`player.ban.global`), orden `created_at` desc.
+- Ports: `PlayerRepositoryPort.search_players(term, limit=10)`,
+  `PlayerBanRepositoryPort.list_global_bans()` / `list_server_bans(server_id)`.
+  Implementados en Postgres y memoria.
+- Facade: `search_players`, `list_global_bans`, `list_server_bans`.
+
+### Cambios frontend
+
+- `searchPlayer` devuelve lista; resultados en filas con estado de ban.
+- Sección "Jugadores baneados" (globales + del servidor combinados) con botón
+  "Desbanear" + confirmación; visible a la mano sin depender del buscador.
+- Un jugador baneado en el buscador muestra "Desbanear" en vez de Kick/Ban.
+- Fix del cierre de `GlobalBanDialog`/`BanPlayerDialog` (la X y Cancelar no
+  cerraban: el handler no propagaba `onOpenChange(next)` al padre).
+
+### Verificación
+
+- Backend: **909 passed**; `ruff` ✅; `mypy` ✅. Nuevos tests de search parcial
+  y listados en `test_api_integration.py` (`TestPlayerApi`).
+- Frontend: `tsc` ✅; `eslint` ✅; `vitest` **93 passed** (6 nuevos) ✅;
+  `build` ✅.
+- E2E backend real: `search?name=Cra` → `CrafterTec`; ban por servidor 204 →
+  list → DELETE 204 → `[]`; ban global 201 → list → DELETE 204 → `[]`.

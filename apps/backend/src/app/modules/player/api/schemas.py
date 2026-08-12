@@ -13,6 +13,18 @@ class ResolvePlayerResponse(BaseModel):
     xuid: str
 
 
+class ServerBanResponse(BaseModel):
+    id: str
+    scope: str
+    server_id: str
+    gamertag: str
+    xuid: str | None
+    reason: str | None
+    banned_by: str
+    created_at: datetime
+    expires_at: datetime | None
+
+
 class PlayerResponse(BaseModel):
     xuid: str
     name: str

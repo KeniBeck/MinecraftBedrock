@@ -53,7 +53,9 @@ export function GlobalBanDialog({ open, onOpenChange }: GlobalBanDialogProps) {
     <FormDialog
       open={open}
       onOpenChange={(next) => {
+        // Propagar SIEMPRE el cierre al padre (X o Cancelar), además de reset.
         if (!next) reset()
+        onOpenChange(next)
       }}
       title="Ban global"
       description="Bloquea al jugador en TODOS los servidores del panel. Solo admin/super_admin."

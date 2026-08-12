@@ -989,20 +989,39 @@ class TestBackupApi:
 
 
 class TestPlayerApi:
-    def test_resolve_y_find_player(self, client: TestClient) -> None:
+    def test_search_parcial_y_find_player(self, client: TestClient) -> None:
         auth = login(client, "root")
         server_id = create_server(client, auth)
-        seed_player(container_of(client), server_id, "XUID-1", "Steve")
+        seed_player(container_of(client), server_id, "XUID-1", "CrafterTec")
 
-        resolved = client.get(
-            f"/api/v1/servers/{server_id}/players/search", params={"name": "Steve"}, headers=auth
+        exact = client.get(
+            f"/api/v1/servers/{server_id}/players/search",
+            params={"name": "CrafterTec"},
+            headers=auth,
         )
-        assert resolved.status_code == 200
-        assert resolved.json()["xuid"] == "XUID-1"
+        assert exact.status_code == 200
+        assert exact.json()[0]["xuid"] == "XUID-1"
+        assert exact.json()[0]["name"] == "CrafterTec"
+
+        partial = client.get(
+            f"/api/v1/servers/{server_id}/players/search",
+            params={"name": "Cra"},
+            headers=auth,
+        )
+        assert partial.status_code == 200
+        assert [p["xuid"] for p in partial.json()] == ["XUID-1"]
+
+        no_match = client.get(
+            f"/api/v1/servers/{server_id}/players/search",
+            params={"name": "Nobody"},
+            headers=auth,
+        )
+        assert no_match.status_code == 200
+        assert no_match.json() == []
 
         found = client.get(f"/api/v1/servers/{server_id}/players/XUID-1", headers=auth)
         assert found.status_code == 200
-        assert found.json()["name"] == "Steve"
+        assert found.json()["name"] == "CrafterTec"
 
         missing = client.get(f"/api/v1/servers/{server_id}/players/XUID-999", headers=auth)
         assert missing.status_code == 404
@@ -1035,6 +1054,12 @@ class TestPlayerApi:
             headers=auth,
         )
         assert banned.status_code == 204
+
+        listed = client.get(f"/api/v1/servers/{server_id}/players/bans", headers=auth)
+        assert listed.status_code == 200
+        assert listed.json()[0]["gamertag"] == "Steve"
+        assert listed.json()[0]["reason"] == "cheats"
+        assert listed.json()[0]["server_id"] == server_id
 
         ban = asyncio.run(
             container.player_facade.deps.ban_repository.get_server_ban_by_gamertag(
@@ -1071,6 +1096,10 @@ class TestPlayerApi:
         assert created.json()["scope"] == "global"
         assert created.json()["gamertag"] == "Steve"
         ban_id: str = created.json()["id"]
+
+        listed = client.get("/api/v1/players/bans/global", headers=auth)
+        assert listed.status_code == 200
+        assert [ban["id"] for ban in listed.json()] == [ban_id]
 
         removed = client.delete(f"/api/v1/players/bans/global/{ban_id}", headers=auth)
         assert removed.status_code == 204

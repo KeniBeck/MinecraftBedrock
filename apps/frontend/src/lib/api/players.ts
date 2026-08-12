@@ -12,20 +12,23 @@ export const playerKeys = {
   sessions: (serverId: string, xuid: string) =>
     [...playerKeys.detail(serverId, xuid), 'sessions'] as const,
   search: (serverId: string, name: string) => [...playerKeys.all(serverId), 'search', name] as const,
+  serverBans: (serverId: string) => [...playerKeys.all(serverId), 'bans'] as const,
+  globalBans: () => ['players', 'global', 'bans'] as const,
 }
 
 /**
  * Tipos del módulo Player — verificados contra
  * `apps/backend/src/app/modules/player/api/schemas.py` y el router real:
- * - `/servers/{id}/players/search?name=` → ResolvePlayerResponse (solo uno, no lista)
+ * - `/servers/{id}/players/search?name=` → list[ResolvePlayerResponse] (parcial)
  * - `/servers/{id}/players/online` → list[PlaySessionResponse] (sin gamertag)
  * - `/servers/{id}/players/{xuid}` → PlayerResponse
  * - `/servers/{id}/players/{xuid}/sessions` → list[PlaySessionResponse]
- * - bans: POST/DELETE sin listado; ban por servidor usa `{player_id}` y responde 204
+ * - `/players/bans/global` → list[GlobalBanResponse]; ban por servidor 204
+ * - `/servers/{id}/players/bans` → list[ServerBanResponse]
  * - kick: `{xuid}` y responde CommandAckResponse (202)
  */
 
-/** `ResolvePlayerResponse` — resolver gamertag → XUID. */
+/** `ResolvePlayerResponse` — un jugador (name + XUID). */
 export interface ResolvePlayerResponse {
   server_id: string
   name: string
@@ -69,10 +72,23 @@ export interface GlobalBanRequest {
   expires_at?: string | null
 }
 
-/** `GlobalBanResponse` — ban global creado (201). */
+/** `GlobalBanResponse` — ban global creado (201) o listado. */
 export interface GlobalBanResponse {
   id: string
   scope: string
+  gamertag: string
+  xuid: string | null
+  reason: string | null
+  banned_by: string
+  created_at: string
+  expires_at: string | null
+}
+
+/** `ServerBanResponse` — ban por servidor. */
+export interface ServerBanResponse {
+  id: string
+  scope: string
+  server_id: string
   gamertag: string
   xuid: string | null
   reason: string | null
@@ -87,12 +103,12 @@ export interface BanPlayerRequest {
   expires_at?: string | null
 }
 
-/** `GET /servers/{id}/players/search?name=` — gamertag → XUID. */
+/** `GET /servers/{id}/players/search?name=` — búsqueda parcial (case-insensitive). */
 export async function searchPlayer(
   serverId: string,
   name: string,
-): Promise<ResolvePlayerResponse> {
-  const { data } = await apiClient.get<ResolvePlayerResponse>(
+): Promise<ResolvePlayerResponse[]> {
+  const { data } = await apiClient.get<ResolvePlayerResponse[]>(
     `/servers/${serverId}/players/search`,
     { params: { name } },
   )
@@ -124,6 +140,20 @@ export async function playerSessions(
   const { data } = await apiClient.get<PlaySessionResponse[]>(
     `/servers/${serverId}/players/${encodeURIComponent(xuid)}/sessions`,
     { params: { limit } },
+  )
+  return data
+}
+
+/** `GET /players/bans/global` — bans panel-wide, solo admin/super_admin. */
+export async function listGlobalBans(): Promise<GlobalBanResponse[]> {
+  const { data } = await apiClient.get<GlobalBanResponse[]>('/players/bans/global')
+  return data
+}
+
+/** `GET /servers/{id}/players/bans` — bans de un servidor. */
+export async function listServerBans(serverId: string): Promise<ServerBanResponse[]> {
+  const { data } = await apiClient.get<ServerBanResponse[]>(
+    `/servers/${serverId}/players/bans`,
   )
   return data
 }
