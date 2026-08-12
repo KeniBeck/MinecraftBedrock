@@ -10,6 +10,7 @@ import {
 } from 'recharts'
 import { cn } from '@/lib/utils'
 import type { MetricSample } from '@/stores/monitoring'
+import { normalizeCpu } from '../hooks'
 
 type SeriesKey = 'cpu' | 'ram' | 'players' | 'disk'
 
@@ -28,6 +29,10 @@ interface MetricsChartProps {
   /** Límites del servidor (resources del detalle) para normalizar a % . */
   ramLimitMb?: number | undefined
   diskLimitGb?: number | undefined
+  /** Núcleos asignados al servidor: el backend reporta CPU por núcleo (100% =
+   *  un núcleo), así que se divide por esto para mostrar 100% = toda la CPU
+   *  asignada. */
+  cpuCores?: number | undefined
   height?: number | undefined
 }
 
@@ -43,7 +48,9 @@ function tickEvery(dataLength: number): number {
  * Gráfico de área con Recharts (tema oscuro, gradiente) de las métricas del WS
  * de monitoreo. Las series se normalizan a % respecto a un máximo conocido
  * para que el eje Y sea coherente y no se dispare:
- * - CPU: ya viene en % (0..100).
+ * - CPU: el backend la reporta POR NÚCLEO (100% = un núcleo; puede superar 100
+ *   en hosts multicore), así que se divide por `cpuCores` → 100% = toda la
+ *   CPU asignada, clampeado a 100.
  * - RAM: `ram_mb / ramLimitMb * 100` (límite del servidor, o 100 % de lo
  *   mayor visto si no hay límite configurado).
  * - Disco: `disk_mb / (diskLimitGb * 1024) * 100`.
@@ -55,6 +62,7 @@ export function MetricsChart({
   data,
   ramLimitMb,
   diskLimitGb,
+  cpuCores,
   height = 320,
 }: MetricsChartProps) {
   const [visible, setVisible] = useState<SeriesKey[]>(DEFAULT_VISIBLE)
@@ -76,7 +84,7 @@ export function MetricsChart({
         label: 'CPU',
         color: '#22d3ee',
         format: (v) => `${v.toFixed(1)} %`,
-        value: (s) => s.cpu,
+        value: (s) => normalizeCpu(s.cpu, cpuCores),
       },
       {
         key: 'ram',
@@ -104,7 +112,7 @@ export function MetricsChart({
             : null,
       },
     ],
-    [ramCeiling, diskCeiling],
+    [ramCeiling, diskCeiling, cpuCores],
   )
 
   const chartData = useMemo(() => {

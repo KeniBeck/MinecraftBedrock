@@ -26,6 +26,21 @@ export function filterByRange(samples: MetricSample[], rangeMs: number, now = Da
 }
 
 /**
+ * Normaliza el % de CPU del backend a 0..100. El backend reporta CPU POR
+ * NÚCLEO (fórmula Docker × `online_cpus`: 100% = un núcleo), así que en un
+ * host multicore un proceso puede dar N×100%. Dividir por `cpuCores` (núcleos
+ * asignados al servidor) devuelve 100% = toda la CPU asignada.
+ */
+export function normalizeCpu(
+  cpu: number | null | undefined,
+  cpuCores: number | undefined,
+): number | null {
+  if (cpu == null) return null
+  if (cpuCores && cpuCores > 0) return Math.max(0, Math.min(100, cpu / cpuCores))
+  return Math.max(0, Math.min(100, cpu))
+}
+
+/**
  * Histórico de muestras de monitoreo de un servidor desde `useMonitoringStore`
  * (los gráficos leen de aquí, no abren sockets propios). Devuelve `undefined`
  * si el servidor aún no tiene muestras (referencia estable — zustand compara

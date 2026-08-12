@@ -3249,6 +3249,20 @@ lista reconciliada, 201) y si falla, fallback a `GET /worlds` (metadata). Así:
 - Frontend: `tsc` ✅ · `eslint` ✅ · `vitest` **120 passed** (1 nuevo) ✅ ·
   `build` ✅.
 
+## 36. CPU por núcleo + iconos en stat cards de Monitoring
+
+> **Fecha**: 2026-08-12. Solo frontend. La CPU del WS superaba el 100% (185%)
+> porque el backend reporta % por núcleo (fórmula Docker × `online_cpus`, 100%
+> = un núcleo — comportamiento documentado en `test_runtime.py`). No se cambió
+> el backend (el valor crudo es correcto); el frontend ahora normaliza contra
+> `cpu_cores` del servidor y clampa a 100. Detalle en
+> `docs/change-log-frontend.md` (Fase 6 — Monitoring ter).
+
+### Verificación
+
+- Frontend: `tsc` ✅ · `eslint` ✅ · `vitest` **125 passed** (5 nuevos) ✅ ·
+  `build` ✅.
+
 ## 33. UI de Backups (cierre de la Fase 4)
 
 > **Fecha**: 2026-08-12. Sin cambios de backend: el módulo Backup (paso 13)

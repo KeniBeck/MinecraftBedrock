@@ -1521,3 +1521,51 @@ datos del nuevo servidor cargan en la misma página.
 ### Verificación
 
 - `tsc` ✅ · `eslint` ✅ · `vitest` (**120 passed**, 1 nuevo) ✅ · `build` ✅.
+
+## Fase 6 — Monitoring ter: CPU por núcleo + iconos en stat cards
+
+> **Fecha**: 2026-08-12
+> **Origen**: QA de la página de Monitoring. (1) La CPU llegaba a superar el
+> 100% (p. ej. 185% al conectarse un jugador), que parece un bug. (2) Las stat
+> cards de Monitoring se veían "tristes" frente a las de la página del servidor
+> (sin iconos).
+
+### CPU por núcleo — no es un bug del backend, es la convención de Docker
+
+Se verificó el origen: `apps/backend/src/app/infrastructure/runtime/docker.py`
+`_compute_cpu_percent` usa la fórmula estándar de Docker
+`(cpu_delta / system_delta) * online_cpus * 100`, que reporta el % **por
+núcleo** (100% = un núcleo). En un host multicore, un proceso usando más de un
+núcleo da N×100% (el test `test_get_resources_computes_cpu_percent_from_delta`
+documenta el 200% como comportamiento esperado). No se cambió el backend: el
+valor crudo es correcto y lo consumen otros sitios.
+
+**Fix en el frontend** (`normalizeCpu` en `features/monitoring/hooks.ts`):
+divide el % por núcleo entre los núcleos asignados del servidor
+(`useServer(...).resources.cpu_cores`) → 100% = toda la CPU asignada, y clampa
+a 100 si el backend excede. Se aplica a:
+- `MetricsChart` (serie CPU, ahora con prop `cpuCores`).
+- `MonitoringPage` (stat card de CPU usa el % normalizado).
+- `StatCards` de la página de detalle (barra de CPU también se disparaba).
+
+### Iconos en las stat cards de Monitoring
+
+`SummaryCard` de `MonitoringPage` ahora recibe un icono (patrón de `StatCards`):
+Estado = Activity, Jugadores = Users, CPU = Zap, RAM = Cpu, Disco = HardDrive,
+con el mismo bisel de bloque pixelado.
+
+### Archivos
+
+| Archivo | Cambio |
+|---|---|
+| `src/features/monitoring/hooks.ts` | Nuevo `normalizeCpu` (÷ núcleos + clamp a 100) |
+| `src/features/monitoring/components/MetricsChart.tsx` | Serie CPU usa `normalizeCpu`; prop `cpuCores` |
+| `src/features/monitoring/MonitoringPage.tsx` | Pasa `cpuCores`; card de CPU normalizada; `SummaryCard` con iconos |
+| `src/features/servers/components/StatCards.tsx` | CPU del detalle normalizada con `cpu_cores` |
+| `src/features/monitoring/hooks.test.ts` | Tests de `normalizeCpu` (÷ núcleos, clamp, sin límite) |
+
+### Verificación
+
+- `tsc` ✅ · `eslint` ✅ · `vitest` (**125 passed**, 5 nuevos) ✅ · `build` ✅.
+- Backend sin cambios; el test `test_get_resources_computes_cpu_percent_from_delta`
+  sigue documentando el % por núcleo como contrato.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { filterByRange, rangeDurationMs, TIME_RANGES, type TimeRangeId } from './hooks'
+import { filterByRange, normalizeCpu, rangeDurationMs, TIME_RANGES, type TimeRangeId } from './hooks'
 import type { MetricSample } from '@/stores/monitoring'
 
 function sample(ts: string): MetricSample {
@@ -64,5 +64,33 @@ describe('filterByRange', () => {
       '2026-08-12T11:59:00Z',
       '2026-08-12T12:00:00Z',
     ])
+  })
+})
+
+describe('normalizeCpu', () => {
+  it('devuelve null sin dato', () => {
+    expect(normalizeCpu(null, 2)).toBeNull()
+    expect(normalizeCpu(undefined, 2)).toBeNull()
+  })
+
+  it('divide por los núcleos asignados cuando hay límite', () => {
+    // 185% por núcleo sobre 2 núcleos → 92.5% de la CPU asignada.
+    expect(normalizeCpu(185, 2)).toBe(92.5)
+    expect(normalizeCpu(50, 2)).toBe(25)
+  })
+
+  it('clampa a 100 cuando el backend excede el total', () => {
+    expect(normalizeCpu(185, 1)).toBe(100)
+    expect(normalizeCpu(120, 1)).toBe(100)
+  })
+
+  it('sin límite conocido solo clampa a 100 (no deja picos >100)', () => {
+    expect(normalizeCpu(185, undefined)).toBe(100)
+    expect(normalizeCpu(40, undefined)).toBe(40)
+  })
+
+  it('ignora núcleos inválidos (0 o negativos)', () => {
+    expect(normalizeCpu(80, 0)).toBe(80)
+    expect(normalizeCpu(80, -1)).toBe(80)
   })
 })

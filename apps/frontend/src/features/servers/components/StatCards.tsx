@@ -67,8 +67,15 @@ export function StatCards({ server, serverId }: { server: Server; serverId: stri
   const playersMax = Math.max(snap.players_max, 10)
   const onlinePlayers = snap.players || 0
 
+  // El backend reporta CPU POR NÚCLEO (100% = un núcleo), así que se normaliza
+  // contra los núcleos asignados para mostrar 100% = toda la CPU del server.
+  const cpuCores = res?.cpu_cores
   const cpu = snap.cpu
-  const cpuPct = cpu != null ? cpu / 100 : null
+  const cpuPct =
+    cpu != null
+      ? Math.max(0, Math.min(100, cpu / (cpuCores && cpuCores > 0 ? cpuCores : 1)))
+      : null
+  const cpuLabel = cpuPct != null ? `${cpuPct.toFixed(0)} %` : '—'
 
   const ramCeil = res?.ram_mb ?? 2048
   const ramUsed = snap.ram_mb ?? 0
@@ -94,7 +101,7 @@ export function StatCards({ server, serverId }: { server: Server; serverId: stri
           />
         }
       />
-      <StatCard item={{ label: 'CPU', value: cpu != null ? `${cpu.toFixed(0)} %` : '—', progress: cpuPct, progressColor: 'bg-emerald-500' }} icon={<Zap className="size-4 text-emerald-300" />} />
+      <StatCard item={{ label: 'CPU', value: cpuLabel, progress: cpuPct, progressColor: 'bg-emerald-500' }} icon={<Zap className="size-4 text-emerald-300" />} />
       <StatCard item={{ label: 'RAM', value: `${Math.round(ramUsed)} / ${ramCeil} MB`, progress: ramPct, progressColor: 'bg-blue-500' }} icon={<Cpu className="size-4 text-sky-300" />} />
       <StatCard item={{ label: 'Disco', value: `${diskUsedGb.toFixed(1)} / ${diskCeilGb} GB`, progress: diskPct, progressColor: 'bg-orange-500' }} icon={<HardDrive className="size-4 text-orange-300" />} />
     </div>
