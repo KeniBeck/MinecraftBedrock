@@ -220,3 +220,171 @@ UDP según tu red y configura `BEDROCK_PANEL_SERVER_PUBLIC_HOST` con tu IP o DNS
 > `BEDROCK_PANEL_MONITORING_PROBE_HOST` (en Docker, el gateway `172.18.0.1`),
 > para que el estado pase a `running` aunque la IP LAN no sea alcanzable desde
 > el contenedor.
+
+---
+
+## 10. Acceso remoto (opcional) — jugar con amigos fuera de tu red
+
+Todo lo anterior te deja el panel funcionando en tu propia red (tu casa). Si
+quieres que **amigos desde otra red** (otra casa, otro país) puedan entrar al
+panel y/o jugar en tu servidor de Minecraft, hace falta un paso extra: un
+**túnel**. Esto es opcional, gratis, y no requiere tocar el router.
+
+> **Importante antes de empezar**: mientras uses esto, tu PC tiene que quedar
+> prendida y con internet. Si la apagas o se corta tu conexión, el panel y el
+> juego dejan de estar disponibles para tus amigos también. La calidad de la
+> partida depende de tu internet — específicamente de tu **velocidad de
+> subida**, no de la de bajada.
+
+Son **dos cosas distintas** que se resuelven con **dos herramientas
+distintas**:
+
+| Qué quieres exponer | Herramienta | Por qué |
+|---|---|---|
+| El panel web (para administrar) | **Cloudflare Tunnel** | Gratis, sin límite de tiempo, pensada para tráfico web |
+| El juego Bedrock en sí (para que jueguen) | **playit.gg** | Gratis, pensada específicamente para servidores de Minecraft |
+
+Puedes usar solo una de las dos (por ejemplo, solo el juego, y administrar el
+panel tú localmente) o ambas.
+
+---
+
+### 10.1. Exponer el panel — Cloudflare Tunnel
+
+1. Descarga `cloudflared` para tu sistema desde
+   https://github.com/cloudflare/cloudflared/releases/latest (elige el archivo
+   que diga tu sistema: `windows-amd64.exe`, `darwin-amd64.tgz` para Mac,
+   `linux-amd64.deb` para Ubuntu/Debian/Linux Mint).
+2. Instálalo:
+   - **Windows**: ejecuta el `.exe` descargado, o déjalo en una carpeta y
+     úsalo desde ahí.
+   - **macOS**: descomprime el `.tgz` y mueve el binario `cloudflared` a una
+     carpeta de tu PATH (o córrelo desde donde quedó).
+   - **Linux**: `sudo dpkg -i cloudflared-linux-amd64.deb`
+3. Con el panel ya encendido (`docker compose ... up -d`), abre una terminal
+   y ejecuta:
+
+   ```bash
+   cloudflared tunnel --url http://localhost:8080
+   ```
+
+   (cambia `8080` si usaste otro `BEDROCK_PANEL_HTTP_PORT`).
+
+4. Verás en la terminal una línea con una URL parecida a:
+   `https://palabras-random.trycloudflare.com` — **esa es la que les compartes
+   a tus amigos** para entrar al panel. Funciona igual que `localhost:8080`,
+   con login incluido.
+
+> Esta URL cambia cada vez que cierras y vuelves a correr el comando. Sirve
+> para uso ocasional. Si quieres una URL fija que no cambie, hace falta una
+> cuenta gratuita de Cloudflare y un dominio propio — es un paso más
+> avanzado, avísanos si lo necesitas y lo documentamos aparte.
+
+**Seguridad**: en cuanto corras esto, cualquiera con esa URL puede llegar a la
+pantalla de login de tu panel. Asegúrate de que la contraseña del
+administrador (`BEDROCK_PANEL_BOOTSTRAP_ADMIN_PASSWORD`, paso 3 de esta guía)
+sea larga y no la que viene de ejemplo.
+
+---
+
+### 10.2. Exponer el juego — playit.gg
+
+1. Entra a https://playit.gg y crea una cuenta gratuita.
+2. Descarga e instala el agente de playit para tu sistema:
+
+   - **Windows**: descarga el instalador desde https://playit.gg/download y
+     sigue el asistente — te pedirá vincular tu cuenta desde el navegador, es
+     un solo clic.
+   - **macOS**: igual que en Windows: descarga el instalador desde
+     https://playit.gg/download y sigue el asistente.
+   - **Linux**: el instalador oficial funciona en cualquier distro (Arch,
+     Debian, Ubuntu, Fedora, openSUSE, Alpine) y detecta solo qué gestor de
+     paquetes tienes:
+
+     ```bash
+     curl -fsSL https://packages.playit.gg/install.sh | bash
+     ```
+
+     > **Un tropiezo en Arch**: **no** uses `yay -S playit-gg` — ese nombre de
+     > paquete no existe. El correcto en el AUR es `playit-bin`. El
+     > instalador oficial de arriba instala `playit-bin` desde el AUR por ti
+     > (usando `yay`/`paru` si los tienes); si prefieres hacerlo a mano:
+     > `yay -S playit-bin`.
+
+   - **Linux (después de instalar)**: `playit` corre como **servicio
+     systemd** — ya está "corriendo", pero tu usuario común no puede hablar
+     con él todavía. Si al ejecutar `playit` te aparece un error de socket
+     restringido (`/run/playit/playitd.sock`), es justamente por esto. Se
+     soluciona así:
+
+     ```bash
+     sudo usermod -aG playit $USER
+     newgrp playit
+     playit
+     ```
+
+     - El primer comando te agrega al grupo `playit` (pide tu contraseña).
+     - `newgrp playit` aplica ese permiso en la terminal actual sin tener que
+       cerrar sesión. Si no funciona, cierra la terminal y abre una nueva.
+     - Recién ahí `playit` te va a mostrar el **claim code**.
+
+3. Vincula el agente con tu cuenta (en Linux ya llegaste aquí con el claim
+   code; en Windows/macOS el asistente lo hace solo):
+
+   - Entra a https://playit.gg/account/setup/wizard/new-account/computer y
+     elige "Your Computer" (no Docker ni Third Party App, salvo que corras el
+     panel dentro de un contenedor Docker separado del agente).
+   - La web te pedirá el **claim code** que te mostró `playit` en la
+     terminal — pégalo ahí.
+   - Una vez vinculado, la web mostrará tu agente como conectado (con la
+     región/datacenter asignada automáticamente — normalmente no hace falta
+     tocar esto).
+
+4. En el panel de playit.gg, crea un túnel:
+
+   - Tipo: **UDP**
+   - Puerto local: `19132` (el puerto de Bedrock — revisa el puerto real del
+     servidor que creaste desde BedrockPanel si usaste otro).
+
+5. playit.gg te va a dar una dirección pública, algo como
+   `algo.playit.gg:12345`. **Esa es la dirección que tus amigos ponen en
+   Minecraft** (Agregar servidor → Dirección del servidor) para conectarse, en
+   vez de tu IP local.
+
+6. Si quieres que la dirección pública quede reflejada dentro del panel (para
+   que se muestre correctamente a quien administre), pon esa misma dirección
+   en `BEDROCK_PANEL_SERVER_PUBLIC_HOST` en tu `.env.prod` y reinicia:
+
+   ```bash
+   docker compose -f docker-compose.prod.yml up -d --build
+   ```
+
+---
+
+### 10.3. Limitaciones de playit.gg (plan gratis)
+
+Vale la pena conocerlas antes de prometerle disponibilidad a nadie:
+
+| Limitación | Detalle |
+|---|---|
+| Cantidad de túneles | El plan gratis permite hasta 4 túneles TCP y 4 túneles UDP por cuenta |
+| Dominio | La dirección pública es un subdominio random tipo `algo.ply.gg` — un dominio propio (`tudominio.com`) es solo del plan pago |
+| Latencia agregada | El tráfico pasa por los servidores de playit, sumando entre 10 y 50 ms de ping extra sobre tu conexión directa |
+| Bajo carga | En tráfico alto el plan gratis puede empezar a limitar/throttlear la velocidad |
+| Depende de tu PC | El servidor sigue corriendo en tu máquina — si la apagas, se cae para todos, tenga o no túnel activo |
+| Sin protección DDoS | El plan gratis no incluye protección contra ataques de denegación de servicio |
+| Techo real de jugadores | No es un límite de playit en sí, sino de tu conexión: la mayoría de internet hogareño sostiene bien entre 5 y 10 jugadores simultáneos, por la subida disponible |
+
+Ninguna de estas te impide arrancar — para un grupo chico de amigos, esto
+sobra.
+
+---
+
+### 10.4. ¿Vale la pena para mi caso?
+
+| Situación | ¿Recomendado? |
+|---|---|
+| Jugar con 2-4 amigos de forma ocasional | Sí, sin problema |
+| Internet de casa con poca velocidad de subida | Funciona, pero puede haber lag con varios jugadores a la vez |
+| Necesitas que esté disponible 24/7 de forma confiable | Esto depende de que tu PC quede prendida siempre — considera una PC/mini-servidor dedicado si es algo serio |
+| Servidor con muchos jugadores simultáneos | El plan gratis de playit.gg puede quedarse corto — revisa sus límites actuales en su sitio |
