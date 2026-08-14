@@ -33,6 +33,15 @@ const PANEL_MIN_ROLES: Record<string, readonly string[]> = {
   'backup.validate': ['operator', 'admin', 'super_admin'],
   'backup.prune': ['operator', 'admin', 'super_admin'],
   'backup.download': ['viewer', 'operator', 'admin', 'super_admin'],
+  // `task.list`/`task.view` son READ_ACTION (viewer+); el resto del catálogo
+  // scheduler (create/update/delete/run) son WRITE_ACTION → operator+.
+  'task.list': ['viewer', 'operator', 'admin', 'super_admin'],
+  'task.view': ['viewer', 'operator', 'admin', 'super_admin'],
+  'task.write': ['operator', 'admin', 'super_admin'],
+  'task.create': ['operator', 'admin', 'super_admin'],
+  'task.update': ['operator', 'admin', 'super_admin'],
+  'task.delete': ['operator', 'admin', 'super_admin'],
+  'task.run': ['operator', 'admin', 'super_admin'],
 }
 
 export function rolesCan(action: string, roles: readonly string[] | undefined): boolean {

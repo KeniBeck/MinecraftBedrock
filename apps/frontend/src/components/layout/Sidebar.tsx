@@ -40,7 +40,7 @@ const SIDEBAR_ITEMS: SidebarItem[] = [
   { label: 'Jugadores', icon: Users, href: '/servers', sub: 'players', disabled: false },
   { label: 'Mundos', icon: Globe, href: '/servers', sub: 'worlds', disabled: false },
   { label: 'Backups', icon: Archive, href: '/servers', sub: 'backups', disabled: false },
-  { label: 'Programador', icon: CircleGauge, disabled: true },
+  { label: 'Programador', icon: CircleGauge, href: '/servers', sub: 'scheduler', disabled: false },
   { label: 'Monitoreo', icon: Bell, href: '/servers', sub: 'monitoring', disabled: false },
   { label: 'Plantillas', icon: Boxes, href: '/servers', sub: 'templates', disabled: false },
   { label: 'Permisos', icon: Shield, disabled: true },

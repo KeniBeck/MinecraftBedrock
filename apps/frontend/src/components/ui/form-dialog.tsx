@@ -62,7 +62,7 @@ export function FormDialog({
       description={description}
       className={className}
     >
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit} className="space-y-3">
         {error && (
           <div
             role="alert"

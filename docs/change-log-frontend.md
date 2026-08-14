@@ -1616,3 +1616,131 @@ real baja (ej. 2%) la barra se llenaba casi entera. Corregido: ahora se pasa
 > Impacto en la UI: las muestras llegan cada ~5 s (servidor activo) o ~7 s
 > (parado, por el timeout del ping RakNet) en lugar de ~2 min. Verificado por
 > E2E contra el WS real.
+
+## Fase 6 — Módulo Scheduler (Tareas Programadas)
+
+> **Fecha**: 2026-08-14. **Frontend.** Página de tareas programadas en
+> `/servers/:serverId/scheduler`, verificada contra el router y schemas reales
+> del backend (`apps/backend/src/app/modules/scheduler/api/router.py` y
+> `schemas.py`). Endpoints: `GET/POST /servers/{id}/schedule/tasks`,
+> `PATCH/DELETE /servers/{id}/schedule/tasks/{task_id}` y
+> `POST /servers/{id}/schedule/tasks/{task_id}/run` (NOTA: es `PATCH`, no
+> `PUT`, como en el enunciado; se implementó lo que expone el backend).
+
+### Alcance
+
+- **API & tipos**: `src/lib/api/scheduler.ts` (claves `taskKeys`, interfaces
+  `ScheduleTask`/`CreateTaskRequest`/`UpdateTaskRequest` y las 5 funciones
+  HTTP) + `src/features/scheduler/types.ts` (`TaskType`, `TaskState`,
+  `TaskFormValues`).
+- **Hooks**: `useTasks`, `useCreateTask`, `useUpdateTask`, `useDeleteTask`,
+  `useRunTask` + `buildCreatePayload`/`buildUpdatePayload` (payload por tipo:
+  backup → `world_name`, command → `commands`).
+- **Vista principal** `SchedulerPage.tsx`: lista con nombre, cron, estado, tipo,
+  próxima/última ejecución, resultado y fallos; acciones Ejecutar/Editar/
+  Eliminar (con `ConfirmDialog`).
+- **Diálogos**: `CreateTaskDialog` y `EditTaskDialog` sobre `FormDialog` +
+  `TaskFormFields` (selector de tipo reutilizado). Backup usa `useWorlds`
+  (preselecciona el primer mundo al cargar), restart sin parámetros, command
+  con área de texto de comandos (uno por línea).
+- **Ruta y permisos**: ruta nueva en `apps/frontend/src/app/router.tsx` y
+  ítem "Programador" habilitado en el `Sidebar` (`sub: 'scheduler'`). Página
+  protegida con `useCan('task.list')` (acceso) y `useCan('task.write')`
+  (acciones de escritura). Nuevas entradas `task.*` en `PANEL_MIN_ROLES`
+  de `useCan.ts` alineadas con `iam/domain/permissions.py` (list/view = viewer+;
+  create/update/delete/run = operator+).
+
+### Archivos
+
+| Archivo | Cambio |
+|---|---|
+| `src/lib/api/scheduler.ts` | Nuevo: claves, tipos y funciones HTTP |
+| `src/features/scheduler/types.ts` | Nuevo: tipos del módulo |
+| `src/features/scheduler/hooks.ts` | Nuevo: hooks + builders de payload |
+| `src/features/scheduler/SchedulerPage.tsx` | Nuevo: vista principal |
+| `src/features/scheduler/components/TaskList.tsx` | Nuevo: lista de tareas |
+| `src/features/scheduler/components/CreateTaskDialog.tsx` | Nuevo: alta de tarea |
+| `src/features/scheduler/components/EditTaskDialog.tsx` | Nuevo: edición de tarea |
+| `src/features/scheduler/components/TaskFormFields.tsx` | Nuevo: selector tipo + payload |
+| `src/features/scheduler/SchedulerPage.test.tsx` | Nuevo: 9 tests |
+| `src/app/router.tsx` | Ruta `/servers/:serverId/scheduler` |
+| `src/components/layout/Sidebar.tsx` | Ítem "Programador" habilitado |
+| `src/lib/auth/useCan.ts` | Mapeos `task.*` (list/view/write/create/update/delete/run) |
+
+### Verificación
+
+- `tsc` ✅ · `eslint` ✅ · `vitest` (**134 passed**, 9 nuevos del módulo) ✅.
+
+## Fase 6 — Scheduler: editor cron intuitivo (presets + selectores)
+
+> **Fecha**: 2026-08-14. **Frontend.** Reemplazo del campo cron de texto libre
+> por un editor amigable en el diálogo de crear/editar tareas: presets, cinco
+> selectores desglosados (minuto/hora/día/mes/día-semana) y modo avanzado para
+> escritura manual. El valor enviado al backend sigue siendo la expresión cron.
+
+### Alcance
+
+- **`src/features/scheduler/cron.ts`** (nuevo helper, sin dependencias): `CRON_PRESETS`,
+  `CRON_PART_LABELS`, `parseCronToParts`, `buildCronFromParts`, `isValidCron`
+  y `describeCron` (traducción de la expresión a español, el "disfraz": `0 3 * * *`
+  → "todos los días a las 03:00").
+- **`components/CronEditor.tsx`** (nuevo, compartido por ambos diálogos): selector
+  de plantilla rápida (cada minuto/hora, diario 00:00/03:00, semanal, mensual),
+  5 selectores numerados (`*` o valor en rango), lector del cron generado en
+  tiempo real con su descripción legible, y toggle "Modo avanzado"/"Usar
+  selectores" para edición manual. Se inicializa desde `value` al montar y se
+  remonta con `key` en el diálogo de creación (evita `setState` en `useEffect`).
+- **`CreateTaskDialog` / `EditTaskDialog`**: sustituyen el `Input` de cron por
+  `<CronEditor value onChange>`; el botón de guardar se deshabilita si el cron
+  no es válido (`isValidCron`). Edición preserva el cron existente al abrir.
+- La traducción humana (`describeCron`) se muestra bajo el cron para que el
+  usuario confíe en el significado antes de guardar.
+
+### Archivos
+
+| Archivo | Cambio |
+|---|---|
+| `src/features/scheduler/cron.ts` | Nuevo: helpers de cron (presets, partes, validación, descripción) |
+| `src/features/scheduler/cron.test.ts` | Nuevo: 13 tests unitarios de cron |
+| `src/features/scheduler/components/CronEditor.tsx` | Nuevo: editor intuitivo de cron |
+| `src/features/scheduler/components/CreateTaskDialog.tsx` | Usa `CronEditor` + `isValidCron` |
+| `src/features/scheduler/components/EditTaskDialog.tsx` | Usa `CronEditor` + `isValidCron` |
+| `src/features/scheduler/SchedulerPage.test.tsx` | Test de creación usa el selector "Hora" |
+
+### Verificación
+
+- `tsc` ✅ · `eslint` ✅ · `vitest` (**147 passed**, +13 del helper cron) ✅.
+
+## Fase 6 — Scheduler: UI compacta del editor cron
+
+> **Fecha**: 2026-08-14. **Frontend.** Rediseño de la distribución vertical del
+> `CronEditor` para que el diálogo quepa sin scroll excesivo en pantallas
+> verticales limitadas, manteniendo presets, selectores, lector y modo avanzado.
+
+### Alcance
+
+- **`components/CronEditor.tsx`**: distribución compacta y horizontal.
+  - Presets como **botones** `size="sm"` compactos (`h-7 px-2 text-xs`) en línea
+    con `flex-wrap` (en lugar del select de plantilla).
+  - **5 selectores** con `flex-wrap items-end`, etiquetas cortas en
+    mayúsculas (`text-[10px]`) sobre cada uno y `Select` estrecho (`w-14/w-16`,
+    `h-8`, `text-xs`).
+  - **Lector + descripción + toggle** en una sola línea (`flex-wrap items-center`)
+    con `flex-1` para el cron, descripción en `text-muted-foreground` y el botón
+    "Avanzado"/"Usar selectores" a la derecha (`ml-auto`).
+  - Modo avanzado: el `Input` manual ocupa el lugar de los selectores; al volver
+    a selectores se reusa la lógica de validación existente.
+- **`components/ui/form-dialog.tsx`**: `space-y-4` → `space-y-3` para reducir el
+  gap vertical entre campos de todos los formularios modales.
+- Sin dependencias nuevas (no hay `Switch` en el kit; el toggle usa `Button`).
+
+### Archivos
+
+| Archivo | Cambio |
+|---|---|
+| `src/features/scheduler/components/CronEditor.tsx` | Redistribución compacta/horizontal |
+| `src/components/ui/form-dialog.tsx` | Gap de campos `space-y-3` |
+
+### Verificación
+
+- `tsc` ✅ · `eslint` ✅ · `vitest` (**147 passed**) ✅ · `build` ✅.
