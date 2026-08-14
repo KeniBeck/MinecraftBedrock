@@ -21,7 +21,9 @@ const PANEL_MIN_ROLES: Record<string, readonly string[]> = {
   'server.console.write': ['operator', 'admin', 'super_admin'],
   // `player.manage` (kick) es WRITE_ACTION → operator+.
   'player.manage': ['operator', 'admin', 'super_admin'],
-  // `permission.write` (ban/unban por servidor) es WRITE_ACTION → operator+.
+  // `permission.read` es READ_ACTION (viewer+); `permission.write` (ban/unban
+  // por servidor) es WRITE_ACTION → operator+.
+  'permission.read': ['viewer', 'operator', 'admin', 'super_admin'],
   'permission.write': ['operator', 'admin', 'super_admin'],
   // `player.ban.global` es PANEL_ACTION → solo admin/super_admin.
   'player.ban.global': ['admin', 'super_admin'],

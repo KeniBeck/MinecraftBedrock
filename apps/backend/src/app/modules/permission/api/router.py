@@ -14,6 +14,7 @@ from app.kernel.ports.access import Identity
 from app.modules.permission.api.schemas import (
     AllowlistAddRequest,
     AllowlistEntryResponse,
+    OperatorResponse,
     PermissionEntryResponse,
     SetAllowlistEnabledRequest,
     SetPermissionRequest,
@@ -107,6 +108,24 @@ async def set_allowlist_enabled(
 
 
 # -- permissions / operators --------------------------------------------------
+
+
+@router.get(
+    "/servers/{server_id}/permissions/operators",
+    response_model=list[OperatorResponse],
+    summary="Listar permisos (operator/member/visitor) del servidor",
+)
+async def list_operators(
+    server_id: str,
+    request: Request,
+    identity: Identity = Depends(require_server_action("permission.read")),
+) -> list[OperatorResponse]:
+    del identity
+    views = await _facade(request).list_permissions(server_id)
+    return [
+        OperatorResponse(xuid=view.xuid, level=view.level.value)
+        for view in views
+    ]
 
 
 @router.put(

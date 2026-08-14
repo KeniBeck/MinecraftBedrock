@@ -10,6 +10,7 @@ import { PlayersPage } from '@/features/players/PlayersPage'
 import { BackupsPage } from '@/features/backups/BackupsPage'
 import { MonitoringPage } from '@/features/monitoring/MonitoringPage'
 import { SchedulerPage } from '@/features/scheduler/SchedulerPage'
+import { PermissionPage } from '@/features/permission/PermissionPage'
 import { RequireAuth, RequireGuest } from '@/lib/auth/guards'
 import { ServerRedirect } from '@/features/servers/ServerRedirect'
 
@@ -35,6 +36,7 @@ export const router = createBrowserRouter([
           { path: '/servers/:serverId/players', element: <PlayersPage /> },
           { path: '/servers/:serverId/backups', element: <BackupsPage /> },
           { path: '/servers/:serverId/scheduler', element: <SchedulerPage /> },
+          { path: '/servers/:serverId/permissions', element: <PermissionPage /> },
           { path: '/servers/:serverId/monitoring', element: <MonitoringPage /> },
         ],
       },

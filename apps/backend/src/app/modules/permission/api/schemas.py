@@ -26,5 +26,10 @@ class PermissionEntryResponse(BaseModel):
     level: str
 
 
+class OperatorResponse(BaseModel):
+    xuid: str
+    level: str
+
+
 class SetPermissionRequest(BaseModel):
     level: str

@@ -3329,6 +3329,37 @@ lista reconciliada, 201) y si falla, fallback a `GET /worlds` (metadata). Así:
   ~5-7 s (antes ~2 min). Con servidor parado el 7 s es `probe_timeout` (2 s) +
   `poll_interval` (5 s), esperado.
 
+## 38. GET /permissions/operators (corrección Permission — sin estado local)
+
+> **Fecha**: 2026-08-14. Se añade el listado real de operadores que faltaba para
+> que el frontend deje de usar estado local de sesión (ver
+> `docs/change-log-frontend.md`, "Módulo Permission bis"). El resto del módulo
+> Permission ya estaba completo desde la Fase 4.
+
+### Cambios backend
+
+- `src/app/modules/permission/api/schemas.py`: nuevo `OperatorResponse`
+  (`xuid`, `level`) — la lista de operadores ya era `list[PermissionEntry]` en
+  `use_cases.py`, solo faltaba exponerla.
+- `src/app/modules/permission/api/router.py`: nuevo
+  `GET /servers/{server_id}/permissions/operators` con
+  `response_model=list[OperatorResponse]` y `require_server_action("permission.read")`
+  (viewer+); delega en `PermissionFacade.list_permissions(server_id)`.
+- `tests/test_api_integration.py`: nueva clase `TestPermissionApi` (4 tests):
+  listado de operadores desde storage (`permissions.json`), listado vacío,
+  sin membresía → 403 (la ACL por servidor aplica también a lecturas) y sin
+  autenticación → 401.
+
+### Discrepancia residual
+
+- El estado de la allowlist (`allowlist-enabled`) sigue siendo solo escritura:
+  no se expone GET del toggle; el frontend lo maneja client-side (documentado).
+
+### Verificación
+
+- Backend: `pytest tests/test_api_integration.py` **47 passed** (4 nuevos) ✅ ·
+  `ruff` ✅ · `mypy` ✅.
+
 ## 33. UI de Backups (cierre de la Fase 4)
 
 > **Fecha**: 2026-08-12. Sin cambios de backend: el módulo Backup (paso 13)

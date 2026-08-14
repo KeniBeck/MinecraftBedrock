@@ -1139,6 +1139,80 @@ class TestPlayerApi:
         assert response.status_code == 403
 
 
+class TestPermissionApi:
+    def seed_operators(self, client: TestClient, server_id: str) -> None:
+        """Escribe `permissions.json` en el storage del servidor."""
+        storage = container_of(client).permission_facade.deps.storage.for_server(server_id)
+        storage.write(
+            "permissions.json",
+            b'[{"permission":"operator","xuid":"OP-1"},'
+            b'{"permission":"visitor","xuid":"VIS-1"}]\n',
+        )
+
+    def test_listar_operadores_desde_storage(self, client: TestClient) -> None:
+        auth = login(client, "root")
+        server_id = create_server(client, auth)
+        self.seed_operators(client, server_id)
+
+        response = client.get(
+            f"/api/v1/servers/{server_id}/permissions/operators",
+            headers=auth,
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert len(body) == 2
+        assert body[0] == {"xuid": "OP-1", "level": "operator"}
+        assert body[1] == {"xuid": "VIS-1", "level": "visitor"}
+
+    def test_listar_operadores_vacio(self, client: TestClient) -> None:
+        auth = login(client, "root")
+        server_id = create_server(client, auth)
+
+        response = client.get(
+            f"/api/v1/servers/{server_id}/permissions/operators",
+            headers=auth,
+        )
+
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_sin_membresia_no_puede_listar(self, client: TestClient) -> None:
+        seed_viewer(container_of(client))
+        server_id = create_server(client, login(client, "root"))
+        auth = login(client, "lurker")
+
+        response = client.get(
+            f"/api/v1/servers/{server_id}/permissions/operators",
+            headers=auth,
+        )
+
+        # El viewer no tiene membresía en el servidor → la ACL lo deniega (403).
+        assert response.status_code == 403
+
+    def test_sin_autenticacion_401(self, client: TestClient) -> None:
+        server_id = create_server(client, login(client, "root"))
+
+        response = client.get(
+            f"/api/v1/servers/{server_id}/permissions/operators",
+        )
+
+        assert response.status_code == 401
+
+    def test_viewer_no_puede_asignar_operador(self, client: TestClient) -> None:
+        seed_viewer(container_of(client))
+        server_id = create_server(client, login(client, "root"))
+        auth = login(client, "lurker")
+
+        response = client.put(
+            f"/api/v1/servers/{server_id}/permissions/operators/XUID-9",
+            json={"level": "operator"},
+            headers=auth,
+        )
+
+        assert response.status_code == 403
+
+
 class TestServerResourcesApi:
     def test_actualiza_recursos_200(self, client: TestClient) -> None:
         auth = login(client, "root")

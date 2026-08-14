@@ -1744,3 +1744,95 @@ real baja (ej. 2%) la barra se llenaba casi entera. Corregido: ahora se pasa
 ### Verificación
 
 - `tsc` ✅ · `eslint` ✅ · `vitest` (**147 passed**) ✅ · `build` ✅.
+
+## Fase 6 — Módulo Permission (Allowlist y Operadores)
+
+> **Fecha**: 2026-08-14. **Frontend.** Página de permisos del servidor en
+> `/servers/:serverId/permissions`, verificada contra
+> `apps/backend/src/app/modules/permission/api/router.py` y `schemas.py`.
+
+### DISCREPANCIAS vs. el enunciado (backend real)
+
+- El backend **NO expone** `GET /servers/{id}/permissions/operators` ni ningún
+  GET del estado de la allowlist (`allowlist-enabled` es solo escritura; el
+  toggle `ALLOW_LIST` se publica como evento). Consecuencias:
+  - Los **operadores** se gestionan con **estado local de sesión**: `PUT
+    /operators/{xuid}` añade/actualiza (devuelve `{xuid, level}`) y `DELETE`
+    lo quita; la lista arranca vacía y refleja solo los cambios de la sesión.
+    Se muestra un aviso en la UI y se documenta aquí.
+  - El toggle **"Allowlist activada"** es de solo escritura: se muestra como
+    botón que alterna un estado client-side y envía `PUT allowlist-enabled`;
+    no se puede precargar el valor real.
+- El `PUT /operators/{xuid}` recibe body `{level}` (`operator`/`member`/
+  `visitor`), no "añadir xuid" puro; el alta de operador usa `level: operator`.
+- La allowlist sí tiene CRUD completo. `POST allowlist` exige **xuid no vacío**
+  (a diferencia de "xuid opcional" del enunciado); el diálogo lo pide.
+
+### Alcance
+
+- **API & tipos**: `src/lib/api/permissions.ts` (`permissionKeys`,
+  `AllowlistEntry`, `AddAllowlistRequest`, `OperatorEntry`, `PermissionLevel`
+  y las 6 funciones HTTP) + `src/features/permission/types.ts`.
+- **Hooks**: `useAllowlist`, `useAddAllowlistEntry`, `useRemoveAllowlistEntry`,
+  `useToggleAllowlistEnabled`, `useSetOperator`, `useRemoveOperator`.
+- **Vista principal** `PermissionPage.tsx`: tabla de allowlist (gamertag + xuid
+  + eliminar), tabla de operadores local (xuid + nivel + eliminar), botón
+  toggle de allowlist (solo con escritura). Protegida con
+  `useCan('permission.read')`; acciones con `useCan('permission.write')`.
+- **Diálogos**: `AddAllowlistDialog` (gamertag + xuid) y `AddOperatorDialog`
+  (xuid) sobre `FormDialog`/`FormField`; `ConfirmDialog` para las bajas.
+- **Ruta y permisos**: `/servers/:serverId/permissions` en `router.tsx`, ítem
+  "Permisos" habilitado en el `Sidebar`, y `permission.read` (viewer+) añadido
+  a `PANEL_MIN_ROLES` de `useCan.ts`.
+
+### Archivos
+
+| Archivo | Cambio |
+|---|---|
+| `src/lib/api/permissions.ts` | Nuevo: claves, tipos y funciones HTTP |
+| `src/features/permission/types.ts` | Nuevo: tipos del módulo |
+| `src/features/permission/hooks.ts` | Nuevo: hooks de allowlist/operadores/toggle |
+| `src/features/permission/PermissionPage.tsx` | Nuevo: vista principal |
+| `src/features/permission/components/AddAllowlistDialog.tsx` | Nuevo: alta de entrada |
+| `src/features/permission/components/AddOperatorDialog.tsx` | Nuevo: alta de operador |
+| `src/features/permission/PermissionPage.test.tsx` | Nuevo: 9 tests |
+| `src/app/router.tsx` | Ruta `/servers/:serverId/permissions` |
+| `src/components/layout/Sidebar.tsx` | Ítem "Permisos" habilitado |
+| `src/lib/auth/useCan.ts` | Mapeo `permission.read` (viewer+) |
+
+### Verificación
+
+- `tsc` ✅ · `eslint` ✅ · `vitest` (**156 passed**, +9 del módulo) ✅ · `build` ✅.
+
+## Fase 6 — Módulo Permission bis: operadores desde el backend real (sin estado local)
+
+> **Fecha**: 2026-08-14. **Backend + Frontend.** Corrección de la discrepancia
+> anterior: el backend ahora expone `GET /servers/{id}/permissions/operators`
+> (ver `docs/change-log.md`, "38"), y el frontend lo consume vía TanStack Query
+> **eliminando el estado local de sesión** para los operadores.
+
+### Cambios frontend
+
+- `src/lib/api/permissions.ts`: nuevo `operatorKeys` y `getOperators(serverId)`
+  → `GET /servers/{id}/permissions/operators` (lista de `OperatorEntry`).
+  Actualizada la nota de discrepancias: ya NO aplica la de "no hay GET".
+- `src/features/permission/hooks.ts`: nuevo `useOperators` (useQuery con
+  `operatorKeys`, `refetchOnWindowFocus: false`); `useSetOperator` y
+  `useRemoveOperator` ahora invalidan `operatorKeys.all(serverId)` al éxito.
+- `src/features/permission/PermissionPage.tsx`: la tabla de operadores se
+  alimenta de `useOperators` (con estados de carga/error/vacío como la
+  allowlist); se elimina el `useState<OperatorEntry[]>` local, el push vía
+  `onAdded` de `AddOperatorDialog` y el aviso "no hay GET / esta sesión".
+- `src/features/permission/PermissionPage.test.tsx`: mock de `getOperators`/
+  `operatorKeys`; los tests de operadores verifican el listado real.
+
+### Discrepancia residual
+
+- El toggle **"Allowlist activada"** sigue siendo de solo escritura (el backend
+  no expone GET del estado de la allowlist) → se conserva el estado client-side
+  documentado en la sección anterior.
+
+### Verificación
+
+- `tsc` ✅ · `eslint` ✅ · `vitest` (**156 passed**, sin cambios de conteo) ✅ ·
+  `build` ✅.
