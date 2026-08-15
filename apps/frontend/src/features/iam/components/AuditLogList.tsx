@@ -21,12 +21,12 @@ export function AuditLogList() {
   const [offset, setOffset] = useState(0)
 
   const filters: AuditFilters = {
-    actor_id: actorId.trim() || undefined,
-    action: action.trim() || undefined,
-    from: from || undefined,
-    to: to || undefined,
     limit: PAGE_SIZE,
     offset,
+    ...(actorId.trim() ? { actor_id: actorId.trim() } : {}),
+    ...(action.trim() ? { action: action.trim() } : {}),
+    ...(from ? { from } : {}),
+    ...(to ? { to } : {}),
   }
 
   const { data, isLoading, isFetching, isError, error } = useAuditLogs(filters)

@@ -31,11 +31,12 @@ export function PermissionPage() {
 
   const { data: allowlist, isLoading, isError, error } = useAllowlist(serverId)
   const {
-    data: operators,
+    data: operatorsData,
     isLoading: operatorsLoading,
     isError: operatorsError,
     error: operatorsErrorDetail,
   } = useOperators(serverId)
+  const operators = operatorsData ?? []
   const removeAllowlistEntry = useRemoveAllowlistEntry(serverId ?? '')
   const removeOperator = useRemoveOperator(serverId ?? '')
   const toggleEnabled = useToggleAllowlistEnabled(serverId ?? '')

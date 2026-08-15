@@ -8,6 +8,7 @@ import { getApiMessage } from '@/lib/api/client'
 import { useThemeStore, BACKGROUNDS } from '@/stores/theme'
 import type { EnableTwoFactor } from '@/lib/api/iam'
 import { useConfirm2FA, useEnable2FA, useRegenerateBackupCodes } from '../hooks'
+import { TOTPQr } from './TOTPQr'
 
 function BackupCodes({ codes, label }: { codes: string[]; label: string }) {
   return (
@@ -95,11 +96,11 @@ function TwoFactorSection() {
 
       {phase === 'confirm' && pending && (
         <div className="space-y-3">
-          <div className="rounded-none border border-white/10 bg-white/5 px-4 py-3 text-sm">
-            <p className="mb-1 font-medium">Escanea o ingresa el código en tu aplicación de autenticación:</p>
-            <code className="break-all font-mono text-xs text-muted-foreground">
-              {pending.provisioning_uri}
-            </code>
+          <div className="rounded-none border border-white/10 bg-slate-900/60 px-4 py-3">
+            <p className="mb-3 text-sm font-medium">
+              Escanea el código con tu aplicación de autenticación:
+            </p>
+            <TOTPQr value={pending.provisioning_uri} />
           </div>
           <div>
             <p className="mb-1 text-xs text-muted-foreground">

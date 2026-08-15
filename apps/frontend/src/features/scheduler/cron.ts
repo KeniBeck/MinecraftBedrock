@@ -45,7 +45,7 @@ export function isValidCron(cron: string): boolean {
   const parts = cron.trim().split(/\s+/)
   if (parts.length !== 5) return false
   return parts.every((p, i) => {
-    const { min, max } = CRON_PART_LABELS[i]
+    const { min, max } = CRON_PART_LABELS[i]!
     return isValidPart(p, min, max)
   })
 }
@@ -81,7 +81,7 @@ function parseSteps(part: string): { range: string | null; step: number } | null
   if (part.includes('/')) {
     const [range, stepStr] = part.split('/')
     const step = Number(stepStr)
-    return Number.isInteger(step) && step > 0 ? { range, step } : null
+    return Number.isInteger(step) && step > 0 ? { range: range ?? null, step } : null
   }
   return null
 }
@@ -128,7 +128,7 @@ export function describeCron(cron: string): string | null {
   const parts = cron.trim().split(/\s+/)
   if (parts.length !== 5) return null
 
-  const [minute, hour, dom, month, dow] = parts
+  const [minute, hour, dom, month, dow] = parts as CronParts
 
   const time = timeDescription(minute, hour)
   if (!time) return null

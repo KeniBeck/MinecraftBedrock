@@ -52,11 +52,12 @@ export function EditUserDialog({ user, open, onOpenChange, onSaved }: EditUserDi
 
   const handleSubmit = async () => {
     setError(null)
+    const trimmedEmail = email?.trim()
     const payload: UpdateUserRequest = {
       display_name: displayName.trim(),
-      email: email.trim() || null,
       status,
-      roles: selectedRoles.length > 0 ? selectedRoles : undefined,
+      ...(trimmedEmail ? { email: trimmedEmail } : {}),
+      ...(selectedRoles.length > 0 ? { roles: selectedRoles } : {}),
     }
     try {
       const updated = await updateUser.mutateAsync({ id: user.id, data: payload })

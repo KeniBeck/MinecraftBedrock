@@ -88,19 +88,19 @@ function ConfigFormBody({
           <h2 className="mb-1 text-lg font-semibold">{group.label}</h2>
           <p className="mb-4 text-xs text-muted-foreground">{group.description}</p>
           <div className="grid gap-4 sm:grid-cols-2">
-            {groupProperties(group.id).map((prop) => (
-              <PropertyField
-                key={prop.key}
-                def={prop}
-                value={draft[prop.key] ?? prop.defaultValue}
-                error={
-                  errors[prop.key] ??
-                  validateProperty(prop, draft[prop.key] ?? prop.defaultValue)
-                }
-                disabled={!canWrite}
-                onChange={(value) => setValue(prop.key, value)}
-              />
-            ))}
+            {groupProperties(group.id).map((prop) => {
+              const err = errors[prop.key] ?? validateProperty(prop, draft[prop.key] ?? prop.defaultValue)
+              return (
+                <PropertyField
+                  key={prop.key}
+                  def={prop}
+                  value={draft[prop.key] ?? prop.defaultValue}
+                  disabled={!canWrite}
+                  onChange={(value) => setValue(prop.key, value)}
+                  {...(err ? { error: err } : {})}
+                />
+              )
+            })}
           </div>
         </section>
       ))}

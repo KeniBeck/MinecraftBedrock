@@ -1,5 +1,7 @@
 import type { RoleName } from '@/lib/api/iam'
 
+export type { RoleName }
+
 /** Roles globales que el panel puede asignar (schema IAM `RoleName`). */
 export const ROLE_OPTIONS: readonly { value: RoleName; label: string }[] = [
   { value: 'super_admin', label: 'Super administrador' },

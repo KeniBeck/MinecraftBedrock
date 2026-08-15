@@ -105,7 +105,7 @@ export function Sidebar({
         </button>
       </div>
 
-      <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-2">
+      <nav className="sidebar-scroll flex-1 space-y-1 overflow-y-auto px-2 py-2">
         {visibleItems.map((item) => {
           const Icon = item.icon
           const href = resolveHref(item)

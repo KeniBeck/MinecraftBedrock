@@ -2031,3 +2031,76 @@ Verificado contra `iam/api/router.py`, `iam/api/schemas.py` y `facade.py`.
 
 - `tsc` ✅ · `eslint` ✅ · `vitest` (**180 passed**; IAM 11) ✅ ·
   `build` ✅.
+
+### Fase 8 — Sidebar: scroll personalizado
+
+> **Fecha**: 2026-08-14. La lista de ítems del sidebar usaba el scroll genérico
+> del navegador; se estiliza para acoplarse al lenguaje glassmorphism/pixel del
+> resto del panel.
+
+- `.sidebar-scroll` en `src/styles/pixel-theme.css`: barra **fina (4px)**,
+  **transparente/no opaca**, thumb translúcido `rgba(255,255,255,.15)`
+  (hover `.25`) con `border-radius: 9999px`; pista transparente. Incluye
+  `scrollbar-width: thin` + `scrollbar-color` para **Firefox** y prefijos
+  `::-webkit-scrollbar` para **Chrome/Safari** (WebKit).
+- `nav` del sidebar (`Sidebar.tsx`) añade `sidebar-scroll` a su
+  `overflow-y-auto` existente.
+
+**Archivos**:
+
+| Archivo | Cambio |
+|---|---|
+| `src/styles/pixel-theme.css` | Nueva regla `.sidebar-scroll` (WebKit + Firefox) |
+| `src/components/layout/Sidebar.tsx` | Clase `sidebar-scroll` en el `<nav>` con scroll |
+
+**Verificación**: `tsc` ✅ · `eslint` ✅ · `vitest` ✅ · `build` ✅.
+
+### Fase 8 — Limpieza: `typecheck` en verde (cron + IAM + permission + config)
+
+> **Fecha**: 2026-08-14. `pnpm typecheck` reportaba 14 errores de tipos
+> preexistentes. Se corrigen todos para dejar la verificación en verde
+> (`noUncheckedIndexedAccess` + `exactOptionalPropertyTypes` activados).
+
+- **`scheduler/cron.ts`**: `parts as CronParts` (estilo del archivo, línea 35)
+  fija los 5 campos a `string`; `CRON_PART_LABELS[i]!`; `range ?? null` en
+  `parseSteps`. Se eliminan los guards redundantes de `dow`/`dom`.
+- **IAM**: `hooks.ts` importa `auditKeys`; `types.ts` re-exporta `RoleName`
+  (vía import + `export type`); `EditUserDialog` construye el payload con
+  spreads condicionales (no `undefined`); `AuditLogList` idem para `AuditFilters`;
+  `Badge` (ui) gana el variant `destructive` usado por `UserList`/`AuditLogList`.
+- **`configuration/ConfigurationPage.tsx`**: `error` condicional (spread) por
+  `exactOptionalPropertyTypes`.
+- **`permission/PermissionPage.tsx`**: `operators = operatorsData ?? []`;
+  `PermissionPage.test.tsx` importa `beforeEach`.
+
+**Archivos**: `scheduler/cron.ts`, `features/iam/hooks.ts`, `types.ts`,
+`components/EditUserDialog.tsx`, `AuditLogList.tsx`, `components/ui/badge.tsx`,
+`features/configuration/ConfigurationPage.tsx`, `features/permission/` (page +
+test).
+
+**Verificación**: `tsc` ✅ · `eslint` ✅ · `vitest` (180) ✅ · `build` ✅.
+
+### Fase 8 — QR de 2FA con logo embebido
+
+> **Fecha**: 2026-08-14. En el flujo de configuración de 2FA del perfil, el
+> URI `otpauth://` se mostraba como texto plano. Ahora se renderiza como un
+> **código QR** escaneable con el **logo voxel del panel centrado**.
+
+- **Dependencia nueva**: `qrcode.react@4.2.0` (aprobada por elección del
+  usuario; sugerencia con tipado estricto, sin `any`).
+- **`components/TOTPQr.tsx`**: componente `TOTPQr` que envuelve `QRCodeCanvas`
+  con `level="Q"`, `marginSize={4}`, fondo blanco y módulos en `#0f172a`
+  (contraste alto para que escanee). El logo del centro usa `imageSettings`
+  con `excavate: true` (área blanca detrás del logo para no romper la
+  lectura), referenciado desde `public/favicon.svg` (icono voxel 512×512 vía
+  `BASE_URL`).
+- **`components/ProfileSettings.tsx`**: el panel "confirma" sustituye el texto
+  crudo del URI por `<TOTPQr value={pending.provisioning_uri} />`.
+  El secreto manual sigue mostrándose como respaldo (fallback si el lector
+  del QR falla).
+
+**Archivos**: `components/TOTPQr.tsx` (nuevo), `components/ProfileSettings.tsx`,
+`package.json`/`pnpm-lock.yaml` (`qrcode.react`).
+
+**Verificación**: `tsc` ✅ · `eslint` ✅ · `vitest` (11 IAM, 180 global) ✅ ·
+`build` ✅.
