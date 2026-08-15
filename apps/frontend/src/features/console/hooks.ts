@@ -10,13 +10,21 @@ import { useConsoleStore, type ConsoleLine } from '@/stores/console'
 const BACKOFF_BASE_MS = 1000
 const BACKOFF_MAX_MS = 15_000
 
+/** Coalesce de escrituras del WS: un `set` del store por lote (evita congelar
+ *  la UI cuando el buffer reproduce el anillo completo al reconectar). */
+const BATCH_MAX_LINES = 200
+const FLUSH_INTERVAL_MS = 80
+
 /** Estado compartido de UN socket de consola por servidor (estándar §4). */
 interface SharedEntry {
+  serverId: string
   refCount: number
   socket: WebSocket | null
   retryRef: ReturnType<typeof setTimeout> | null
   attempt: number
   closed: boolean
+  pending: ConsoleLine[]
+  flushTimer: ReturnType<typeof setTimeout> | null
 }
 
 const registry = new Map<string, SharedEntry>()
@@ -56,7 +64,14 @@ function openSocket(serverId: string, token: string, entry: SharedEntry): void {
     const line = toConsoleLine(message, serverId)
     if (!line) return
     entry.attempt = 0
-    useConsoleStore.getState().addLine(serverId, line)
+    // Acumula en el lote y lo vacía por tamaño o por intervalo, en vez de hacer
+    // un `set` por línea (la reproducción inicial del buffer puede ser ~1000).
+    entry.pending.push(line)
+    if (entry.pending.length >= BATCH_MAX_LINES) {
+      flushPending(serverId, entry)
+    } else if (!entry.flushTimer) {
+      entry.flushTimer = setTimeout(() => flushPending(serverId, entry), FLUSH_INTERVAL_MS)
+    }
   }
   entry.socket.onclose = () => {
     if (entry.closed) return
@@ -64,7 +79,18 @@ function openSocket(serverId: string, token: string, entry: SharedEntry): void {
   }
 }
 
-function scheduleReconnect(serverId: string, token: string, entry: SharedEntry): void {
+/** Vacía el lote pendiente en el store en una sola escritura. */
+function flushPending(serverId: string, entry: SharedEntry): void {
+  if (entry.flushTimer) {
+    clearTimeout(entry.flushTimer)
+    entry.flushTimer = null
+  }
+  const batch = entry.pending
+  entry.pending = []
+  if (batch.length > 0) {
+    useConsoleStore.getState().addLines(serverId, batch)
+  }
+}function scheduleReconnect(serverId: string, token: string, entry: SharedEntry): void {
   if (entry.closed) return
   const delay = Math.min(BACKOFF_BASE_MS * 2 ** entry.attempt, BACKOFF_MAX_MS)
   entry.attempt += 1
@@ -89,6 +115,15 @@ function closeSocket(entry: SharedEntry): void {
       socket.close(1000, 'unmount')
     }
   }
+  // Vacía lo pendiente para no perder la última ráfaga al desmontar.
+  if (entry.flushTimer) {
+    clearTimeout(entry.flushTimer)
+    entry.flushTimer = null
+  }
+  if (entry.pending.length > 0) {
+    useConsoleStore.getState().addLines(entry.serverId, entry.pending)
+    entry.pending = []
+  }
   // No se limpia el buffer: el scrollback persiste en la sesión y el resume por
   // `lastSeq` evita duplicar al volver a conectar.
 }
@@ -107,7 +142,16 @@ export function useConsole(serverId: string | undefined): void {
 
     let entry = registry.get(serverId)
     if (!entry) {
-      entry = { refCount: 0, socket: null, retryRef: null, attempt: 0, closed: false }
+      entry = {
+        serverId,
+        refCount: 0,
+        socket: null,
+        retryRef: null,
+        attempt: 0,
+        closed: false,
+        pending: [],
+        flushTimer: null,
+      }
       registry.set(serverId, entry)
     }
     entry.refCount += 1

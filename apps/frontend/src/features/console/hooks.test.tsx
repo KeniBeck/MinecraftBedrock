@@ -1,10 +1,12 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 
-import { toConsoleLine, useSendCommand } from '@/features/console/hooks'
+import { toConsoleLine, useConsole, useSendCommand } from '@/features/console/hooks'
 import { sendConsoleCommand } from '@/lib/api/console'
+import { useConsoleStore } from '@/stores/console'
+import { useAuthStore } from '@/stores/auth'
 import type { WsEnvelope } from '@/lib/ws/types'
 
 vi.mock('@/lib/api/console', () => ({
@@ -64,5 +66,68 @@ describe('useSendCommand', () => {
     })
 
     expect(sendConsoleCommand).toHaveBeenCalledWith('srv-1', 'list')
+  })
+})
+
+describe('useConsole — batching de la reproducción', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    useConsoleStore.setState({ lines: {}, lastSeq: {} })
+  })
+
+  it('coalesce líneas y las vacía en lotes en el store', async () => {
+    vi.useFakeTimers()
+
+    // WebSocket fake: expone onmessage/onclose y dispara la reproducción.
+    class FakeSocket {
+      static instance: FakeSocket | null = null
+      readyState = 0
+      url = ''
+      onmessage: ((event: MessageEvent<string>) => void) | null = null
+      onclose: (() => void) | null = null
+      onopen: (() => void) | null = null
+      constructor(url: string) {
+        this.url = url
+        FakeSocket.instance = this
+      }
+      close = vi.fn()
+    }
+
+    vi.stubGlobal('WebSocket', FakeSocket)
+
+    useAuthStore.setState({ accessToken: 'tok' })
+
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        {children}
+      </QueryClientProvider>
+    )
+
+    const { unmount } = renderHook(() => useConsole('srv-1'), { wrapper })
+
+    // Esperar a que el socket fake se haya creado (openSocket se ejecuta en el effect).
+    await act(async () => {
+      await Promise.resolve()
+    })
+    const socket = FakeSocket.instance
+    expect(socket).not.toBeNull()
+
+    // Reproducción del buffer: 250 líneas en ráfaga.
+    await act(async () => {
+      for (let i = 0; i < 250; i += 1) {
+        socket!.onmessage?.({
+          data: JSON.stringify(envelope('CONSOLE.OUTPUT', { seq: i, payload: { line: `line-${i}` } })),
+        } as MessageEvent<string>)
+      }
+      // Avanzar el timer para que el flush por intervalo/vacío por tamaño ocurra.
+      vi.advanceTimersByTime(200)
+    })
+
+    // Tras el flush: el store tiene las 250 líneas y el último seq.
+    expect(useConsoleStore.getState().lines['srv-1']).toHaveLength(250)
+    expect(useConsoleStore.getState().lastSeq['srv-1']).toBe(249)
+
+    unmount()
+    vi.unstubAllGlobals()
   })
 })

@@ -2290,3 +2290,27 @@ test).
   de `<section className="pixel-card …">` a `<PixelCard noHover …>`.
 
 **Verificación**: `tsc` ✅ · `eslint` ✅ · `vitest` (settings 5) ✅ · `build` ✅.
+
+### Fase 8 — Consola: batching de líneas al reconectar (fix de congelamiento)
+
+> **Fecha**: 2026-08-14. Al volver a la página de consola tras mucho tiempo, el
+> WS reanuda con `after_seq` y el backend reproduce el **anillo completo**
+> (hasta 1000 líneas) en ráfaga. Cada línea disparaba un `set` de zustand →
+> cientos de re-renders síncronos que **congelaban la página**. Se coalescen
+> las escrituras en lotes (un solo `set` por lote).
+
+- **`stores/console.ts`**: nuevo `addLines(serverId, lines)` que inserta un
+  lote completo en **una sola escritura** respetando el anillo de 1000 (corta
+  al final si el lote lo supera y actualiza `lastSeq` con la última línea).
+- **`features/console/hooks.ts`**: cada `SharedEntry` acumula las líneas
+  entrantes en `pending` y las vacía vía `flushPending` al alcanzar
+  `BATCH_MAX_LINES` (200) o cada `FLUSH_INTERVAL_MS` (80 ms) — nunca un `set`
+  por línea. `closeSocket` también vacía lo pendiente antes de desmontar para
+  no perder la última ráfaga. Se añade `serverId` al entry para ese flush.
+
+**Archivos**: `stores/console.ts`, `features/console/hooks.ts`,
+`stores/console.test.ts` (+3), `features/console/hooks.test.tsx` (+1, WS fake
+con timers).
+
+**Verificación**: `tsc` ✅ · `eslint` ✅ · `vitest` (**183 global**; consola +
+store 21) ✅ · `build` ✅.

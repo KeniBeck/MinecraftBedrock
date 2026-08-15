@@ -17,6 +17,7 @@ interface ConsoleState {
   lines: Record<string, ConsoleLine[]>
   lastSeq: Record<string, number>
   addLine: (serverId: string, line: ConsoleLine) => void
+  addLines: (serverId: string, lines: ConsoleLine[]) => void
   clear: (serverId: string) => void
 }
 
@@ -25,6 +26,18 @@ const MAX_LINES = 1000
 export const useConsoleStore = create<ConsoleState>((set) => ({
   lines: {},
   lastSeq: {},
+  addLines: (serverId, lines) =>
+    set((state) => {
+      if (lines.length === 0) return state
+      const current = state.lines[serverId] ?? []
+      const next = [...current, ...lines]
+      const trimmed = next.length > MAX_LINES ? next.slice(next.length - MAX_LINES) : next
+      const last = lines[lines.length - 1]!
+      return {
+        lines: { ...state.lines, [serverId]: trimmed },
+        lastSeq: { ...state.lastSeq, [serverId]: last.seq },
+      }
+    }),
   addLine: (serverId, line) =>
     set((state) => {
       const current = state.lines[serverId] ?? []
