@@ -75,6 +75,7 @@ class UserResponse(BaseModel):
     created_at: datetime | None = None
     last_login_at: datetime | None = None
     email: str | None = None
+    avatar: str | None = None
 
 
 class UpdateUserRequest(BaseModel):

@@ -36,6 +36,7 @@ class IamUserRow(Base):
     totp_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
     totp_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     backup_codes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    avatar: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class IamUserRoleRow(Base):

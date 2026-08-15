@@ -10,14 +10,17 @@ import {
   deleteUser,
   disable2FA,
   enable2FA,
+  getMe,
   listApiKeys,
   listAuditLogs,
   listRoles,
   listUsers,
+  profileKeys,
   regenerateApiKey,
   regenerateBackupCodes,
   revokeApiKey,
   roleKeys,
+  setAvatar,
   updateUser,
   userKeys,
   verifyAuditChain,
@@ -30,7 +33,7 @@ import {
   type UpdateUserRequest,
 } from '@/lib/api/iam'
 
-export { apiKeyKeys, auditKeys, roleKeys, twoFactorKeys, userKeys } from '@/lib/api/iam'
+export { apiKeyKeys, auditKeys, profileKeys, roleKeys, twoFactorKeys, userKeys } from '@/lib/api/iam'
 
 /** `POST /users` + rol inicial (si se indica) — crear usuario (admin). */
 export function useCreateUser() {
@@ -172,5 +175,24 @@ export function useTwoFactorStatus() {
   return useQuery({
     queryKey: twoFactorKeys.status,
     queryFn: twoFactorStatus,
+  })
+}
+
+/** `GET /users/me` — perfil del usuario autenticado (incluye avatar). */
+export function useProfile() {
+  return useQuery({
+    queryKey: profileKeys.me,
+    queryFn: getMe,
+  })
+}
+
+/** `PUT /users/me/avatar` — sube/actualiza el avatar y refresca el perfil. */
+export function useSetAvatar() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (file: File) => setAvatar(file),
+    onSuccess: (profile) => {
+      queryClient.setQueryData(profileKeys.me, profile)
+    },
   })
 }

@@ -9,9 +9,10 @@ autenticación usa la facade IamFacade. La API no contiene reglas de negocio
 
 from __future__ import annotations
 
+import base64
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
 
 from app.bootstrap.security import get_container, get_current_user, require_action
 from app.kernel.ports.access import Identity
@@ -55,6 +56,7 @@ from app.modules.iam.application.commands import (
     RegenerateBackupCodesCommand,
     RevokeApiKeyCommand,
     RotateApiKeyCommand,
+    SetAvatarCommand,
     UpdateUserCommand,
     VerifyTwoFactorLoginCommand,
 )
@@ -64,6 +66,14 @@ from app.modules.iam.domain.errors import TwoFactorRequiredError
 from app.modules.iam.domain.role import BuiltinRole
 
 router = APIRouter(tags=["iam"])
+
+# Validación de avatar (self-service): PNG/JPEG/WebP, máx. 1 MB, data URL.
+_AVATAR_MIME_TO_EXT = {
+    "image/png": "png",
+    "image/jpeg": "jpeg",
+    "image/webp": "webp",
+}
+_AVATAR_MAX_BYTES = 1024 * 1024
 
 
 def _facade(request: Request) -> IamFacade:
@@ -105,6 +115,7 @@ def _user_response(view: UserView) -> UserResponse:
         created_at=view.created_at,
         last_login_at=view.last_login_at,
         email=view.email,
+        avatar=view.avatar,
     )
 
 
@@ -334,6 +345,45 @@ async def list_users(
     views = await _facade(request).list_users()
     del identity
     return [_user_response(view) for view in views]
+
+
+@router.get(
+    "/users/me",
+    response_model=UserResponse,
+    summary="Perfil del usuario autenticado (incluye avatar)",
+)
+async def get_me(
+    request: Request,
+    identity: Identity = Depends(get_current_user),
+) -> UserResponse:
+    view = await _facade(request).get_user(identity.id)
+    return _user_response(view)
+
+
+@router.put(
+    "/users/me/avatar",
+    response_model=UserResponse,
+    summary="Actualizar el avatar del usuario autenticado (multipart)",
+)
+async def set_my_avatar(
+    request: Request,
+    file: UploadFile = File(...),
+    identity: Identity = Depends(get_current_user),
+) -> UserResponse:
+    data = await file.read()
+    if len(data) > _AVATAR_MAX_BYTES:
+        from app.modules.iam.domain.errors import InvalidAvatarError
+
+        raise InvalidAvatarError("El avatar supera 1 MB")
+    mime = file.content_type or ""
+    ext = _AVATAR_MIME_TO_EXT.get(mime)
+    if ext is None:
+        from app.modules.iam.domain.errors import InvalidAvatarError
+
+        raise InvalidAvatarError("Formato de avatar no soportado (PNG/JPEG/WebP)")
+    avatar = f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+    view = await _facade(request).set_avatar(SetAvatarCommand(user_id=identity.id, avatar=avatar))
+    return _user_response(view)
 
 
 @router.get(

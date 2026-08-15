@@ -5,6 +5,7 @@ import {
   ChevronsUpDown,
   LogOut,
   Settings,
+  UserCircle,
 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
@@ -65,12 +66,17 @@ export function Header() {
     return match?.[1] ?? null
   })()
 
+  /** ¿Estamos en una ruta de servidor (`/servers/...`)? */
+  const isServerRoute = /^\/servers(?:\/|$)/.test(pathname)
+
   function selectServer(serverId: string) {
     setActiveServer(serverId)
-    // Conservar la subpágina actual: si estamos en `/servers/:id/monitoring`,
-    // cambiar solo el id → `/servers/:nuevoId/monitoring` (los datos del nuevo
-    // servidor cargan en la misma página). En el detalle exacto o fuera de una
-    // ruta de servidor, ir al detalle.
+    // En páginas que NO son de servidor (dashboard, perfil, administración,
+    // ajustes…) solo se cambia el servidor activo: el selector, el sidebar y el
+    // badge de jugadores se actualizan sin navegar. En rutas `/servers/*` se
+    // conserva la subpágina (p. ej. `/servers/:id/monitoring`) o se va al
+    // detalle en `/servers/:id` exacto.
+    if (!isServerRoute) return
     navigate(currentSub ? `/servers/${serverId}/${currentSub}` : `/servers/${serverId}`)
   }
 
@@ -195,6 +201,10 @@ export function Header() {
           <DropdownMenuContent align="end">
             <DropdownMenuLabel>{identity?.username}</DropdownMenuLabel>
             <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => navigate('/profile')} data-testid="profile-item">
+              <UserCircle className="size-4" />
+              Mi perfil
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={handleLogout} data-testid="logout-item">
               <LogOut className="size-4" />
               Cerrar sesión

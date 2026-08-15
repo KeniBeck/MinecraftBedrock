@@ -159,3 +159,11 @@ class RotateApiKeyCommand:
 
     user_id: str
     key_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class SetAvatarCommand:
+    """Actualiza el avatar del usuario autenticado (data URL base64)."""
+
+    user_id: str
+    avatar: str | None

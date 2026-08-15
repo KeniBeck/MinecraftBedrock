@@ -25,6 +25,7 @@ class UserView:
     created_at: datetime | None = None
     last_login_at: datetime | None = None
     email: str | None = None
+    avatar: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

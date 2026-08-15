@@ -57,6 +57,7 @@ const USER: User = {
   created_at: null,
   last_login_at: null,
   email: null,
+  avatar: null,
 }
 
 function renderPage(roles: string[] = ['admin']) {

@@ -27,6 +27,11 @@ export const roleKeys = {
   all: ['iam', 'roles'] as const,
 }
 
+/** Clave del perfil del usuario autenticado (`GET /users/me`). */
+export const profileKeys = {
+  me: ['iam', 'me'] as const,
+}
+
 /** Claves de auditoría: listado con filtros y verify de integridad. */
 export const auditKeys = {
   list: (filters: AuditFilters) => [...auditKeys.all, filters] as const,
@@ -44,6 +49,7 @@ export interface User {
   created_at: string | null
   last_login_at: string | null
   email: string | null
+  avatar: string | null
 }
 
 /** `CreateUserRequest` — POST /users. */
@@ -172,6 +178,20 @@ export async function listUsers(): Promise<User[]> {
 /** `GET /users/{id}` — detalle de un usuario (get: iam.view). */
 export async function getUser(userId: string): Promise<User> {
   const { data } = await apiClient.get<User>(`/users/${encodeURIComponent(userId)}`)
+  return data
+}
+
+/** `GET /users/me` — perfil del usuario autenticado (incluye avatar). */
+export async function getMe(): Promise<User> {
+  const { data } = await apiClient.get<User>('/users/me')
+  return data
+}
+
+/** `PUT /users/me/avatar` — sube/actualiza el avatar (multipart). */
+export async function setAvatar(file: File): Promise<User> {
+  const form = new FormData()
+  form.append('file', file)
+  const { data } = await apiClient.put<User>('/users/me/avatar', form)
   return data
 }
 

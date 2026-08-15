@@ -39,6 +39,7 @@ class User:
     totp_secret: str | None = None
     totp_enabled: bool = False
     backup_codes: str | None = None
+    avatar: str | None = None
 
     @property
     def is_active(self) -> bool:

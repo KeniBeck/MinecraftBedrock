@@ -3504,6 +3504,36 @@ lista reconciliada, 201) y si falla, fallback a `GET /worlds` (metadata). Así:
 - Backend: **947 passed** (+1 `TestTwoFactorStatus` en
   `test_iam_security_use_cases.py`). `ruff` ✅ · `mypy` (IAM) ✅. Sin migración.
 
+## 43. Avatar del perfil (`GET /users/me` + `PUT /users/me/avatar`)
+
+> **Fecha**: 2026-08-14. El backend no tenía avatares. Se añade un perfil
+> consultable del usuario autenticado y la subida del avatar como **data URL
+> base64** (PNG/JPEG/WebP ≤ 1 MB), persistido en `iam_users.avatar`. Frontend
+> en `docs/change-log-frontend.md` (Fase 8 — "Avatar del perfil").
+
+### Cambios backend
+
+- **Entidad** `User` + **modelo** `IamUserRow`: campo `avatar: str | None`.
+- **Migración** `0017_iam_user_avatar`: columna `avatar` (Text, nullable) en
+  `iam_users`.
+- **`UserView`** / **`UserResponse`** / `to_view` / `_user_response`: campo
+  `avatar`.
+- **`SetAvatarCommand`** + **`SetAvatarUseCase`** (`use_cases.py`): persiste
+  `user.avatar` y audita `IAM_USER_UPDATED` (detalle `avatar: updated`).
+- **Facade**: método `set_avatar(cmd) -> UserView`.
+- **Repos** (Postgres y memoria): `save`/`_from_row` incluyen `avatar`.
+- **Endpoints** (authN `get_current_user`, self-service, sin permiso especial):
+  - `GET /users/me` → `UserResponse` del autenticado.
+  - `PUT /users/me/avatar` (multipart, `UploadFile`): valida MIME
+    (`image/png|jpeg|webp`) y tamaño (≤ 1 MB), codifica a data URL base64 y
+    la persiste. Errores con `IAM.INVALID_AVATAR` (422).
+- **Error** `InvalidAvatarError` en `iam/domain/errors.py`.
+
+### Verificación
+
+- Backend: **953 passed** (+6 `TestProfileAvatarEndpoints` en
+  `test_iam_security_integration.py`). `ruff` ✅ · `mypy` (335 archivos) ✅.
+
 ## 33. UI de Backups (cierre de la Fase 4)
 
 > **Fecha**: 2026-08-12. Sin cambios de backend: el módulo Backup (paso 13)

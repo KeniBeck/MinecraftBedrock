@@ -29,6 +29,7 @@ from app.modules.iam.application.commands import (
     RegenerateBackupCodesCommand,
     RevokeApiKeyCommand,
     RotateApiKeyCommand,
+    SetAvatarCommand,
     UpdateUserCommand,
     VerifyTwoFactorLoginCommand,
 )
@@ -77,6 +78,7 @@ from app.modules.iam.application.use_cases import (
     LoginUseCase,
     LogoutUseCase,
     RefreshUseCase,
+    SetAvatarUseCase,
     UpdateUserUseCase,
 )
 from app.modules.iam.domain.role import BuiltinRole
@@ -96,6 +98,7 @@ class IamFacade:
         self._list_users = ListUsersUseCase(deps)
         self._get_user = GetUserUseCase(deps)
         self._update_user = UpdateUserUseCase(deps)
+        self._set_avatar = SetAvatarUseCase(deps)
         self._delete_user = DeleteUserUseCase(deps)
         self._list_roles = ListRolesUseCase(deps)
         self._list_audit_logs = ListAuditLogsUseCase(deps)
@@ -143,6 +146,9 @@ class IamFacade:
 
     async def update_user(self, cmd: UpdateUserCommand) -> UserView:
         return await self._update_user.execute(cmd)
+
+    async def set_avatar(self, cmd: SetAvatarCommand) -> UserView:
+        return await self._set_avatar.execute(cmd)
 
     async def delete_user(self, cmd: DeleteUserCommand) -> None:
         await self._delete_user.execute(cmd)

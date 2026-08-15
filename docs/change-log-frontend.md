@@ -2314,3 +2314,88 @@ con timers).
 
 **Verificación**: `tsc` ✅ · `eslint` ✅ · `vitest` (**183 global**; consola +
 store 21) ✅ · `build` ✅.
+
+### Fase 8 — Header: cambiar de servidor sin salir de páginas no-servidor
+
+> **Fecha**: 2026-08-14. En Dashboard (`/`), Perfil (`/profile`), Administración
+> (`/admin/iam`) y Ajustes (`/admin/settings`), elegir otro servidor en el
+> selector del header navegaba a `/servers/:id`. Ahora en esas páginas **solo se
+> cambia el servidor activo** (selector, sidebar y badge de jugadores se
+> actualizan) y no se navega; en rutas `/servers/*` se conserva la subpágina
+> como antes.
+
+- **`components/layout/Header.tsx`**: `selectServer` detecta si la ruta es de
+  servidor (`/^\/servers(?:\/|$)/`); si no lo es, hace `setActiveServer` y
+  retorna sin navegar.
+- **`components/layout/Header.test.tsx`**: test "en una página que no es de
+  servidor solo cambia el activo, sin navegar" (desde `/` el detalle no
+  aparece).
+
+**Verificación**: `tsc` ✅ · `eslint` ✅ · `vitest` (**184 global**; header 8) ✅
+· `build` ✅.
+
+### Fase 8 — Menú del avatar: ítem "Mi perfil"
+
+> **Fecha**: 2026-08-14. El dropdown del avatar solo tenía "Cerrar sesión".
+> Se añade **"Mi perfil"** que navega a `/profile`.
+
+- **`components/layout/Header.tsx`**: `DropdownMenuItem` "Mi perfil" (icono
+  `UserCircle`, `data-testid="profile-item"`) con `onSelect={() =>
+  navigate('/profile')}`, sobre el de "Cerrar sesión".
+- **`components/layout/Header.test.tsx`**: ruta `/profile` de prueba + test
+  "ofrece Mi perfil que navega a /profile".
+
+**Verificación**: `tsc` ✅ · `eslint` ✅ · `vitest` (**185 global**; header 9) ✅
+· `build` ✅.
+
+## Fase 8 — Avatar del perfil (mostrar + cambiar)
+
+> **Fecha**: 2026-08-14. La página de perfil mostraba un icono genérico y el
+> backend no tenía avatares. Se muestra el **avatar del usuario** (data URL
+> base64 de `GET /users/me`, con fallback al voxel estático) y se añade la
+> opción de **cambiarlo** subiendo un archivo vía `PUT /users/me/avatar`.
+> Backend en `docs/change-log.md` (sección 43).
+
+### Alcance
+
+- **`lib/api/iam.ts`**: campo `avatar` en `User`; `profileKeys.me`;
+  `getMe()` (`GET /users/me`) y `setAvatar(file)` (`PUT /users/me/avatar`,
+  `FormData` multipart).
+- **`features/iam/hooks.ts`**: `useProfile` (query) y `useSetAvatar`
+  (mutation que refresca `profileKeys.me`).
+- **`components/ProfileAvatar.tsx`** (nuevo): avatar 96×96 (data URL del
+  backend o `avatar/skinmc-avatar.png` como fallback), botón "Cambiar avatar"
+  que abre un input `type="file"` (PNG/JPEG/WebP), overlay "Subiendo…" durante
+  la subida y error legible (`IAM.INVALID_AVATAR` del backend) si falla.
+- **`ProfilePage.tsx`**: el icono `CircleUserRound` se sustituye por
+  `<ProfileAvatar />` en el header de la página.
+- **`ProfilePage.test.tsx`**: mock de `getMe`/`setAvatar`/`profileKeys` +
+  tests "muestra el avatar (data URL)", "usa el fallback sin avatar" y
+  "cambia el avatar subiendo un archivo".
+- **`Sidebar.tsx`**: se restaura el ítem "Mi perfil" (`href: '/profile'`,
+  icono `UserCircle`) que se había perdido en un cambio previo.
+
+### Verificación
+
+- `tsc` ✅ · `eslint` ✅ · `vitest` (**188 global**; ProfilePage 8) ✅ ·
+  `build` ✅.
+
+### Fase 8 — Avatar: overlay sobre la imagen + dialog de cambio
+
+> **Fecha**: 2026-08-14. El botón "Cambiar avatar" era un botón aparte junto a
+> la imagen. Se moderniza: ahora hay un **overlay translúcido con icono de
+> cámara sobre el avatar** (visible al hover / touch) que abre un **dialog**
+> con vista previa, selector de archivo y botón de guardar.
+
+- **`components/ProfileAvatar.tsx`**: el botón de cambiar es un overlay
+  `absolute` sobre la imagen (grupo `hover:opacity-100`), que abre un
+  `Dialog` (Radix) con vista previa en 128×128, botones "Elegir imagen" y
+  "Guardar avatar". El archivo elegido se previsualiza con
+  `URL.createObjectURL` y se sube al guardar (estado `selected` para no
+  depender de `input.files` tras resetear el input); al éxito se cierra el
+  dialog. El overlay se deshabilita mientras sube.
+- **`ProfilePage.test.tsx`**: tests reescritos para el flujo overlay → dialog →
+  elegir → guardar y cierre del dialog tras guardar (+1).
+
+**Verificación**: `tsc` ✅ · `eslint` ✅ · `vitest` (**189 global**;
+ProfilePage 9) ✅ · `build` ✅.

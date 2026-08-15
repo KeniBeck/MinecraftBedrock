@@ -29,6 +29,7 @@ from app.modules.iam.application.commands import (
     LoginCommand,
     LogoutCommand,
     RefreshCommand,
+    SetAvatarCommand,
     UpdateUserCommand,
 )
 from app.modules.iam.application.ports import (
@@ -111,6 +112,7 @@ def to_view(user: User) -> UserView:
         created_at=user.created_at,
         last_login_at=user.last_login_at,
         email=user.email,
+        avatar=user.avatar,
     )
 
 
@@ -494,6 +496,45 @@ class UpdateUserUseCase:
                     "status": user.status.value,
                     "roles": sorted(role.value for role in user.roles),
                 },
+            )
+        )
+        return to_view(user)
+
+
+class SetAvatarUseCase:
+    """El usuario autenticado actualiza su avatar (data URL base64)."""
+
+    def __init__(self, deps: IamDeps) -> None:
+        self._deps = deps
+
+    async def execute(self, cmd: SetAvatarCommand) -> UserView:
+        deps = self._deps
+        user = await deps.repository.get(cmd.user_id)
+        if user is None:
+            raise UserNotFoundError(
+                f"Usuario no encontrado: {cmd.user_id}",
+                context={"user_id": cmd.user_id},
+            )
+        user.avatar = cmd.avatar
+        await deps.repository.save(user)
+        await deps.bus.publish(
+            iam_event(
+                IAM_USER_UPDATED,
+                actor_id=cmd.user_id,
+                payload={"user_id": user.id, "username": user.username},
+            )
+        )
+        await deps.audit.record(
+            AuditEntry(
+                id=deps.ids.new_id(),
+                actor_id=cmd.user_id,
+                actor_type="user",
+                action=IAM_USER_UPDATED,
+                result="success",
+                created_at=deps.time.now(),
+                resource_type="user",
+                resource_id=user.id,
+                detail={"username": user.username, "avatar": "updated"},
             )
         )
         return to_view(user)

@@ -5,6 +5,7 @@ Reusa los helpers y el container de dobles de ``test_api_integration``.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -172,3 +173,70 @@ class TestAuditVerify:
         headers = login(client, "lurker")
         response = client.get("/api/v1/iam/audit/verify", headers=headers)
         assert response.status_code == 403
+
+
+class TestProfileAvatarEndpoints:
+    def test_get_me_devuelve_perfil_con_avatar_vacio(self, client: TestClient) -> None:
+        headers = auth_headers(client)
+        response = client.get("/api/v1/users/me", headers=headers)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["username"] == "root"
+        assert body["avatar"] is None
+
+    def test_get_me_requiere_autenticacion(self, client: TestClient) -> None:
+        response = client.get("/api/v1/users/me")
+        assert response.status_code == 401
+
+    def test_put_avatar_guarda_data_url(self, client: TestClient) -> None:
+        headers = auth_headers(client)
+        png = bytes.fromhex(
+            "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
+        )
+        response = client.put(
+            "/api/v1/users/me/avatar",
+            headers=headers,
+            files={"file": ("avatar.png", png, "image/png")},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["username"] == "root"
+        assert body["avatar"].startswith("data:image/png;base64,")
+
+        # Persistido en el store (el id es el del usuario autenticado).
+        me = client.get("/api/v1/users/me", headers=headers).json()
+        stored = asyncio.run(iam_store(client).get(me["id"]))
+        assert stored is not None
+        assert stored.avatar == body["avatar"]
+
+        # El perfil lo devuelve ahora.
+        me_after = client.get("/api/v1/users/me", headers=headers).json()
+        assert me_after["avatar"] == body["avatar"]
+
+    def test_put_avatar_formato_no_soportado_422(self, client: TestClient) -> None:
+        headers = auth_headers(client)
+        response = client.put(
+            "/api/v1/users/me/avatar",
+            headers=headers,
+            files={"file": ("avatar.txt", b"no es imagen", "text/plain")},
+        )
+        assert response.status_code == 422, response.text
+
+    def test_put_avatar_demasiado_grande_422(self, client: TestClient) -> None:
+        headers = auth_headers(client)
+        big = bytes.fromhex(
+            "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
+        ) * 200_000  # > 1 MB
+        response = client.put(
+            "/api/v1/users/me/avatar",
+            headers=headers,
+            files={"file": ("avatar.png", big, "image/png")},
+        )
+        assert response.status_code == 422, response.text
+
+    def test_put_avatar_requiere_autenticacion(self, client: TestClient) -> None:
+        response = client.put(
+            "/api/v1/users/me/avatar",
+            files={"file": ("avatar.png", b"x", "image/png")},
+        )
+        assert response.status_code == 401

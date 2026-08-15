@@ -43,6 +43,7 @@ function renderHeader(route = '/') {
           <Route path="/servers/:serverId" element={<div data-testid="detail-page" />} />
           <Route path="/servers/:serverId/console" element={<div data-testid="console-page" />} />
           <Route path="/servers/:serverId/monitoring" element={<div data-testid="monitoring-page" />} />
+          <Route path="/profile" element={<div data-testid="profile-page" />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -108,6 +109,27 @@ describe('Header — selector de servidor', () => {
     expect(screen.queryByTestId('detail-page')).not.toBeInTheDocument()
   })
 
+  it('en una página que no es de servidor solo cambia el activo, sin navegar', async () => {
+    const user = userEvent.setup()
+    vi.mocked(listServers).mockResolvedValue([
+      makeServer('s1', 'Survival', 'running'),
+      makeServer('s2', 'Skyblock', 'stopped'),
+    ])
+    useActiveServer.getState().setActiveServer('s1')
+
+    // La raíz (dashboard) no es una ruta de servidor.
+    renderHeader('/')
+    await waitFor(() => expect(screen.getByTestId('server-selector')).toBeInTheDocument())
+
+    await user.click(screen.getByTestId('server-selector'))
+    await waitFor(() => expect(screen.getByTestId('server-option-s2')).toBeInTheDocument())
+    await user.click(screen.getByTestId('server-option-s2'))
+
+    expect(useActiveServer.getState().activeServerId).toBe('s2')
+    // No navega al detalle: no aparece la página de detalle.
+    expect(screen.queryByTestId('detail-page')).not.toBeInTheDocument()
+  })
+
   it('muestra el estado de cada servidor en el dropdown', async () => {
     const user = userEvent.setup()
     vi.mocked(listServers).mockResolvedValue([
@@ -141,6 +163,27 @@ describe('Header — selector de servidor', () => {
     await waitFor(() => {
       expect(screen.getByText('7 / 10 jugadores')).toBeInTheDocument()
     })
+  })
+})
+
+describe('Header — menú de perfil (avatar)', () => {
+  afterEach(() => {
+    vi.clearAllMocks()
+    useAuthStore.setState({ identity: null })
+  })
+
+  it('ofrece "Mi perfil" que navega a /profile', async () => {
+    const user = userEvent.setup()
+    useAuthStore.setState({ identity: { id: 'u1', username: 'admin', roles: ['admin'] } })
+
+    renderHeader('/')
+    await waitFor(() => expect(screen.getByTestId('profile-menu')).toBeInTheDocument())
+
+    await user.click(screen.getByTestId('profile-menu'))
+    await waitFor(() => expect(screen.getByTestId('profile-item')).toBeInTheDocument())
+    await user.click(screen.getByTestId('profile-item'))
+
+    expect(screen.getByTestId('profile-page')).toBeInTheDocument()
   })
 })
 

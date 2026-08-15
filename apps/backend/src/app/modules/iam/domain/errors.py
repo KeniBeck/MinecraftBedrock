@@ -127,3 +127,9 @@ class SecretCipherError(InfrastructureError):
     """No se pudo cifrar/descifrar un secreto (clave o ciphertext inválido)."""
 
     code = "IAM.SECRET_CIPHER"
+
+
+class InvalidAvatarError(ValidationError):
+    """El avatar subido es inválido (tamaño o formato no soportado)."""
+
+    code = "IAM.INVALID_AVATAR"
