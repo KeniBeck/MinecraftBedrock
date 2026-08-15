@@ -21,6 +21,7 @@ from app.modules.iam.application.commands import (
     CreateApiKeyCommand,
     CreateUserCommand,
     DeleteUserCommand,
+    DisableTwoFactorCommand,
     EnableTwoFactorCommand,
     LoginCommand,
     LogoutCommand,
@@ -52,7 +53,9 @@ from app.modules.iam.application.results import (
 from app.modules.iam.application.security_use_cases import (
     ConfirmTwoFactorUseCase,
     CreateApiKeyUseCase,
+    DisableTwoFactorUseCase,
     EnableTwoFactorUseCase,
+    GetTwoFactorStatusUseCase,
     ListApiKeysUseCase,
     RegenerateBackupCodesUseCase,
     ResolveApiKeyUseCase,
@@ -112,6 +115,8 @@ class IamFacade:
         self._confirm_2fa = ConfirmTwoFactorUseCase(security_deps)
         self._verify_2fa_login = VerifyTwoFactorLoginUseCase(security_deps)
         self._regenerate_backup = RegenerateBackupCodesUseCase(security_deps)
+        self._disable_2fa = DisableTwoFactorUseCase(security_deps)
+        self._get_2fa_status = GetTwoFactorStatusUseCase(security_deps)
         self._create_api_key = CreateApiKeyUseCase(security_deps)
         self._list_api_keys = ListApiKeysUseCase(security_deps)
         self._revoke_api_key = RevokeApiKeyUseCase(security_deps)
@@ -228,6 +233,12 @@ class IamFacade:
 
     async def regenerate_backup_codes(self, cmd: RegenerateBackupCodesCommand) -> tuple[str, ...]:
         return await self._regenerate_backup.execute(cmd)
+
+    async def disable_two_factor(self, cmd: DisableTwoFactorCommand) -> None:
+        await self._disable_2fa.execute(cmd)
+
+    async def two_factor_status(self, user_id: str) -> bool:
+        return await self._get_2fa_status.execute(user_id)
 
     # -- API keys (Fase H paso 18) --------------------------------------------
 

@@ -35,6 +35,7 @@ from app.modules.iam.api.schemas import (
     RefreshRequest,
     RoleResponse,
     TokenResponse,
+    TwoFactorStatusResponse,
     UpdateUserRequest,
     UserResponse,
     VerifyTwoFactorLoginRequest,
@@ -46,6 +47,7 @@ from app.modules.iam.application.commands import (
     CreateApiKeyCommand,
     CreateUserCommand,
     DeleteUserCommand,
+    DisableTwoFactorCommand,
     EnableTwoFactorCommand,
     LoginCommand,
     LogoutCommand,
@@ -210,6 +212,33 @@ async def regenerate_backup_codes(
         RegenerateBackupCodesCommand(user_id=identity.id)
     )
     return BackupCodesResponse(backup_codes=list(codes))
+
+
+@router.post(
+    "/auth/2fa/disable",
+    status_code=204,
+    summary="Desactivar 2FA (limpia secreto y backup codes)",
+)
+async def disable_two_factor(
+    request: Request,
+    identity: Identity = Depends(get_current_user),
+) -> None:
+    await _facade(request).disable_two_factor(
+        DisableTwoFactorCommand(user_id=identity.id)
+    )
+
+
+@router.get(
+    "/auth/2fa/status",
+    response_model=TwoFactorStatusResponse,
+    summary="Estado del 2FA del usuario autenticado",
+)
+async def two_factor_status(
+    request: Request,
+    identity: Identity = Depends(get_current_user),
+) -> TwoFactorStatusResponse:
+    enabled = await _facade(request).two_factor_status(identity.id)
+    return TwoFactorStatusResponse(enabled=enabled)
 
 
 @router.post("/auth/refresh", response_model=TokenResponse, summary="Rotar tokens")

@@ -6,13 +6,16 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 
 import { ProfilePage } from '@/features/iam/ProfilePage'
-import { enable2FA, confirm2FA, regenerateBackupCodes } from '@/lib/api/iam'
+import { enable2FA, confirm2FA, regenerateBackupCodes, disable2FA, twoFactorStatus } from '@/lib/api/iam'
 import { useAuthStore } from '@/stores/auth'
 
 vi.mock('@/lib/api/iam', () => ({
   enable2FA: vi.fn(),
   confirm2FA: vi.fn(),
   regenerateBackupCodes: vi.fn(),
+  disable2FA: vi.fn(),
+  twoFactorStatus: vi.fn(),
+  twoFactorKeys: { status: ['iam', '2fa', 'status'] },
 }))
 
 function renderPage() {
@@ -32,6 +35,7 @@ function renderPage() {
 
 describe('ProfilePage', () => {
   beforeEach(() => {
+    vi.mocked(twoFactorStatus).mockResolvedValue({ enabled: false })
     useAuthStore.setState({
       identity: { id: 'u1', username: 'admin', roles: ['admin'] },
     })
@@ -88,5 +92,36 @@ describe('ProfilePage', () => {
 
     await user.click(await screen.findByRole('button', { name: /regenerar backup codes/i }))
     expect(await screen.findByText('99999999')).toBeInTheDocument()
+  })
+
+  it('desactiva 2FA y vuelve al estado inicial', async () => {
+    const user = userEvent.setup()
+    vi.mocked(enable2FA).mockResolvedValue({
+      secret: 'SECRET123',
+      provisioning_uri: 'otpauth://totp/x?secret=SECRET123',
+      backup_codes: ['11111111'],
+    })
+    vi.mocked(confirm2FA).mockResolvedValue(undefined)
+    vi.mocked(disable2FA).mockResolvedValue(undefined)
+    renderPage()
+
+    await user.click(screen.getByRole('button', { name: /habilitar 2fa/i }))
+    await screen.findByText('SECRET123')
+    await user.type(screen.getByLabelText(/código de confirmación/i), '000000')
+    await user.click(screen.getByRole('button', { name: /confirmar 2fa/i }))
+    await screen.findByText('2FA activado')
+
+    await user.click(screen.getByRole('button', { name: /desactivar 2fa/i }))
+    expect(disable2FA).toHaveBeenCalledTimes(1)
+    expect(await screen.findByRole('button', { name: /habilitar 2fa/i })).toBeInTheDocument()
+  })
+
+  it('muestra 2FA como activado si el backend lo reporta al entrar', async () => {
+    vi.mocked(twoFactorStatus).mockResolvedValue({ enabled: true })
+    renderPage()
+
+    expect(await screen.findByText('2FA activado')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /habilitar 2fa/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /desactivar 2fa/i })).toBeInTheDocument()
   })
 })

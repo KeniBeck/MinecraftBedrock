@@ -2104,3 +2104,42 @@ test).
 
 **Verificación**: `tsc` ✅ · `eslint` ✅ · `vitest` (11 IAM, 180 global) ✅ ·
 `build` ✅.
+
+### Fase 8 — Desactivar 2FA
+
+> **Fecha**: 2026-08-14. Cuando el 2FA está activado el botón "Habilitar" se
+> sustituye por una fila con "Regenerar backup codes" + **"Desactivar 2FA"**,
+> que llama al nuevo `POST /auth/2fa/disable` del backend (sección 41 del
+> `change-log`). Al desactivarse el estado vuelve a `idle` y se limpian los
+> backup codes mostrados.
+
+- **`lib/api/iam.ts`**: `disable2FA()` → `POST /auth/2fa/disable` (204).
+- **`hooks.ts`**: `useDisable2FA()` (`useMutation`).
+- **`ProfileSettings.tsx`**: hook + `handleDisable`; en `phase === 'enabled'`
+  se renderiza el botón "Desactivar 2FA" (con estado "Desactivando…" pendiente)
+  junto al de regenerar. Al éxito: `setBackupCodes(null)` y `setPhase('idle')`.
+- **`ProfilePage.test.tsx`**: mock de `disable2FA` + test "desactiva 2FA y
+  vuelve al estado inicial".
+
+**Verificación**: `tsc` ✅ · `eslint` ✅ · `vitest` (181 global) ✅ · `build` ✅.
+
+### Fase 8 — Estado real de 2FA al entrar
+
+> **Fecha**: 2026-08-14. El estado de 2FA se derivaba solo localmente: al
+> volver a iniciar sesión el perfil mostraba "Habilitar 2FA" aunque el 2FA ya
+> estuviera activo. Ahora se consulta `GET /auth/2fa/status` al montar la
+> sección y se usa como fuente de verdad (sección 42 del `change-log`).
+
+- **`lib/api/iam.ts`**: `TwoFactorStatus` + `twoFactorStatus()` →
+  `GET /auth/2fa/status`; clave `twoFactorKeys.status`.
+- **`hooks.ts`**: `useTwoFactorStatus()` (`useQuery`, key
+  `twoFactorKeys.status`).
+- **`ProfileSettings.tsx`**: `enabled = phase === 'enabled' ||
+  (phase === 'idle' && status.data?.enabled === true)`; el botón "Habilitar"
+  se oculta y se muestra "2FA activado" + "Desactivar 2FA" cuando el backend
+  reporta 2FA activo. Tras confirmar/desactivar se invalida
+  `twoFactorKeys.status` para refrescar la fuente de verdad.
+- **`ProfilePage.test.tsx`**: mock de `twoFactorStatus`/`twoFactorKeys` +
+  test "muestra 2FA como activado si el backend lo reporta al entrar".
+
+**Verificación**: `tsc` ✅ · `eslint` ✅ · `vitest` (182 global) ✅ · `build` ✅.

@@ -141,6 +141,10 @@ class BackupCodesResponse(BaseModel):
     backup_codes: list[str]
 
 
+class TwoFactorStatusResponse(BaseModel):
+    enabled: bool
+
+
 # -- API keys (Fase H paso 18) --------------------------------------------------
 
 

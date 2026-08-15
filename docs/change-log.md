@@ -3460,6 +3460,50 @@ lista reconciliada, 201) y si falla, fallback a `GET /worlds` (metadata). Así:
   restantes de `mypy` son preexistentes en `test_level_reader.py`/
   `test_monitoring.py` (fuera del cambio). `ruff` ✅ · `mypy` (IAM) ✅.
 
+## 41. Desactivación de 2FA (`POST /auth/2fa/disable`)
+
+> **Fecha**: 2026-08-14. El backend solo permitía habilitar/confirmar el 2FA y
+> regenerar backup codes, sin forma de apagarlo. Se añade el endpoint que
+> desactiva el 2FA del usuario autenticado. Frontend en
+> `docs/change-log-frontend.md` (Fase 8 — "Desactivar 2FA").
+
+### Cambios backend
+
+- **Comando** `DisableTwoFactorCommand` (`user_id`).
+- **`DisableTwoFactorUseCase`** (`security_use_cases.py`): exige 2FA activo
+  (`TwoFactorNotEnabledError` si no lo está) y limpia `totp_secret`,
+  `backup_codes` y `totp_enabled = False`; persiste con `repository.save`.
+- **Facade**: método `disable_two_factor`.
+- **Endpoint** `POST /auth/2fa/disable` (204, authN `get_current_user`):
+  opera sobre `identity.id`, igual que `enable`/`verify`/`backup`.
+
+### Verificación
+
+- Backend: **946 passed** (+2 `TestDisableTwoFactor` en
+  `test_iam_security_use_cases.py`). `ruff` ✅ · `mypy` (IAM) ✅. Sin migración
+  (reusa columnas existentes).
+
+## 42. Estado de 2FA consultable (`GET /auth/2fa/status`)
+
+> **Fecha**: 2026-08-14. Al volver a iniciar sesión, el perfil no sabía si el
+> 2FA estaba activo (el estado solo se derivaba localmente en la sesión
+> actual), por lo que mostraba el botón "Habilitar" aun con 2FA habilitado.
+> Se añade una fuente de verdad consultable. Frontend en
+> `docs/change-log-frontend.md` (Fase 8 — "Estado real de 2FA al entrar").
+
+### Cambios backend
+
+- **`GetTwoFactorStatusUseCase`** (`security_use_cases.py`): devuelve
+  `user.totp_enabled` del usuario autenticado.
+- **Facade**: método `two_factor_status(user_id) -> bool`.
+- **Esquema** `TwoFactorStatusResponse { enabled: bool }`.
+- **Endpoint** `GET /auth/2fa/status` (authN `get_current_user`), con `Identity`.
+
+### Verificación
+
+- Backend: **947 passed** (+1 `TestTwoFactorStatus` en
+  `test_iam_security_use_cases.py`). `ruff` ✅ · `mypy` (IAM) ✅. Sin migración.
+
 ## 33. UI de Backups (cierre de la Fase 4)
 
 > **Fecha**: 2026-08-12. Sin cambios de backend: el módulo Backup (paso 13)

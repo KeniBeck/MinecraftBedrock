@@ -18,6 +18,7 @@ from app.kernel.time import TimeProviderPort
 from app.modules.iam.application.commands import (
     ConfirmTwoFactorCommand,
     CreateApiKeyCommand,
+    DisableTwoFactorCommand,
     EnableTwoFactorCommand,
     RegenerateBackupCodesCommand,
     RevokeApiKeyCommand,
@@ -187,6 +188,33 @@ class RegenerateBackupCodesUseCase:
         user.backup_codes = deps.cipher.encrypt(json.dumps(list(codes)))
         await deps.repository.save(user)
         return codes
+
+
+class DisableTwoFactorUseCase:
+    """Desactiva el 2FA: limpia secreto, backup codes y el flag `totp_enabled`."""
+
+    def __init__(self, deps: SecurityDeps) -> None:
+        self._deps = deps
+
+    async def execute(self, cmd: DisableTwoFactorCommand) -> None:
+        user = await _require_user(self._deps.repository, cmd.user_id)
+        if not user.totp_enabled:
+            raise TwoFactorNotEnabledError("2FA no habilitado en la cuenta")
+        user.totp_secret = None
+        user.backup_codes = None
+        user.totp_enabled = False
+        await self._deps.repository.save(user)
+
+
+class GetTwoFactorStatusUseCase:
+    """Con su estado de 2FA (habilitado o no) del usuario autenticado."""
+
+    def __init__(self, deps: SecurityDeps) -> None:
+        self._deps = deps
+
+    async def execute(self, user_id: str) -> bool:
+        user = await _require_user(self._deps.repository, user_id)
+        return user.totp_enabled
 
 
 class CreateApiKeyUseCase:

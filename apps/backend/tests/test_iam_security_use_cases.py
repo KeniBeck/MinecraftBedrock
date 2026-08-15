@@ -9,6 +9,7 @@ from app.infrastructure.events.bus import InProcessEventBus
 from app.modules.iam.application.commands import (
     ConfirmTwoFactorCommand,
     CreateApiKeyCommand,
+    DisableTwoFactorCommand,
     EnableTwoFactorCommand,
     LoginCommand,
     RegenerateBackupCodesCommand,
@@ -19,7 +20,9 @@ from app.modules.iam.application.commands import (
 from app.modules.iam.application.security_use_cases import (
     ConfirmTwoFactorUseCase,
     CreateApiKeyUseCase,
+    DisableTwoFactorUseCase,
     EnableTwoFactorUseCase,
+    GetTwoFactorStatusUseCase,
     ListApiKeysUseCase,
     RegenerateBackupCodesUseCase,
     ResolveApiKeyUseCase,
@@ -246,6 +249,57 @@ class TestBackupCodesRegen:
             RegenerateBackupCodesCommand(user_id="u1")
         )
         assert len(codes) == 10
+
+
+class TestDisableTwoFactor:
+    async def test_desactivar_requiere_2fa_activo(self) -> None:
+        deps = Deps()
+        await deps.repository.save(make_user())
+        with pytest.raises(TwoFactorNotEnabledError):
+            await DisableTwoFactorUseCase(deps.security).execute(
+                DisableTwoFactorCommand(user_id="u1")
+            )
+
+    async def test_desactivar_limpia_secreto_backup_codes_y_flag(self) -> None:
+        deps = Deps()
+        await deps.repository.save(make_user())
+        result = await EnableTwoFactorUseCase(deps.security).execute(
+            EnableTwoFactorCommand(user_id="u1")
+        )
+        await ConfirmTwoFactorUseCase(deps.security).execute(
+            ConfirmTwoFactorCommand(user_id="u1", code=pyotp.TOTP(result.secret).now())
+        )
+        loaded = await deps.repository.get("u1")
+        assert loaded is not None and loaded.totp_enabled is True
+
+        await DisableTwoFactorUseCase(deps.security).execute(
+            DisableTwoFactorCommand(user_id="u1")
+        )
+        user = await deps.repository.get("u1")
+        assert user is not None
+        assert user.totp_enabled is False
+        assert user.totp_secret is None
+        assert user.backup_codes is None
+
+
+class TestTwoFactorStatus:
+    async def test_status_refleja_habilitado_y_deshabilitado(self) -> None:
+        deps = Deps()
+        await deps.repository.save(make_user())
+        assert await GetTwoFactorStatusUseCase(deps.security).execute("u1") is False
+
+        result = await EnableTwoFactorUseCase(deps.security).execute(
+            EnableTwoFactorCommand(user_id="u1")
+        )
+        await ConfirmTwoFactorUseCase(deps.security).execute(
+            ConfirmTwoFactorCommand(user_id="u1", code=pyotp.TOTP(result.secret).now())
+        )
+        assert await GetTwoFactorStatusUseCase(deps.security).execute("u1") is True
+
+        await DisableTwoFactorUseCase(deps.security).execute(
+            DisableTwoFactorCommand(user_id="u1")
+        )
+        assert await GetTwoFactorStatusUseCase(deps.security).execute("u1") is False
 
 
 class TestApiKeys:

@@ -8,6 +8,7 @@ import {
   createApiKey,
   createUser,
   deleteUser,
+  disable2FA,
   enable2FA,
   listApiKeys,
   listAuditLogs,
@@ -20,6 +21,8 @@ import {
   updateUser,
   userKeys,
   verifyAuditChain,
+  twoFactorStatus,
+  twoFactorKeys,
   type AssignRoleRequest,
   type AuditFilters,
   type CreateApiKeyRequest,
@@ -27,7 +30,7 @@ import {
   type UpdateUserRequest,
 } from '@/lib/api/iam'
 
-export { apiKeyKeys, auditKeys, roleKeys, userKeys } from '@/lib/api/iam'
+export { apiKeyKeys, auditKeys, roleKeys, twoFactorKeys, userKeys } from '@/lib/api/iam'
 
 /** `POST /users` + rol inicial (si se indica) — crear usuario (admin). */
 export function useCreateUser() {
@@ -157,4 +160,17 @@ export function useConfirm2FA() {
 /** `POST /auth/2fa/backup` — regenerar backup codes. */
 export function useRegenerateBackupCodes() {
   return useMutation({ mutationFn: () => regenerateBackupCodes() })
+}
+
+/** `POST /auth/2fa/disable` — desactivar 2FA. */
+export function useDisable2FA() {
+  return useMutation({ mutationFn: () => disable2FA() })
+}
+
+/** `GET /auth/2fa/status` — estado (habilitado o no) del 2FA autenticado. */
+export function useTwoFactorStatus() {
+  return useQuery({
+    queryKey: twoFactorKeys.status,
+    queryFn: twoFactorStatus,
+  })
 }

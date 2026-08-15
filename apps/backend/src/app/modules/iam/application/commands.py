@@ -130,6 +130,13 @@ class RegenerateBackupCodesCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class DisableTwoFactorCommand:
+    """Desactiva el 2FA (limpia secreto + backup codes + flag)."""
+
+    user_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class CreateApiKeyCommand:
     """Crea una API key para el usuario con un set de scopes."""
 

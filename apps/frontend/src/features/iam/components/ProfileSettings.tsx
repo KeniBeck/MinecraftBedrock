@@ -1,13 +1,15 @@
 import { useState } from 'react'
 import { KeyRound, Palette, ShieldCheck } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { getApiMessage } from '@/lib/api/client'
 import { useThemeStore, BACKGROUNDS } from '@/stores/theme'
+import { twoFactorKeys } from '@/lib/api/iam'
 import type { EnableTwoFactor } from '@/lib/api/iam'
-import { useConfirm2FA, useEnable2FA, useRegenerateBackupCodes } from '../hooks'
+import { useConfirm2FA, useDisable2FA, useEnable2FA, useRegenerateBackupCodes, useTwoFactorStatus } from '../hooks'
 import { TOTPQr } from './TOTPQr'
 
 function BackupCodes({ codes, label }: { codes: string[]; label: string }) {
@@ -24,20 +26,27 @@ function BackupCodes({ codes, label }: { codes: string[]; label: string }) {
 }
 
 /**
- * Autenticación de segundo factor (2FA/TOTP) del perfil propio. El backend no
- * expone el estado de 2FA (ni GET ni botón de desactivar), por lo que el estado
- * "activado" se deriva localmente tras `POST /auth/2fa/verify` (204).
+ * Autenticación de segundo factor (2FA/TOTP) del perfil propio. El estado
+ * "activado" se inicializa consultando `GET /auth/2fa/status` al montar, de
+ * modo que al volver a iniciar sesión el perfil refleja el 2FA real (no se
+ * deriva solo de la sesión actual). Tras habilitar/confirmar/desactivar se
+ * refresca esa fuente de verdad.
  */
 function TwoFactorSection() {
+  const queryClient = useQueryClient()
   const enable = useEnable2FA()
   const confirm = useConfirm2FA()
   const regenerate = useRegenerateBackupCodes()
+  const disable = useDisable2FA()
+  const status = useTwoFactorStatus()
 
   const [phase, setPhase] = useState<'idle' | 'confirm' | 'enabled'>('idle')
   const [pending, setPending] = useState<EnableTwoFactor | null>(null)
   const [code, setCode] = useState('')
   const [backupCodes, setBackupCodes] = useState<string[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  const enabled = phase === 'enabled' || (phase === 'idle' && status.data?.enabled === true)
 
   const handleEnable = async () => {
     setError(null)
@@ -57,6 +66,7 @@ function TwoFactorSection() {
       setPhase('enabled')
       setPending(null)
       setCode('')
+      await queryClient.invalidateQueries({ queryKey: twoFactorKeys.status })
     } catch (err) {
       setError(getApiMessage(err, 'Código no válido'))
     }
@@ -72,22 +82,34 @@ function TwoFactorSection() {
     }
   }
 
+  const handleDisable = async () => {
+    setError(null)
+    try {
+      await disable.mutateAsync(undefined)
+      setBackupCodes(null)
+      setPhase('idle')
+      await queryClient.invalidateQueries({ queryKey: twoFactorKeys.status })
+    } catch (err) {
+      setError(getApiMessage(err, 'No se pudo desactivar 2FA'))
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         <p className="text-sm text-muted-foreground">
-          {phase === 'enabled'
+          {enabled
             ? 'La autenticación de dos factores está activada en tu cuenta.'
             : 'Protege tu cuenta con un segundo factor (aplicación de autenticación TOTP).'}
         </p>
-        {phase === 'enabled' && (
+        {enabled && (
           <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-300">
             <ShieldCheck className="mr-1 h-3 w-3" /> 2FA activado
           </Badge>
         )}
       </div>
 
-      {phase === 'idle' && (
+      {phase === 'idle' && !enabled && (
         <Button variant="create" pixel onClick={handleEnable} disabled={enable.isPending}>
           <KeyRound className="mr-1 h-4 w-4" />
           Habilitar 2FA
@@ -126,12 +148,17 @@ function TwoFactorSection() {
         </div>
       )}
 
-      {phase === 'enabled' && (
+      {enabled && (
         <div className="flex flex-col items-start gap-3">
           {backupCodes && <BackupCodes codes={backupCodes} label="Nuevos backup codes (una sola vez)" />}
-          <Button variant="outline" pixel onClick={handleRegenerate} disabled={regenerate.isPending}>
-            Regenerar backup codes
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" pixel onClick={handleRegenerate} disabled={regenerate.isPending}>
+              Regenerar backup codes
+            </Button>
+            <Button variant="outline" pixel onClick={handleDisable} disabled={disable.isPending}>
+              {disable.isPending ? 'Desactivando…' : 'Desactivar 2FA'}
+            </Button>
+          </div>
         </div>
       )}
 

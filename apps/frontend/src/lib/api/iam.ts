@@ -17,6 +17,11 @@ export const apiKeyKeys = {
   all: ['iam', 'api-keys'] as const,
 }
 
+/** Clave del estado 2FA del usuario autenticado (`GET /auth/2fa/status`). */
+export const twoFactorKeys = {
+  status: ['iam', '2fa', 'status'] as const,
+}
+
 /** Claves del catálogo de roles (`GET /roles`). */
 export const roleKeys = {
   all: ['iam', 'roles'] as const,
@@ -135,6 +140,11 @@ export interface BackupCodes {
   backup_codes: string[]
 }
 
+/** `TwoFactorStatusResponse`. */
+export interface TwoFactorStatus {
+  enabled: boolean
+}
+
 /** `AuditVerifyResponse`. */
 export interface AuditVerify {
   valid: boolean
@@ -243,5 +253,16 @@ export async function confirm2FA(code: string): Promise<void> {
 /** `POST /auth/2fa/backup` — regenerar backup codes (2FA ya confirmado). */
 export async function regenerateBackupCodes(): Promise<BackupCodes> {
   const { data } = await apiClient.post<BackupCodes>('/auth/2fa/backup')
+  return data
+}
+
+/** `POST /auth/2fa/disable` (204) — desactivar 2FA (limpia secreto + codes). */
+export async function disable2FA(): Promise<void> {
+  await apiClient.post('/auth/2fa/disable')
+}
+
+/** `GET /auth/2fa/status` — estado del 2FA del usuario autenticado. */
+export async function twoFactorStatus(): Promise<TwoFactorStatus> {
+  const { data } = await apiClient.get<TwoFactorStatus>('/auth/2fa/status')
   return data
 }
