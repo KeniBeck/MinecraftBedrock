@@ -10,12 +10,15 @@ import {
   Globe,
   Keyboard,
   LayoutDashboard,
+  ScrollText,
   Settings2,
   Shield,
+  UserCircle,
   Users,
 } from 'lucide-react'
 
 import { useActiveServer } from '@/stores/servers'
+import { useCan } from '@/lib/auth/useCan'
 import { cn } from '@/lib/utils'
 
 /**
@@ -31,6 +34,8 @@ interface SidebarItem {
   /** Ruta hija dentro de `/servers/:serverId` (p. ej. `console`). */
   sub?: string
   disabled?: boolean
+  /** Añadido a la matriz de `useCan`; el ítem se oculta si no puede. */
+  gate?: string
 }
 
 const SIDEBAR_ITEMS: SidebarItem[] = [
@@ -44,7 +49,9 @@ const SIDEBAR_ITEMS: SidebarItem[] = [
   { label: 'Monitoreo', icon: Bell, href: '/servers', sub: 'monitoring', disabled: false },
   { label: 'Plantillas', icon: Boxes, href: '/servers', sub: 'templates', disabled: false },
   { label: 'Permisos', icon: Shield, href: '/servers', sub: 'permissions', disabled: false },
-  { label: 'Configuración', icon: Settings2, disabled: true },
+  { label: 'Configuración', icon: Settings2, href: '/servers', sub: 'configuration', disabled: false },
+  { label: 'Mi perfil', icon: UserCircle, href: '/profile', disabled: false },
+  { label: 'Administración', icon: ScrollText, href: '/admin/iam', gate: 'iam.manage' },
   { label: 'Logs', icon: Database, disabled: true },
 ]
 
@@ -64,6 +71,9 @@ export function Sidebar({
   const { pathname } = useLocation()
   const activeServerId = useActiveServer((state) => state.activeServerId)
   const resolvedServerId = serverId ?? activeServerId
+  const canManageIam = useCan('iam.manage')
+
+  const visibleItems = SIDEBAR_ITEMS.filter((item) => !item.gate || canManageIam)
 
   /** `/servers/:id[/sub]` si el ítem depende del servidor activo, o `null`. */
   function resolveHref(item: SidebarItem): string | null {
@@ -96,7 +106,7 @@ export function Sidebar({
       </div>
 
       <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-2">
-        {SIDEBAR_ITEMS.map((item) => {
+        {visibleItems.map((item) => {
           const Icon = item.icon
           const href = resolveHref(item)
           const active = href ? pathname === href : false

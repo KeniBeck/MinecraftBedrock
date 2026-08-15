@@ -78,6 +78,26 @@ class AssignMembershipCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class UpdateUserCommand:
+    """Admin actualiza campos parciales de un usuario (no username/password)."""
+
+    user_id: str
+    display_name: str | None = None
+    email: str | None = None
+    status: str | None = None
+    roles: tuple[BuiltinRole, ...] | None = None
+    actor_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DeleteUserCommand:
+    """Admin suspende un usuario (soft delete; preserva auditoría)."""
+
+    user_id: str
+    actor_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class EnableTwoFactorCommand:
     """Inicia la habilitación de 2FA (genera secreto + backup codes)."""
 

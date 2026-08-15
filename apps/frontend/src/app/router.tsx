@@ -11,6 +11,9 @@ import { BackupsPage } from '@/features/backups/BackupsPage'
 import { MonitoringPage } from '@/features/monitoring/MonitoringPage'
 import { SchedulerPage } from '@/features/scheduler/SchedulerPage'
 import { PermissionPage } from '@/features/permission/PermissionPage'
+import { ConfigurationPage } from '@/features/configuration/ConfigurationPage'
+import { IAMPage } from '@/features/iam/IAMPage'
+import { ProfilePage } from '@/features/iam/ProfilePage'
 import { RequireAuth, RequireGuest } from '@/lib/auth/guards'
 import { ServerRedirect } from '@/features/servers/ServerRedirect'
 
@@ -37,7 +40,10 @@ export const router = createBrowserRouter([
           { path: '/servers/:serverId/backups', element: <BackupsPage /> },
           { path: '/servers/:serverId/scheduler', element: <SchedulerPage /> },
           { path: '/servers/:serverId/permissions', element: <PermissionPage /> },
+          { path: '/servers/:serverId/configuration', element: <ConfigurationPage /> },
           { path: '/servers/:serverId/monitoring', element: <MonitoringPage /> },
+          { path: '/admin/iam', element: <IAMPage /> },
+          { path: '/profile', element: <ProfilePage /> },
         ],
       },
     ],

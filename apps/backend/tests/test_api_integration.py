@@ -45,7 +45,10 @@ from app.kernel.ports.status import ProbeResult
 from app.modules.backup.application.facade import BackupFacade
 from app.modules.backup.application.use_cases import BackupDeps
 from app.modules.backup.infrastructure.memory import InMemoryBackupRepository
+from app.modules.configuration.application.facade import ConfigurationFacade
 from app.modules.configuration.domain.config_profile import ConfigProfile
+from app.modules.configuration.domain.property_schema import PropertySchema
+from app.modules.configuration.infrastructure.memory import InMemoryConfigurationRepository
 from app.modules.console.application.facade import ConsoleFacade
 from app.modules.console.application.queue import CommandQueue
 from app.modules.console.application.streaming import ConsoleOutputRouter
@@ -428,6 +431,14 @@ def make_container(storage_root: Path | None = None) -> Container:
     )
     asyncio.run(settings_service.reload())
 
+    configuration_facade = ConfigurationFacade(
+        repository=InMemoryConfigurationRepository(),
+        schema=PropertySchema(),
+        bus=bus,
+        settings=settings_port,
+        time=time,
+    )
+
     return Container(
         settings=get_settings(),
         database=Database(
@@ -448,6 +459,7 @@ def make_container(storage_root: Path | None = None) -> Container:
         scheduler_facade=scheduler_facade,
         template_facade=template_facade,
         notification_facade=notification_facade,
+        configuration_facade=configuration_facade,
         settings_service=settings_service,
     )
 
@@ -1207,6 +1219,103 @@ class TestPermissionApi:
         response = client.put(
             f"/api/v1/servers/{server_id}/permissions/operators/XUID-9",
             json={"level": "operator"},
+            headers=auth,
+        )
+
+        assert response.status_code == 403
+
+
+class TestConfigurationApi:
+    def _config_url(self, server_id: str) -> str:
+        return f"/api/v1/servers/{server_id}/configuration"
+
+    def test_get_config_vacio(self, client: TestClient) -> None:
+        auth = login(client, "root")
+        server_id = create_server(client, auth)
+
+        response = client.get(self._config_url(server_id), headers=auth)
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["server_id"] == server_id
+        assert body["config_rev"] == 0
+        assert body["properties"] == {}
+
+    def test_put_config_y_get_refleja(self, client: TestClient) -> None:
+        auth = login(client, "root")
+        server_id = create_server(client, auth)
+        props = {"gamemode": "creative", "max-players": "20"}
+
+        put = client.put(
+            self._config_url(server_id), json={"properties": props}, headers=auth
+        )
+
+        assert put.status_code == 200, put.text
+        put_body = put.json()
+        assert put_body["config_rev"] == 1
+        assert put_body["properties"] == props
+
+        get = client.get(self._config_url(server_id), headers=auth)
+        assert get.status_code == 200
+        assert get.json()["properties"] == props
+        assert get.json()["config_rev"] == 1
+
+    def test_put_config_revisa_rev(self, client: TestClient) -> None:
+        auth = login(client, "root")
+        server_id = create_server(client, auth)
+
+        first = client.put(
+            self._config_url(server_id),
+            json={"properties": {"difficulty": "hard"}},
+            headers=auth,
+        )
+        second = client.put(
+            self._config_url(server_id),
+            json={"properties": {"difficulty": "normal"}},
+            headers=auth,
+        )
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert first.json()["config_rev"] == 1
+        assert second.json()["config_rev"] == 2
+
+    def test_put_config_invalida_422(self, client: TestClient) -> None:
+        auth = login(client, "root")
+        server_id = create_server(client, auth)
+
+        response = client.put(
+            self._config_url(server_id),
+            json={"properties": {"max-players": "41"}},
+            headers=auth,
+        )
+
+        assert response.status_code == 422
+
+    def test_sin_membresia_no_puede_leer(self, client: TestClient) -> None:
+        seed_viewer(container_of(client))
+        server_id = create_server(client, login(client, "root"))
+        auth = login(client, "lurker")
+
+        response = client.get(self._config_url(server_id), headers=auth)
+
+        assert response.status_code == 403
+
+    def test_sin_autenticacion_401(self, client: TestClient) -> None:
+        server_id = create_server(client, login(client, "root"))
+
+        response = client.get(self._config_url(server_id))
+
+        assert response.status_code == 401
+
+    def test_viewer_no_puede_actualizar(self, client: TestClient) -> None:
+        seed_viewer(container_of(client))
+        server_id = create_server(client, login(client, "root"))
+        auth = login(client, "lurker")
+
+        response = client.put(
+            self._config_url(server_id),
+            json={"properties": {"gamemode": "creative"}},
             headers=auth,
         )
 

@@ -131,6 +131,7 @@ class Container:
     scheduler_facade: SchedulerFacade
     template_facade: TemplateFacade
     notification_facade: NotificationFacade
+    configuration_facade: ConfigurationFacade
     settings_service: SettingsService
     console_stream_reconciler: ConsoleStreamReconciler | None = None
     monitoring_poller: BackgroundPoller | None = None
@@ -408,5 +409,6 @@ def build_container() -> Container:
         console_stream_reconciler=console_stream_reconciler,
         template_facade=template_facade,
         notification_facade=notification_facade,
+        configuration_facade=configuration_facade,
         settings_service=settings_service,
     )

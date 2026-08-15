@@ -44,6 +44,16 @@ const PANEL_MIN_ROLES: Record<string, readonly string[]> = {
   'task.update': ['operator', 'admin', 'super_admin'],
   'task.delete': ['operator', 'admin', 'super_admin'],
   'task.run': ['operator', 'admin', 'super_admin'],
+  // `server.config.read` es READ_ACTION (viewer+); `server.config.update`
+  // (guardar server.properties) es WRITE_ACTION → operator+.
+  'server.config.read': ['viewer', 'operator', 'admin', 'super_admin'],
+  'server.config.update': ['operator', 'admin', 'super_admin'],
+  // Gestión de IAM (usuarios/API keys/auditoría). `iam.view` es una
+  // READ_ACTION (viewer+) → permite ver listados/detalle/roles/auditoría.
+  // `iam.manage` es PANEL_ACTION (solo admin/super_admin) → editar/suspender/
+  // eliminar usuarios.
+  'iam.view': ['viewer', 'operator', 'admin', 'super_admin'],
+  'iam.manage': ['admin', 'super_admin'],
 }
 
 export function rolesCan(action: string, roles: readonly string[] | undefined): boolean {

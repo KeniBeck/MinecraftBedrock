@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from datetime import datetime
+
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.modules.iam.application.audit_chain import compute_audit_hash, verify_chain
-from app.modules.iam.application.ports import AuditEntry, AuditStorePort
+from app.modules.iam.application.ports import AuditEntry, AuditLogRecord, AuditStorePort
 from app.modules.iam.infrastructure.models import IamAuditLogRow
 
 
@@ -53,6 +55,40 @@ class PostgresAuditStore(AuditStorePort):
             return ["audit: cadena incompleta: faltan hashes en registros previos"]
         return verify_chain(entries, chain)
 
+    async def list(
+        self,
+        *,
+        actor_id: str | None = None,
+        action: str | None = None,
+        from_at: datetime | None = None,
+        to_at: datetime | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[AuditLogRecord], int]:
+        async with self._session_factory() as session:
+            conditions = []
+            if actor_id:
+                conditions.append(IamAuditLogRow.actor_id == actor_id)
+            if action:
+                conditions.append(IamAuditLogRow.action.ilike(f"%{action}%"))
+            if from_at is not None:
+                conditions.append(IamAuditLogRow.created_at >= from_at)
+            if to_at is not None:
+                conditions.append(IamAuditLogRow.created_at <= to_at)
+
+            total = await session.scalar(
+                select(func.count()).select_from(IamAuditLogRow).where(*conditions)
+            )
+            result = await session.execute(
+                select(IamAuditLogRow)
+                .where(*conditions)
+                .order_by(IamAuditLogRow.created_at.desc(), IamAuditLogRow.id)
+                .offset(offset)
+                .limit(limit)
+            )
+            rows = result.scalars().all()
+        return [self._to_record(row) for row in rows], int(total or 0)
+
     @staticmethod
     async def _last_hash(session: AsyncSession) -> str:
         result = await session.execute(
@@ -76,4 +112,22 @@ class PostgresAuditStore(AuditStorePort):
             ip=row.ip,
             ua=row.ua,
             created_at=row.created_at,
+        )
+
+    @staticmethod
+    def _to_record(row: IamAuditLogRow) -> AuditLogRecord:
+        return AuditLogRecord(
+            id=row.id,
+            actor_id=row.actor_id,
+            actor_type=row.actor_type,
+            action=row.action,
+            resource_type=row.resource_type,
+            resource_id=row.resource_id,
+            result=row.result,
+            detail=row.detail,
+            ip=row.ip,
+            ua=row.ua,
+            created_at=row.created_at,
+            hash=row.hash,
+            prev_hash=row.prev_hash,
         )

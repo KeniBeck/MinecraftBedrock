@@ -25,11 +25,17 @@ class IamRepositoryPort(Protocol):
     async def get(self, user_id: str) -> User | None:
         """Devuelve el usuario con sus roles globales, o ``None``."""
 
+    async def list_users(self) -> Sequence[User]:
+        """Devuelve todos los usuarios (no borrados), con sus roles globales."""
+
     async def get_by_username(self, username: str) -> User | None:
         """Devuelve el usuario por ``username``, o ``None``."""
 
     async def add_global_role(self, user_id: str, role: BuiltinRole) -> None:
         """Concede un rol global al usuario (idempotente)."""
+
+    async def replace_global_roles(self, user_id: str, roles: Sequence[BuiltinRole]) -> None:
+        """Reemplaza los roles globales del usuario por el conjunto dado."""
 
     async def add_membership(self, user_id: str, server_id: str, role: BuiltinRole) -> None:
         """Concede/actualiza la membresía del usuario sobre el servidor."""

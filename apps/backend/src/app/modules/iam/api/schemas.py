@@ -7,7 +7,7 @@ del dominio; los comandos/results de ``application`` son los que se traducen.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -74,6 +74,44 @@ class UserResponse(BaseModel):
     roles: list[str] = Field(default_factory=list)
     created_at: datetime | None = None
     last_login_at: datetime | None = None
+    email: str | None = None
+
+
+class UpdateUserRequest(BaseModel):
+    """Actualización parcial de un usuario (no ``username``/``password``)."""
+
+    display_name: str | None = Field(default=None, max_length=128)
+    email: str | None = Field(default=None, max_length=255)
+    status: Literal["active", "suspended"] | None = None
+    roles: list[RoleName] | None = None
+
+
+class RoleResponse(BaseModel):
+    id: str
+    name: str
+    description: str
+    is_system: bool = True
+
+
+class AuditLogResponse(BaseModel):
+    id: str
+    actor_id: str | None
+    actor_type: str
+    action: str
+    resource_type: str | None
+    resource_id: str | None
+    result: str
+    detail: dict[str, Any]
+    ip: str | None
+    ua: str | None
+    created_at: datetime | None
+    hash: str | None
+    prev_hash: str | None
+
+
+class AuditLogListResponse(BaseModel):
+    items: list[AuditLogResponse]
+    total: int
 
 
 # -- 2FA (Fase H paso 18) -------------------------------------------------------

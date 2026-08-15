@@ -9,7 +9,9 @@ autenticación usa la facade IamFacade. La API no contiene reglas de negocio
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, Query, Request
 
 from app.bootstrap.security import get_container, get_current_user, require_action
 from app.kernel.ports.access import Identity
@@ -19,6 +21,8 @@ from app.modules.iam.api.schemas import (
     ApiKeyResponse,
     AssignMembershipRequest,
     AssignRoleRequest,
+    AuditLogListResponse,
+    AuditLogResponse,
     AuditVerifyResponse,
     BackupCodesResponse,
     ConfirmTwoFactorRequest,
@@ -29,7 +33,9 @@ from app.modules.iam.api.schemas import (
     LoginResponse,
     LogoutRequest,
     RefreshRequest,
+    RoleResponse,
     TokenResponse,
+    UpdateUserRequest,
     UserResponse,
     VerifyTwoFactorLoginRequest,
 )
@@ -39,6 +45,7 @@ from app.modules.iam.application.commands import (
     ConfirmTwoFactorCommand,
     CreateApiKeyCommand,
     CreateUserCommand,
+    DeleteUserCommand,
     EnableTwoFactorCommand,
     LoginCommand,
     LogoutCommand,
@@ -46,10 +53,11 @@ from app.modules.iam.application.commands import (
     RegenerateBackupCodesCommand,
     RevokeApiKeyCommand,
     RotateApiKeyCommand,
+    UpdateUserCommand,
     VerifyTwoFactorLoginCommand,
 )
 from app.modules.iam.application.facade import IamFacade
-from app.modules.iam.application.results import ApiKeyCreated, AuthResult, UserView
+from app.modules.iam.application.results import ApiKeyCreated, AuditLogView, AuthResult, UserView
 from app.modules.iam.domain.errors import TwoFactorRequiredError
 from app.modules.iam.domain.role import BuiltinRole
 
@@ -94,6 +102,25 @@ def _user_response(view: UserView) -> UserResponse:
         roles=list(view.roles),
         created_at=view.created_at,
         last_login_at=view.last_login_at,
+        email=view.email,
+    )
+
+
+def _audit_log_response(view: AuditLogView) -> AuditLogResponse:
+    return AuditLogResponse(
+        id=view.id,
+        actor_id=view.actor_id,
+        actor_type=view.actor_type,
+        action=view.action,
+        resource_type=view.resource_type,
+        resource_id=view.resource_id,
+        result=view.result,
+        detail=view.detail,
+        ip=view.ip,
+        ua=view.ua,
+        created_at=view.created_at,
+        hash=view.hash,
+        prev_hash=view.prev_hash,
     )
 
 
@@ -266,6 +293,101 @@ async def assign_membership(
     )
 
 
+@router.get(
+    "/users",
+    response_model=list[UserResponse],
+    summary="Listar usuarios (get: iam.view)",
+)
+async def list_users(
+    request: Request,
+    identity: Identity = Depends(require_action("iam.view")),
+) -> list[UserResponse]:
+    views = await _facade(request).list_users()
+    del identity
+    return [_user_response(view) for view in views]
+
+
+@router.get(
+    "/users/{user_id}",
+    response_model=UserResponse,
+    summary="Detalle de un usuario (get: iam.view)",
+)
+async def get_user(
+    user_id: str,
+    request: Request,
+    identity: Identity = Depends(require_action("iam.view")),
+) -> UserResponse:
+    view = await _facade(request).get_user(user_id)
+    del identity
+    return _user_response(view)
+
+
+@router.put(
+    "/users/{user_id}",
+    response_model=UserResponse,
+    summary="Actualizar usuario (display_name, email, status, roles; iam.manage)",
+)
+async def update_user(
+    user_id: str,
+    body: UpdateUserRequest,
+    request: Request,
+    identity: Identity = Depends(require_action("iam.manage")),
+) -> UserResponse:
+    roles = (
+        tuple(BuiltinRole(role) for role in body.roles)
+        if body.roles is not None
+        else None
+    )
+    view = await _facade(request).update_user(
+        UpdateUserCommand(
+            user_id=user_id,
+            display_name=body.display_name,
+            email=body.email,
+            status=body.status,
+            roles=roles,
+            actor_id=identity.id,
+        )
+    )
+    return _user_response(view)
+
+
+@router.delete(
+    "/users/{user_id}",
+    status_code=204,
+    summary="Suspender usuario (soft delete; iam.manage)",
+)
+async def delete_user(
+    user_id: str,
+    request: Request,
+    identity: Identity = Depends(require_action("iam.manage")),
+) -> None:
+    await _facade(request).delete_user(
+        DeleteUserCommand(user_id=user_id, actor_id=identity.id)
+    )
+
+
+@router.get(
+    "/roles",
+    response_model=list[RoleResponse],
+    summary="Catálogo de roles del panel (get: iam.view)",
+)
+async def list_roles(
+    request: Request,
+    identity: Identity = Depends(require_action("iam.view")),
+) -> list[RoleResponse]:
+    views = await _facade(request).list_roles()
+    del identity
+    return [
+        RoleResponse(
+            id=view.id,
+            name=view.name,
+            description=view.description,
+            is_system=view.is_system,
+        )
+        for view in views
+    ]
+
+
 # -- API keys (Fase H paso 18) -------------------------------------------------
 
 
@@ -353,6 +475,36 @@ async def verify_audit(
     del identity
     errors = await _facade(request).verify_audit()
     return AuditVerifyResponse(valid=not errors, errors=errors)
+
+
+@router.get(
+    "/iam/audit",
+    response_model=AuditLogListResponse,
+    summary="Listar audit log con filtros y paginación (get: iam.view)",
+)
+async def list_audit_logs(
+    request: Request,
+    identity: Identity = Depends(require_action("iam.view")),
+    actor_id: str | None = Query(default=None),
+    action: str | None = Query(default=None),
+    from_at: datetime | None = Query(default=None, alias="from"),
+    to_at: datetime | None = Query(default=None, alias="to"),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> AuditLogListResponse:
+    page = await _facade(request).list_audit_logs(
+        actor_id=actor_id,
+        action=action,
+        from_at=from_at,
+        to_at=to_at,
+        limit=limit,
+        offset=offset,
+    )
+    del identity
+    return AuditLogListResponse(
+        items=[_audit_log_response(view) for view in page.items],
+        total=page.total,
+    )
 
 
 def _api_key_created_response(created: ApiKeyCreated) -> ApiKeyCreatedResponse:

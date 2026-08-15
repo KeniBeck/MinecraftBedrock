@@ -1836,3 +1836,198 @@ real baja (ej. 2%) la barra se llenaba casi entera. Corregido: ahora se pasa
 
 - `tsc` ✅ · `eslint` ✅ · `vitest` (**156 passed**, sin cambios de conteo) ✅ ·
   `build` ✅.
+
+## Fase 6 — Módulo Configuration (server.properties)
+
+> **Fecha**: 2026-08-14. **Backend + Frontend.** El módulo Configuration no tenía
+> API HTTP; se añadió en el backend (`docs/change-log.md`, "39"). Esta página
+> edita el subconjunto de `server.properties` que el backend realmente aplica.
+> Página en `/servers/:serverId/configuration`.
+
+### DISCREPANCIAS vs. el enunciado (backend real)
+
+- **No existe `GET`/`PUT /configuration`** en el estado real previo: el módulo
+  solo tenía una facade interna (persistir + publicar `CONFIG.CHANGED`) sin
+  router. Se implementó la API REST en el backend (GET+PUT) — no era un
+  contrato existente que hubiera que "espejar".
+- **No hay `property-definitions.json` servido**: el backend valida/proyecta a
+  env solo el subconjunto de §3.7. Por eso el catálogo del frontend es un **mapa
+  estático** (`properties.ts`) que espeja exactamente esas 7 claves
+  (`server-name`, `max-players`, `gamemode`, `difficulty`, `level-name`,
+  `level-seed`, `view-distance`); el resto de claves de `server.properties` se
+  persisten pero aún no se aplican y no se exponen.
+- Los permisos esperados `configuration.read/write` no existen: se usan
+  `server.config.read` (viewer+) y `server.config.update` (operator+).
+- **Guardar no recrea el contenedor de forma síncrona**: `update_properties`
+  publica `CONFIG.CHANGED` y Server recrea en segundo plano. La UI lo avisa y
+  el campo `applied`/`applied_at` del perfil reflejará la última confirmación.
+
+### Alcance
+
+- **API & tipos**: `src/lib/api/configuration.ts` (`configKeys`, `ConfigProfile`,
+  `ConfigPropertyValue`, `UpdateConfigRequest`, `getConfig`, `updateConfig`).
+- **Catálogo & validación**: `src/features/configuration/properties.ts`
+  (grupos General/Juego/Mundo + tipos/rangos/defaults) y `types.ts`
+  (`validateProperty`/`validateDraft`: int por rango, enum por set, string
+  requerido u opcional).
+- **Hooks**: `useConfig` (useQuery lazy por `serverId`) y `useUpdateConfig`
+  (invalida `configKeys.all` al éxito); `buildPropertiesPayload`.
+- **Vista** `ConfigurationPage.tsx`: formulario agrupado por categoría con
+  `PropertyField` (Input/Select según tipo), validación inline, aviso "Cambios
+  sin guardar", feedback de éxito/error y advertencia de recreación del
+  contenedor. Protegida con `useCan('server.config.read')`; controles y botón
+  de guardar con `useCan('server.config.update')`.
+- **Ruta y sidebar**: `/servers/:serverId/configuration` + ítem "Configuración"
+  habilitado.
+
+### Archivos
+
+| Archivo | Cambio |
+|---|---|
+| `src/lib/api/configuration.ts` | Nuevo: claves, tipos y funciones HTTP |
+| `src/features/configuration/properties.ts` | Nuevo: catálogo estático de properties |
+| `src/features/configuration/types.ts` | Nuevo: validación del formulario |
+| `src/features/configuration/hooks.ts` | Nuevo: useConfig / useUpdateConfig / payload |
+| `src/features/configuration/components/PropertyField.tsx` | Nuevo: control por tipo |
+| `src/features/configuration/ConfigurationPage.tsx` | Nuevo: vista principal |
+| `src/features/configuration/ConfigurationPage.test.tsx` | Nuevo: 5 tests de componente |
+| `src/features/configuration/configuration.test.tsx` | Nuevo: 8 tests de catálogo/validación/payload |
+| `src/app/router.tsx` | Ruta `/servers/:serverId/configuration` |
+| `src/components/layout/Sidebar.tsx` | Ítem "Configuración" habilitado |
+| `src/lib/auth/useCan.ts` | `server.config.read` (viewer+) / `server.config.update` (operator+) |
+
+### Verificación
+
+- `tsc` ✅ · `eslint` ✅ · `vitest` (**169 passed**, +13 del módulo) ✅ ·
+  `build` ✅.
+
+## Fase 7 — IAM (usuarios, API keys, auditoría) y Perfil
+
+> **Fecha**: 2026-08-14. **Frontend.** Panel de administración (`/admin/iam`) y
+> perfil personal (`/profile`). La prioridad era gestión de usuarios > API keys >
+> auditoría > perfil; se implementó **solo lo que el backend expone** y se
+> documenta cada carencia (fallback del enunciado).
+
+### DISCREPANCIAS vs. el enunciado (backend real)
+
+Verificado contra `iam/api/router.py`, `iam/api/schemas.py` y `facade.py`.
+
+- **NO hay listado de usuarios**: no existe `GET /users`, `GET /users/{id}`,
+  ni edición/suspensión/borrado (`PUT/DELETE`). Solo existen:
+  `POST /users`, `POST /users/{id}/roles`, `POST /users/{id}/memberships`.
+  → La pestaña Usuarios solo permite **crear** (y asignar rol en el mismo alta
+  cuando no es `viewer`, usando `POST /users/{id}/roles`). No hay tabla.
+- **NO hay `GET /roles`**: el catálogo de roles del frontend es estático.
+- **NO hay `GET /audit`** (listado con filtros): solo `GET /iam/audit/verify`.
+  → La pestaña Auditoría se reduce a la verificación de integridad de la
+  cadena de hash; no hay tabla/filtros.
+- **NO hay perfil/password**: no existe `GET/PUT /users/me` ni cambio de
+  contraseña ni actualización de `display_name`. → El perfil es solo lectura
+  (nombre + roles de la sesión) + 2FA + apariencia.
+- **2FA**: `POST /auth/2fa/enable|verify|backup` existen y se usan. No hay GET
+  del estado de 2FA ni desactivación → el estado "activado" se deriva
+  localmente tras `verify` (204).
+- **Sin librería QR** en el proyecto: en lugar de renderizar QR se muestra la
+  `provisioning_uri` (otpauth) copiable + el secreto para ingreso manual.
+- **API keys**: el backend lista solo las del **usuario autenticado**
+  (`list_api_keys(identity.id)`) — nota UI.
+- Usuarios/API keys/auditoría son PANEL_ACTIONS (recurso None) → **solo
+  admin/super_admin** (nuevo `iam.manage` en `useCan`).
+
+### Alcance
+
+- **API & tipos** `src/lib/api/iam.ts`: `User`, `CreateUserRequest`,
+  `AssignRoleRequest`, `ApiKey`, `ApiKeyCreated` (material), `CreateApiKeyRequest`,
+  `EnableTwoFactor`, `BackupCodes`, `AuditVerify`; `userKeys/apiKeyKeys/auditKeys`;
+  `createUser`, `assignRole`, `listApiKeys`, `createApiKey`, `revokeApiKey`,
+  `regenerateApiKey`, `verifyAuditChain`, `enable2FA`, `confirm2FA`,
+  `regenerateBackupCodes`.
+- **Hooks** `src/features/iam/hooks.ts`: `useCreateUser` (crea + asigna rol si
+  procede), `useApiKeys`, `useCreateApiKey`, `useRevokeApiKey`,
+  `useRegenerateApiKey`, `useVerifyAuditChain`, `useEnable2FA`, `useConfirm2FA`,
+  `useRegenerateBackupCodes`.
+- **IAMPage** (`/admin/iam`, `useCan('iam.manage')`): tabs Usuarios (alta +
+  aviso de carencia), API Keys (lista, crear con material una vez, rotar,
+  revocar con confirmación), Auditoría (verificar cadena + resultado).
+- **ProfilePage** (`/profile`): identidad de la sesión (lectura) +
+  `ProfileSettings` (2FA: habilitar→confirmar→regenerar backup codes; y
+  preferencias de apariencia: tema/fondo desde `stores/theme.ts`).
+- **Sidebar**: ítems "Mi perfil" (`/profile`) y "Administración"
+  (`/admin/iam`, oculto salvo `iam.manage`).
+
+### Archivos
+
+| Archivo | Cambio |
+|---|---|
+| `src/lib/api/iam.ts` | Nuevo: tipos, claves y funciones HTTP de IAM |
+| `src/features/iam/types.ts` | Nuevo: roles/scopes y helpers |
+| `src/features/iam/hooks.ts` | Nuevo: hooks de usuarios/API keys/auditoría/2FA |
+| `src/features/iam/IAMPage.tsx` | Nuevo: panel con tabs |
+| `src/features/iam/ProfilePage.tsx` | Nuevo: perfil personal |
+| `src/features/iam/components/CreateUserDialog.tsx` | Nuevo: alta de usuario + rol |
+| `src/features/iam/components/ApiKeyList.tsx` | Nuevo: tabla de API keys + material |
+| `src/features/iam/components/CreateApiKeyDialog.tsx` | Nuevo: alta con scopes |
+| `src/features/iam/components/AuditVerifyPanel.tsx` | Nuevo: verificación de cadena |
+| `src/features/iam/components/ProfileSettings.tsx` | Nuevo: 2FA + apariencia |
+| `src/features/iam/IAMPage.test.tsx` | Nuevo: 5 tests |
+| `src/features/iam/ProfilePage.test.tsx` | Nuevo: 3 tests |
+| `src/app/router.tsx` | Rutas `/admin/iam` y `/profile` |
+| `src/components/layout/Sidebar.tsx` | ítems "Mi perfil" e "Administración" (gated) |
+| `src/lib/auth/useCan.ts` | `iam.manage` (admin+) |
+
+### Verificación
+
+- `tsc` ✅ · `eslint` ✅ · `vitest` (**177 passed**, +8 del módulo) ✅ ·
+  `build` ✅.
+
+## Fase 8 — IAM: gestión completa de usuarios, roles y auditoría
+
+> **Fecha**: 2026-08-14. **Frontend** sobre los endpoints nuevos del backend
+> (Fase 8 del change-log): ahora hay listado/edición/suspensión de usuarios,
+> catálogo de roles consultable y listado de auditoría con filtros y paginación.
+
+### Cambios respecto a la Fase 7
+
+- **Usuarios**: ya no hay solo "alta + aviso de carencia". `UserList` muestra la
+  tabla de todos los usuarios (`GET /users`) con estado, email y roles; las
+  acciones (editar, suspender, reactivar) exigen `iam.manage`.
+- **Edición**: `EditUserDialog` (`PUT /users/{id}`) con `display_name`, `email`,
+  estado y roles (multi-select checkboxes). `DELETE /users/{id}` suspende;
+  reactivar es un `PUT` con `status='active'`.
+- **Roles**: `useRoles` (`GET /roles`) puebla los selectores de rol en creación
+  y edición (catálogo ya no es solo estático).
+- **Auditoría**: `AuditLogList` (`GET /iam/audit`) con filtros actor/acción
+  parcial/fechas y paginación; se conserva `AuditVerifyPanel` (integridad).
+- **Permisos**: `useCan('iam.view')` (viewer+) abre la página en modo lectura;
+  `useCan('iam.manage')` (admin+) habilita las acciones. Las pestañas API keys
+  siguen exigiendo `iam.manage`.
+
+### Alcance
+
+- **API & tipos** `src/lib/api/iam.ts`: `User.email`, `UpdateUserRequest`,
+  `Role`, `AuditLog`, `AuditLogPage`, `AuditFilters`, `roleKeys`,
+  `auditKeys.list/all`; `listUsers`, `getUser`, `updateUser`, `deleteUser`,
+  `listRoles`, `listAuditLogs`.
+- **Hooks** `src/features/iam/hooks.ts`: `useUsers`, `useUpdateUser`,
+  `useDeleteUser`, `useRoles`, `useAuditLogs`.
+- **Componentes** nuevos: `UserList`, `EditUserDialog`, `AuditLogList`.
+- `IAMPage` accesible con `iam.view` (lectura) e `iam.manage` (gestión).
+
+### Archivos
+
+| Archivo | Cambio |
+|---|---|
+| `src/lib/api/iam.ts` | Nuevos tipos, claves y funciones (list/edit/delete users, roles, audit list) |
+| `src/features/iam/hooks.ts` | `useUsers`, `useUpdateUser`, `useDeleteUser`, `useRoles`, `useAuditLogs` |
+| `src/features/iam/IAMPage.tsx` | Gate `iam.view` (lectura) + `iam.manage` (acciones); render `UserList`/`AuditLogList` |
+| `src/features/iam/components/UserList.tsx` | Nuevo: tabla de usuarios + suspender/reactivar/editar |
+| `src/features/iam/components/EditUserDialog.tsx` | Nuevo: `PUT /users/{id}` (display_name/email/status/roles) |
+| `src/features/iam/components/AuditLogList.tsx` | Nuevo: `GET /iam/audit` con filtros y paginación |
+| `src/features/iam/components/CreateUserDialog.tsx` | Selector de rol desde `useRoles` |
+| `src/features/iam/IAMPage.test.tsx` | Reescrito (8 tests): lectura/gestión, listar, crear, editar, suspender |
+| `src/lib/auth/useCan.ts` | `iam.view` (viewer+) |
+
+### Verificación
+
+- `tsc` ✅ · `eslint` ✅ · `vitest` (**180 passed**; IAM 11) ✅ ·
+  `build` ✅.

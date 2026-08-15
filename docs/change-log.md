@@ -3360,6 +3360,106 @@ lista reconciliada, 201) y si falla, fallback a `GET /worlds` (metadata). Así:
 - Backend: `pytest tests/test_api_integration.py` **47 passed** (4 nuevos) ✅ ·
   `ruff` ✅ · `mypy` ✅.
 
+## 39. API REST de Configuration (server.properties)
+
+> **Fecha**: 2026-08-14. El módulo Configuration **no tenía API HTTP** (solo una
+> facade interna consumida por Server vía el evento `CONFIG.CHANGED` para
+> recrear el contenedor). Se añade la superficie REST que faltaba para editarla
+> desde el panel. Frontend en `docs/change-log-frontend.md` (Fase 6 —
+> Configuration).
+
+### Cambios backend
+
+- `src/app/modules/iam/domain/permissions.py`: nuevo permiso `server.config.read`
+  (READ_ACTION, viewer+) para leer la configuración; `server.config.update`
+  (WRITE_ACTION, operator+) ya existía en el catálogo pero sin endpoint.
+- `src/app/modules/configuration/api/schemas.py` (nuevo): `ConfigProfileResponse`
+  (`server_id`, `version`, `config_rev`, `properties`, `applied`, `applied_at`,
+  `updated_at`) y `UpdateConfigRequest` (`properties: dict[str, str]`).
+- `src/app/modules/configuration/api/router.py` (nuevo):
+  - `GET /servers/{id}/configuration` (`server.config.read`) → perfil actual;
+    sin perfil (servidor recién creado) devuelve uno vacío con la versión por
+    defecto (200, no 404) para que el formulario arranque desde los defaults.
+  - `PUT /servers/{id}/configuration` (`server.config.update`) → llama
+    `ConfigurationFacade.update_properties` (validación → persistencia con
+    revisión+1 → publica `CONFIG.CHANGED`). El `ValueError` de validación del
+    esquema se traduce a `ValidationError` (422). No recrea de forma síncrona:
+    la recreación ocurre en segundo plano vía el bus en proceso.
+- `src/app/bootstrap/container.py`: campo `configuration_facade` en `Container`
+  y su construcción (antes era solo una variable local no expuesta).
+- `src/app/bootstrap/main.py`: registrado `configuration_router`.
+- `tests/test_api_integration.py`: nueva clase `TestConfigurationApi` (7 tests):
+  GET vacío, PUT→GET refleja, revisión incrementa, PUT inválida 422
+  (`max-players > 40`), sin membresía 403, sin autenticación 401, viewer no
+  puede actualizar.
+
+### Discrepancia/documentación
+
+- **No existe `property-definitions.json` servido**: el backend solo valida y
+  proyecta a env el subconjunto de §3.7 (`server-name`, `max-players`,
+  `gamemode`, `difficulty`, `level-name`, `level-seed`, `view-distance`). El
+  catálogo editable del frontend espeja exactamente ese subconjunto; el resto de
+  claves de `server.properties` se persisten pero aún no se aplican.
+- La aplicación de la config (recreación del contenedor) es **asíncrona** vía
+  el evento `CONFIG.CHANGED`: el campo `applied`/`applied_at` del perfil reflejará
+  cuándo Server confirmó la última revisión.
+
+### Verificación
+
+- Backend: **925 passed** (7 nuevos; los 2 fallos de `test_main.py` son por
+  conexión a BD y reprodacen en `main` sin estos cambios) ✅ · `ruff` ✅ ·
+  `mypy` ✅.
+
+## 40. Gestión completa de usuarios, roles y auditoría (IAM)
+
+> **Fecha**: 2026-08-14. La Fase 7 dejó deuda backend: solo se podía crear un
+> usuario y asignarle rol, sin listado/edición/suspensión, catálogo de roles ni
+> listado de auditoría. Esta fase añade la superficie REST faltante para
+> gestionar usuarios, consultar roles y listar la auditoría desde el panel.
+> Frontend en `docs/change-log-frontend.md` (Fase 8).
+
+### Cambios backend
+
+- **Permisos** (`domain/permissions.py` + migración): nuevos códigos
+  `iam.view` (READ_ACTION, viewer+) e `iam.manage` (PANEL_ACTION, admin+);
+  sembrados en `iam_permissions`/`iam_role_permissions` por la migración
+  `0013_iam_user_management`.
+- **Email** (`iam_users`): nueva columna nullable `email` (domain `User`,
+  modelo `IamUserRow`, repos, `UserResponse`); solo editable por `PUT`.
+- **Usuarios**:
+  - `GET /users` (`iam.view`) → `list[UserResponse]`; nuevo
+    `IamRepositoryPort.list_users()` (orden `created_at` DESC) en Postgres y
+    memoria.
+  - `GET /users/{user_id}` (`iam.view`) → `UserResponse`.
+  - `PUT /users/{user_id}` (`iam.manage`) → `UpdateUserRequest`
+    (`display_name?`, `email?`, `status? active|suspended`, `roles?` reemplaza
+    el conjunto). Nuevo `IamRepositoryPort.replace_global_roles()`; transaccional
+    (save + replace roles). `username`/`password` inmutables.
+  - `DELETE /users/{user_id}` (`iam.manage`, 204) → **soft delete**: `status =
+    'suspended'` (impide login/refresh); reactivar con
+    `PUT /users/{id}` `status='active'`.
+  - Use cases `ListUsers`/`GetUser`/`UpdateUser`/`DeleteUser`; eventos
+    `IAM.USER_UPDATED`/`IAM.USER_REACTIVATED`/`IAM.USER_SUSPENDED` + auditoría.
+- **Roles**: `GET /roles` (`iam.view`) → `list[RoleResponse]` (id, name,
+  description, is_system). Los built-in viven en `BuiltinRole` (sin tabla
+  `iam_roles` en el mínimo viable); la metadata de descripción está en el use
+  case `ListRoles`.
+- **Auditoría**: `GET /iam/audit` (`iam.view`) → `{ items, total }` con filtros
+  `actor_id?`, `action?` (parcial `ilike`), `from?`/`to?`, `limit` (100, máx
+  500), `offset`. Nuevo `AuditStorePort.list()` + `AuditLogRecord` (incluye
+  `hash`/`prev_hash`) en `PostgresAuditStore` y `InMemoryAuditStore`.
+- **Facade**: `list_users`, `get_user`, `update_user`, `delete_user`,
+  `list_roles`, `list_audit_logs`.
+
+### Verificación
+
+- Backend: **944 passed** (unit; +11 `test_iam_user_management.py`, +5
+  integración). Integración Postgres opt-in (`-m integration`): **salta sin BBDD**
+  en este entorno; incluida la verificación de `list_users`, `replace_global_roles`,
+  roundtrip de `email` y `audit.list` con filtros/paginación. Los 4 errores
+  restantes de `mypy` son preexistentes en `test_level_reader.py`/
+  `test_monitoring.py` (fuera del cambio). `ruff` ✅ · `mypy` (IAM) ✅.
+
 ## 33. UI de Backups (cierre de la Fase 4)
 
 > **Fecha**: 2026-08-12. Sin cambios de backend: el módulo Backup (paso 13)

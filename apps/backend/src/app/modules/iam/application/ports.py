@@ -151,6 +151,25 @@ class AuditEntry:
     ua: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class AuditLogRecord:
+    """Registro de auditoría con los hashes de la cadena (para consulta)."""
+
+    id: str
+    actor_id: str | None
+    actor_type: str
+    action: str
+    result: str
+    created_at: datetime
+    resource_type: str | None = None
+    resource_id: str | None = None
+    detail: dict[str, Any] = field(default_factory=dict)
+    ip: str | None = None
+    ua: str | None = None
+    hash: str | None = None
+    prev_hash: str | None = None
+
+
 class AuditStorePort(Protocol):
     """Persistencia del audit log tamper-evident (cadena de hash SHA-256)."""
 
@@ -159,10 +178,23 @@ class AuditStorePort(Protocol):
     async def verify(self) -> list[str]:
         """Verifica la cadena; devuelve errores (vacío = íntegra)."""
 
+    async def list(
+        self,
+        *,
+        actor_id: str | None = None,
+        action: str | None = None,
+        from_at: datetime | None = None,
+        to_at: datetime | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[AuditLogRecord], int]:
+        """Devuelve ``(registros, total)`` ordenados por fecha descendente."""
+
 
 # Re-export de errores para consumo de infraestructura (tokens).
 __all__ = [
     "AuditEntry",
+    "AuditLogRecord",
     "AuditStorePort",
     "PasswordHasher",
     "Session",

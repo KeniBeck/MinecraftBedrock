@@ -8,6 +8,8 @@ entidades de dominio ni hashes.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from psycopg.errors import UniqueViolation
 
 from app.kernel.ports.access import Identity
@@ -18,6 +20,7 @@ from app.modules.iam.application.commands import (
     ConfirmTwoFactorCommand,
     CreateApiKeyCommand,
     CreateUserCommand,
+    DeleteUserCommand,
     EnableTwoFactorCommand,
     LoginCommand,
     LogoutCommand,
@@ -25,6 +28,7 @@ from app.modules.iam.application.commands import (
     RegenerateBackupCodesCommand,
     RevokeApiKeyCommand,
     RotateApiKeyCommand,
+    UpdateUserCommand,
     VerifyTwoFactorLoginCommand,
 )
 from app.modules.iam.application.handlers import (
@@ -39,7 +43,9 @@ from app.modules.iam.application.ports import ApiKey
 from app.modules.iam.application.results import (
     ApiKeyCreated,
     ApiKeyView,
+    AuditLogPage,
     AuthResult,
+    RoleView,
     TwoFactorEnableResult,
     UserView,
 )
@@ -59,10 +65,16 @@ from app.modules.iam.application.use_cases import (
     AssignMembershipUseCase,
     AssignRoleUseCase,
     CreateUserUseCase,
+    DeleteUserUseCase,
+    GetUserUseCase,
     IamDeps,
+    ListAuditLogsUseCase,
+    ListRolesUseCase,
+    ListUsersUseCase,
     LoginUseCase,
     LogoutUseCase,
     RefreshUseCase,
+    UpdateUserUseCase,
 )
 from app.modules.iam.domain.role import BuiltinRole
 
@@ -78,6 +90,12 @@ class IamFacade:
         self._logout = LogoutUseCase(deps)
         self._assign_role = AssignRoleUseCase(deps)
         self._assign_membership = AssignMembershipUseCase(deps)
+        self._list_users = ListUsersUseCase(deps)
+        self._get_user = GetUserUseCase(deps)
+        self._update_user = UpdateUserUseCase(deps)
+        self._delete_user = DeleteUserUseCase(deps)
+        self._list_roles = ListRolesUseCase(deps)
+        self._list_audit_logs = ListAuditLogsUseCase(deps)
         security_deps = SecurityDeps(
             repository=deps.repository,
             sessions=deps.sessions,
@@ -111,6 +129,18 @@ class IamFacade:
 
     async def assign_membership(self, cmd: AssignMembershipCommand) -> None:
         await self._assign_membership.execute(cmd)
+
+    async def list_users(self) -> list[UserView]:
+        return await self._list_users.execute()
+
+    async def get_user(self, user_id: str) -> UserView:
+        return await self._get_user.execute(user_id)
+
+    async def update_user(self, cmd: UpdateUserCommand) -> UserView:
+        return await self._update_user.execute(cmd)
+
+    async def delete_user(self, cmd: DeleteUserCommand) -> None:
+        await self._delete_user.execute(cmd)
 
     async def ensure_bootstrap_admin(
         self,
@@ -222,6 +252,28 @@ class IamFacade:
     async def verify_audit(self) -> list[str]:
         """Verifica la cadena de hash del audit log (vacío = íntegra)."""
         return await self.deps.audit.verify()
+
+    async def list_audit_logs(
+        self,
+        *,
+        actor_id: str | None = None,
+        action: str | None = None,
+        from_at: datetime | None = None,
+        to_at: datetime | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> AuditLogPage:
+        return await self._list_audit_logs.execute(
+            actor_id=actor_id,
+            action=action,
+            from_at=from_at,
+            to_at=to_at,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def list_roles(self) -> list[RoleView]:
+        return await self._list_roles.execute()
 
     # -- eventos consumidos --------------------------------------------------
 

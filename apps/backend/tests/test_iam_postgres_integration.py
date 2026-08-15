@@ -268,3 +268,90 @@ async def test_usuario_roundtrip_2fa(
     assert loaded.totp_secret == "ciphertext"
     assert loaded.totp_enabled is True
     assert loaded.backup_codes == "cipher-codes"
+
+
+async def test_email_roundtrip(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    repo = PostgresIamRepository(db_session_factory)
+    user = User(
+        id="iam-it-5",
+        username="it-email",
+        password_hash="x",
+        display_name="Email",
+        status=UserStatus.ACTIVE,
+        created_at=NOW,
+        email="it-email@example.com",
+    )
+    await repo.save(user)
+    loaded = await repo.get("iam-it-5")
+    assert loaded is not None and loaded.email == "it-email@example.com"
+
+
+async def test_list_users_y_replace_roles(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    repo = PostgresIamRepository(db_session_factory)
+    await repo.save(
+        User(
+            id="iam-it-6",
+            username="it-list-a",
+            password_hash="x",
+            display_name="A",
+            status=UserStatus.ACTIVE,
+            created_at=NOW,
+        )
+    )
+    await repo.save(
+        User(
+            id="iam-it-7",
+            username="it-list-b",
+            password_hash="x",
+            display_name="B",
+            status=UserStatus.ACTIVE,
+            created_at=NOW,
+        )
+    )
+    await repo.add_global_role("iam-it-6", BuiltinRole.VIEWER)
+
+    users = await repo.list_users()
+    assert {user.username for user in users} == {"it-list-a", "it-list-b"}
+    user_a = next(u for u in users if u.id == "iam-it-6")
+    assert user_a.roles == {BuiltinRole.VIEWER}
+
+    await repo.replace_global_roles(
+        "iam-it-6", [BuiltinRole.ADMIN, BuiltinRole.OPERATOR]
+    )
+    updated = await repo.get("iam-it-6")
+    assert updated is not None
+    assert updated.roles == {BuiltinRole.ADMIN, BuiltinRole.OPERATOR}
+
+
+async def test_audit_list_con_filtros_y_paginacion(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    from app.modules.iam.application.ports import AuditEntry
+
+    store = PostgresAuditStore(db_session_factory)
+    for index in range(5):
+        await store.record(
+            AuditEntry(
+                id=f"iam-lst-{index}",
+                actor_id="iam-it-1",
+                actor_type="user",
+                action="AUTH.LOGIN_SUCCESS" if index < 3 else "IAM.USER_CREATED",
+                result="success",
+                created_at=NOW,
+                resource_type="user",
+                resource_id="iam-it-1",
+                detail={"index": index},
+            )
+        )
+
+    records, total = await store.list(action="login")
+    assert total == 3
+    assert len(records) == 3
+
+    records, total = await store.list(actor_id="iam-it-1", limit=2, offset=0)
+    assert total == 5
+    assert len(records) == 2

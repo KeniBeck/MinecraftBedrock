@@ -36,6 +36,7 @@ PERMISSION_CODES: tuple[tuple[str, str], ...] = (
     ("server.delete", "server"),
     ("server.update", "server"),
     ("server.config.apply", "server"),
+    ("server.config.read", "server"),
     ("server.config.update", "server"),
     ("server.version.change", "server"),
     ("server.version.update", "server"),
@@ -96,6 +97,8 @@ PERMISSION_CODES: tuple[tuple[str, str], ...] = (
     ("iam.user.membership.assign", "iam"),
     ("iam.role.assign", "iam"),
     ("iam.audit.view", "iam"),
+    ("iam.view", "iam"),
+    ("iam.manage", "iam"),
     ("iam.apikey.create", "iam"),
     ("iam.apikey.manage", "iam"),
     # settings
@@ -121,7 +124,8 @@ READ_ACTIONS: frozenset[str] = frozenset(
         "server.view",
         "server.status",
         "server.status.read",
-        "server.console.read",
+"server.console.read",
+        "server.config.read",
         "world.list",
         "world.view",
         "world.export",
@@ -139,6 +143,7 @@ READ_ACTIONS: frozenset[str] = frozenset(
         "template.list",
         "template.view",
         "settings.view",
+        "iam.view",
     }
 )
 
@@ -153,6 +158,7 @@ PANEL_ACTIONS: frozenset[str] = frozenset(
         "iam.user.role.assign",
         "iam.user.membership.assign",
         "iam.role.assign",
+        "iam.manage",
         "iam.audit.view",
         "iam.apikey.create",
         "iam.apikey.manage",

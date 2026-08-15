@@ -34,6 +34,7 @@ class User:
     status: UserStatus
     created_at: datetime
     last_login_at: datetime | None = None
+    email: str | None = None
     roles: set[BuiltinRole] = field(default_factory=set)
     totp_secret: str | None = None
     totp_enabled: bool = False

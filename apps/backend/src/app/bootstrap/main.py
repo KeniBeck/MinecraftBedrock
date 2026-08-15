@@ -21,6 +21,7 @@ from app.bootstrap.container import Container, build_container
 from app.bootstrap.errors import register_exception_handlers
 from app.kernel.logging import configure_logging
 from app.modules.backup.api.router import router as backup_router
+from app.modules.configuration.api.router import router as configuration_router
 from app.modules.console.api.router import router as console_router
 from app.modules.iam.api.router import router as iam_router
 from app.modules.monitoring.api.router import router as monitoring_router
@@ -86,6 +87,7 @@ def create_app(container: Container | None = None) -> FastAPI:
     app.include_router(template_router, prefix=api_prefix)
     app.include_router(notification_router, prefix=api_prefix)
     app.include_router(settings_router, prefix=api_prefix)
+    app.include_router(configuration_router, prefix=api_prefix)
 
     _register_root(app)
     return app

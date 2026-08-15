@@ -12,7 +12,7 @@ from app.modules.iam.application.handlers import (
     TASK_FAILED_TOPIC,
     IncidentAuditHandler,
 )
-from app.modules.iam.application.ports import AuditEntry, AuditStorePort
+from app.modules.iam.application.ports import AuditEntry, AuditLogRecord, AuditStorePort
 from app.modules.iam.infrastructure.memory import InMemoryAuditStore
 from tests.conftest import FakeTime, SequenceIds
 
@@ -30,6 +30,19 @@ class FailingAuditStore(AuditStorePort):
 
     async def verify(self) -> list[str]:
         return []
+
+    async def list(
+        self,
+        *,
+        actor_id: str | None = None,
+        action: str | None = None,
+        from_at: datetime | None = None,
+        to_at: datetime | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[AuditLogRecord], int]:
+        del actor_id, action, from_at, to_at, limit, offset
+        return [], 0
 
 
 class TestIncidentAuditHandler:

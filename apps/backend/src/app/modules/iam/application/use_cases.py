@@ -14,7 +14,7 @@ los use cases registran ``actor_id`` sin comprobar permisos.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from app.kernel.events.bus import EventBusPort
 from app.kernel.ids import IdGeneratorPort
@@ -25,9 +25,11 @@ from app.modules.iam.application.commands import (
     AssignMembershipCommand,
     AssignRoleCommand,
     CreateUserCommand,
+    DeleteUserCommand,
     LoginCommand,
     LogoutCommand,
     RefreshCommand,
+    UpdateUserCommand,
 )
 from app.modules.iam.application.ports import (
     ApiKeyStorePort,
@@ -40,7 +42,13 @@ from app.modules.iam.application.ports import (
     TokenService,
     TotpServicePort,
 )
-from app.modules.iam.application.results import AuthResult, UserView
+from app.modules.iam.application.results import (
+    AuditLogPage,
+    AuditLogView,
+    AuthResult,
+    RoleView,
+    UserView,
+)
 from app.modules.iam.domain.errors import (
     AccountSuspendedError,
     InvalidCredentialsError,
@@ -55,10 +63,14 @@ from app.modules.iam.domain.events import (
     AUTH_LOGIN_FAILED,
     AUTH_LOGIN_SUCCESS,
     IAM_USER_CREATED,
+    IAM_USER_REACTIVATED,
     IAM_USER_ROLE_CHANGED,
+    IAM_USER_SUSPENDED,
+    IAM_USER_UPDATED,
     iam_event,
 )
 from app.modules.iam.domain.repository import IamRepositoryPort, PermissionRepositoryPort
+from app.modules.iam.domain.role import BuiltinRole
 from app.modules.iam.domain.user import User, UserStatus
 
 
@@ -98,6 +110,7 @@ def to_view(user: User) -> UserView:
         roles=tuple(sorted(role.value for role in user.roles)),
         created_at=user.created_at,
         last_login_at=user.last_login_at,
+        email=user.email,
     )
 
 
@@ -397,3 +410,209 @@ class AssignMembershipUseCase:
                 detail={"user_id": user.id, "role": cmd.role.value, "scope": "server"},
             )
         )
+
+
+class ListUsersUseCase:
+    """Admin consulta el listado de usuarios (get: ``iam.view``)."""
+
+    def __init__(self, deps: IamDeps) -> None:
+        self._deps = deps
+
+    async def execute(self) -> list[UserView]:
+        users = await self._deps.repository.list_users()
+        return [to_view(user) for user in users]
+
+
+class GetUserUseCase:
+    """Devuelve el detalle de un usuario (get: ``iam.view``)."""
+
+    def __init__(self, deps: IamDeps) -> None:
+        self._deps = deps
+
+    async def execute(self, user_id: str) -> UserView:
+        user = await self._deps.repository.get(user_id)
+        if user is None:
+            raise UserNotFoundError(
+                f"Usuario no encontrado: {user_id}",
+                context={"user_id": user_id},
+            )
+        return to_view(user)
+
+
+class UpdateUserUseCase:
+    """Admin actualiza campos parciales de un usuario (get: ``iam.manage``).
+
+    ``username`` y ``password`` son inmutables aquí (el primero es la clave
+    natural; el segundo se gestiona por endpoint de contraseña). ``roles``, si
+    se indica, reemplaza el conjunto de roles globales del usuario.
+    """
+
+    def __init__(self, deps: IamDeps) -> None:
+        self._deps = deps
+
+    async def execute(self, cmd: UpdateUserCommand) -> UserView:
+        deps = self._deps
+        user = await deps.repository.get(cmd.user_id)
+        if user is None:
+            raise UserNotFoundError(
+                f"Usuario no encontrado: {cmd.user_id}",
+                context={"user_id": cmd.user_id},
+            )
+
+        if cmd.display_name is not None:
+            user.display_name = cmd.display_name
+        if cmd.email is not None:
+            user.email = cmd.email
+        if cmd.status is not None:
+            user.status = UserStatus(cmd.status)
+        await deps.repository.save(user)
+        if cmd.roles is not None:
+            await deps.repository.replace_global_roles(cmd.user_id, cmd.roles)
+
+        action = (
+            IAM_USER_REACTIVATED if user.status is UserStatus.ACTIVE else IAM_USER_UPDATED
+        )
+        await deps.bus.publish(
+            iam_event(
+                action,
+                actor_id=cmd.actor_id,
+                payload={"user_id": user.id, "username": user.username},
+            )
+        )
+        await deps.audit.record(
+            AuditEntry(
+                id=deps.ids.new_id(),
+                actor_id=cmd.actor_id,
+                actor_type="user",
+                action=action,
+                result="success",
+                created_at=deps.time.now(),
+                resource_type="user",
+                resource_id=user.id,
+                detail={
+                    "username": user.username,
+                    "status": user.status.value,
+                    "roles": sorted(role.value for role in user.roles),
+                },
+            )
+        )
+        return to_view(user)
+
+
+class DeleteUserUseCase:
+    """Admin suspende un usuario (soft delete; preserva auditoría).
+
+    ``status = 'suspended'`` impide login/refresh; no se borra físicamente para
+    no romper referencias de auditoría. La reactivación se hace con
+    ``PUT /users/{id}`` y ``status='active'``.
+    """
+
+    def __init__(self, deps: IamDeps) -> None:
+        self._deps = deps
+
+    async def execute(self, cmd: DeleteUserCommand) -> None:
+        deps = self._deps
+        user = await deps.repository.get(cmd.user_id)
+        if user is None:
+            raise UserNotFoundError(
+                f"Usuario no encontrado: {cmd.user_id}",
+                context={"user_id": cmd.user_id},
+            )
+        user.status = UserStatus.SUSPENDED
+        await deps.repository.save(user)
+        await deps.bus.publish(
+            iam_event(
+                IAM_USER_SUSPENDED,
+                actor_id=cmd.actor_id,
+                payload={"user_id": user.id, "username": user.username},
+            )
+        )
+        await deps.audit.record(
+            AuditEntry(
+                id=deps.ids.new_id(),
+                actor_id=cmd.actor_id,
+                actor_type="user",
+                action=IAM_USER_SUSPENDED,
+                result="success",
+                created_at=deps.time.now(),
+                resource_type="user",
+                resource_id=user.id,
+                detail={"username": user.username},
+            )
+        )
+
+
+class ListRolesUseCase:
+    """Devuelve el catálogo base de roles (get: ``iam.view``).
+
+    Los roles built-in viven en ``BuiltinRole`` (sin tabla ``iam_roles`` en el
+    mínimo viable); ``id`` es el nombre y el resto es metadata estática.
+    """
+
+    def __init__(self, deps: IamDeps) -> None:
+        self._deps = deps
+        del self._deps
+
+    async def execute(self) -> list[RoleView]:
+        return [
+            RoleView(
+                id=role.value,
+                name=role.value,
+                description=_ROLE_DESCRIPTIONS[role],
+                is_system=True,
+            )
+            for role in BuiltinRole
+        ]
+
+
+class ListAuditLogsUseCase:
+    """Admin consulta el audit log con filtros y paginación (get: ``iam.view``)."""
+
+    def __init__(self, deps: IamDeps) -> None:
+        self._deps = deps
+
+    async def execute(
+        self,
+        *,
+        actor_id: str | None = None,
+        action: str | None = None,
+        from_at: datetime | None = None,
+        to_at: datetime | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> AuditLogPage:
+        records, total = await self._deps.audit.list(
+            actor_id=actor_id,
+            action=action,
+            from_at=from_at,
+            to_at=to_at,
+            limit=limit,
+            offset=offset,
+        )
+        items = [
+            AuditLogView(
+                id=record.id,
+                actor_id=record.actor_id,
+                actor_type=record.actor_type,
+                action=record.action,
+                resource_type=record.resource_type,
+                resource_id=record.resource_id,
+                result=record.result,
+                detail=record.detail,
+                ip=record.ip,
+                ua=record.ua,
+                created_at=record.created_at,
+                hash=record.hash,
+                prev_hash=record.prev_hash,
+            )
+            for record in records
+        ]
+        return AuditLogPage(items=items, total=total)
+
+
+_ROLE_DESCRIPTIONS: dict[BuiltinRole, str] = {
+    BuiltinRole.SUPER_ADMIN: "Acceso total al panel y a la infraestructura.",
+    BuiltinRole.ADMIN: "Gestión completa del panel (usuarios, servidores, ajustes).",
+    BuiltinRole.OPERATOR: "Operación de servidores: configuración, control y jugadores.",
+    BuiltinRole.VIEWER: "Solo lectura del panel y de los servidores.",
+}

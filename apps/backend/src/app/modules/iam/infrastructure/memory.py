@@ -14,6 +14,7 @@ from app.modules.iam.application.ports import (
     ApiKey,
     ApiKeyStorePort,
     AuditEntry,
+    AuditLogRecord,
     Session,
     SessionStorePort,
 )
@@ -40,6 +41,13 @@ class InMemoryIamRepository:
     async def get(self, user_id: str) -> User | None:
         return self._users.get(user_id)
 
+    async def list_users(self) -> Sequence[User]:
+        return sorted(
+            self._users.values(),
+            key=lambda u: (u.created_at, u.id),
+            reverse=True,
+        )
+
     async def get_by_username(self, username: str) -> User | None:
         return next((u for u in self._users.values() if u.username == username), None)
 
@@ -48,6 +56,12 @@ class InMemoryIamRepository:
         user = self._users.get(user_id)
         if user is not None:
             user.roles.add(role)
+
+    async def replace_global_roles(self, user_id: str, roles: Sequence[BuiltinRole]) -> None:
+        self._roles[user_id] = {role.value for role in roles}
+        user = self._users.get(user_id)
+        if user is not None:
+            user.roles = set(roles)
 
     async def add_membership(self, user_id: str, server_id: str, role: BuiltinRole) -> None:
         self._memberships[(server_id, user_id)] = ServerMembership(server_id, user_id, role)
@@ -124,6 +138,46 @@ class InMemoryAuditStore:
     async def verify(self) -> list[str]:
         """Devuelve errores de la cadena (vacío = íntegra)."""
         return verify_chain(self.entries, self._chain)
+
+    async def list(
+        self,
+        *,
+        actor_id: str | None = None,
+        action: str | None = None,
+        from_at: datetime | None = None,
+        to_at: datetime | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[AuditLogRecord], int]:
+        records = [
+            AuditLogRecord(
+                id=entry.id,
+                actor_id=entry.actor_id,
+                actor_type=entry.actor_type,
+                action=entry.action,
+                resource_type=entry.resource_type,
+                resource_id=entry.resource_id,
+                result=entry.result,
+                detail=entry.detail,
+                ip=entry.ip,
+                ua=entry.ua,
+                created_at=entry.created_at,
+                prev_hash=self._chain[index][0],
+                hash=self._chain[index][1],
+            )
+            for index, entry in enumerate(self.entries)
+        ]
+        if actor_id:
+            records = [r for r in records if r.actor_id == actor_id]
+        if action:
+            records = [r for r in records if action.lower() in r.action.lower()]
+        if from_at is not None:
+            records = [r for r in records if r.created_at >= from_at]
+        if to_at is not None:
+            records = [r for r in records if r.created_at <= to_at]
+        records.sort(key=lambda r: (r.created_at, r.id), reverse=True)
+        total = len(records)
+        return records[offset : offset + limit], total
 
 
 class InMemoryApiKeyStore(ApiKeyStorePort):

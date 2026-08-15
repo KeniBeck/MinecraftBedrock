@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -39,6 +39,7 @@ class PostgresIamRepository:
             status=user.status.value,
             created_at=user.created_at,
             last_login_at=user.last_login_at,
+            email=user.email,
             totp_secret=user.totp_secret,
             totp_enabled=user.totp_enabled,
             backup_codes=user.backup_codes,
@@ -49,6 +50,7 @@ class PostgresIamRepository:
             "display_name": stmt.excluded.display_name,
             "status": stmt.excluded.status,
             "last_login_at": stmt.excluded.last_login_at,
+            "email": stmt.excluded.email,
             "totp_secret": stmt.excluded.totp_secret,
             "totp_enabled": stmt.excluded.totp_enabled,
             "backup_codes": stmt.excluded.backup_codes,
@@ -77,6 +79,18 @@ class PostgresIamRepository:
             roles = await self._load_roles(session, row.id)
         return self._from_row(row, roles)
 
+    async def list_users(self) -> Sequence[User]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(IamUserRow).order_by(IamUserRow.created_at.desc(), IamUserRow.id)
+            )
+            rows = result.scalars().all()
+            users: list[User] = []
+            for row in rows:
+                roles = await self._load_roles(session, row.id)
+                users.append(self._from_row(row, roles))
+        return users
+
     async def add_global_role(self, user_id: str, role: BuiltinRole) -> None:
         stmt = (
             pg_insert(IamUserRoleRow)
@@ -85,6 +99,16 @@ class PostgresIamRepository:
         )
         async with self._session_factory() as session:
             await session.execute(stmt)
+            await session.commit()
+
+    async def replace_global_roles(self, user_id: str, roles: Sequence[BuiltinRole]) -> None:
+        async with self._session_factory() as session:
+            await session.execute(
+                delete(IamUserRoleRow).where(IamUserRoleRow.user_id == user_id)
+            )
+            session.add_all(
+                IamUserRoleRow(user_id=user_id, role=role.value) for role in roles
+            )
             await session.commit()
 
     async def add_membership(self, user_id: str, server_id: str, role: BuiltinRole) -> None:
@@ -140,6 +164,7 @@ class PostgresIamRepository:
             status=UserStatus(row.status),
             created_at=row.created_at,
             last_login_at=row.last_login_at,
+            email=row.email,
             roles=roles,
             totp_secret=row.totp_secret,
             totp_enabled=row.totp_enabled,
