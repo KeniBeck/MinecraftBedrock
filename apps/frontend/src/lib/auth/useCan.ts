@@ -54,6 +54,10 @@ const PANEL_MIN_ROLES: Record<string, readonly string[]> = {
   // eliminar usuarios.
   'iam.view': ['viewer', 'operator', 'admin', 'super_admin'],
   'iam.manage': ['admin', 'super_admin'],
+  // Ajustes globales del panel. `settings.view` es READ_ACTION (viewer+);
+  // `settings.update` es PANEL_ACTION (solo admin/super_admin).
+  'settings.view': ['viewer', 'operator', 'admin', 'super_admin'],
+  'settings.update': ['admin', 'super_admin'],
 }
 
 export function rolesCan(action: string, roles: readonly string[] | undefined): boolean {

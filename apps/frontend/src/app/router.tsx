@@ -11,9 +11,10 @@ import { BackupsPage } from '@/features/backups/BackupsPage'
 import { MonitoringPage } from '@/features/monitoring/MonitoringPage'
 import { SchedulerPage } from '@/features/scheduler/SchedulerPage'
 import { PermissionPage } from '@/features/permission/PermissionPage'
-import { ConfigurationPage } from '@/features/configuration/ConfigurationPage'
 import { IAMPage } from '@/features/iam/IAMPage'
+import { SettingsPage } from '@/features/settings/SettingsPage'
 import { ProfilePage } from '@/features/iam/ProfilePage'
+import { DashboardPage } from '@/features/dashboard/DashboardPage'
 import { RequireAuth, RequireGuest } from '@/lib/auth/guards'
 import { ServerRedirect } from '@/features/servers/ServerRedirect'
 
@@ -28,9 +29,9 @@ export const router = createBrowserRouter([
       {
         element: <AppLayout />,
         children: [
-          // La raíz y /servers delegan en AppLayout (que selecciona el primer
-          // servidor y navega a su detalle).
-          { index: true, element: <ServerRedirect /> },
+          // La raíz muestra el dashboard global; `/servers` delega en el
+          // selector que navega al detalle del primer servidor activo.
+          { index: true, element: <DashboardPage /> },
           { path: '/servers', element: <ServerRedirect /> },
           { path: '/servers/:serverId', element: <ServerDetailPage /> },
           { path: '/servers/:serverId/console', element: <ConsolePage /> },
@@ -40,9 +41,9 @@ export const router = createBrowserRouter([
           { path: '/servers/:serverId/backups', element: <BackupsPage /> },
           { path: '/servers/:serverId/scheduler', element: <SchedulerPage /> },
           { path: '/servers/:serverId/permissions', element: <PermissionPage /> },
-          { path: '/servers/:serverId/configuration', element: <ConfigurationPage /> },
           { path: '/servers/:serverId/monitoring', element: <MonitoringPage /> },
           { path: '/admin/iam', element: <IAMPage /> },
+          { path: '/admin/settings', element: <SettingsPage /> },
           { path: '/profile', element: <ProfilePage /> },
         ],
       },

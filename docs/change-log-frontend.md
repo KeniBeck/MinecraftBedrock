@@ -2143,3 +2143,150 @@ test).
   test "muestra 2FA como activado si el backend lo reporta al entrar".
 
 **Verificación**: `tsc` ✅ · `eslint` ✅ · `vitest` (182 global) ✅ · `build` ✅.
+
+## Fase 8 — Dashboard (vista global de todos los servidores)
+
+> **Fecha**: 2026-08-14. La raíz `/` era un placeholder que el `AppLayout`
+> redirigía al detalle del primer servidor. Ahora es el **Dashboard**: cards de
+> resumen, accesos rápidos, tabla global de servidores (solo lectura) y feed de
+> eventos recientes — todo ligero, sin abrir sockets de monitoreo por servidor.
+
+### Criterios aplicados
+
+- **Jugadores online = "—"**: `ServerResponse` no expone `players` (verificado
+  en `api/schemas.py`) y el dashboard **no** abre un WS por servidor desde la
+  vista global. Se muestra "—" con la pista "No expuesto por GET /servers".
+- **Feed de eventos** sin socket extra: reutiliza `useNotificationsStore`, que
+  `useNotifications` (bell) ya alimenta escuchando `global` + `user:{id}` +
+  todos los `server:*`.
+- **Lista en vivo** sin WS propio: `useServers` (cache `['servers']`) ya se
+  parchea por `useServerStateSync` al llegar `SERVER.{STARTING,STARTED,STOPPING,
+  STOPPED,CRASHED}`. La tabla y las cards reflejan el estado en tiempo real.
+- **Ruta** `/` = `DashboardPage`; `/servers` conserva `ServerRedirect` (yo
+  selector al primer servidor). El sidebar "Dashboard" se habilita
+  (`href: '/'`) y queda activo solo en la ruta exacta `/`.
+
+### Alcance
+
+- **`features/dashboard/types.ts`**: `DashboardStats` (total/online/offline/
+  players/recentBackups).
+- **`features/dashboard/hooks.ts`**: `useDashboardStats` (deriva de `useServers`
+  + `useNotificationsStore.items`; `players = null`; `recentBackups` cuenta
+  `BACKUP.COMPLETED|FAILED`) y `useDashboardServers`.
+- **`components/StatsCards.tsx`**: 4 `pixel-card` (Servidores, En línea
+  `online/total` + `offline detenidos`, Jugadores "—", Backups recientes).
+- **`components/ServerTable.tsx`**: tabla bajo la lista (estado badge, versión,
+  dirección) con enlaces al detalle.
+- **`components/RecentEvents.tsx`**: últimos `MAX_EVENTS` eventos globales
+  (`labelFor`/`relativeTime`/`isErrorEvent`), empty-state "Sin eventos recientes".
+- **`components/QuickActions.tsx`**: grid de accesos a páginas; rutas
+  dependientes de servidor usan el servidor activo (o el primero); sin
+  servidores quedan deshabilitadas.
+- **`DashboardPage.tsx`**: compone todo con títulos y encabezado.
+
+### Integración
+
+- **`app/router.tsx`**: `index: true` → `<DashboardPage />`; `/servers` sigue
+  con `ServerRedirect`.
+- **`components/layout/AppLayout.tsx`**: ya no navega forzosamente al primer
+  servidor; solo lo marca como activo (para selector/sidebar). `/` no se
+  redirige (el dashboard es la raíz).
+- **`components/layout/Sidebar.tsx`**: ítem "Dashboard" habilitado
+  (`href: '/'`); se elimina la entrada "Logs" pendiente (icono `Database` sin
+  uso) para dejar el `tsc` en verde.
+
+### Uso compartido
+
+- **`lib/notifications.ts`** (nuevo): `EVENT_LABEL`, `relativeTime`, `labelFor`,
+  `isErrorEvent` extraídas de `NotificationsBell`, que ahora las importa.
+
+### Archivos
+
+| Archivo | Cambio |
+|---|---|
+| `src/features/dashboard/` | Módulo nuevo (types, hooks, 4 componentes, página, test) |
+| `src/lib/notifications.ts` | Helpers compartidos de eventos (nuevo) |
+| `src/components/layout/NotificationsBell.tsx` | Reutiliza `lib/notifications` |
+| `src/app/router.tsx` | index → `DashboardPage` |
+| `src/components/layout/AppLayout.tsx` | Sin auto-redirect en `/` |
+| `src/components/layout/Sidebar.tsx` | Dashboard habilitado; quita "Logs"/`Database` |
+
+### Verificación
+
+- `tsc` ✅ · `eslint` ✅ · `vitest` (**188 global**; dashboard 6) ✅ ·
+  `build` ✅.
+
+## Fase 8 — Configuración global del panel (`/admin/settings`) y baja de la página por servidor
+
+> **Fecha**: 2026-08-14. La página de Configuración por servidor
+> (`/servers/:id/configuration`, `server.properties`) no era relevante porque
+> esa configuración es **por mundo / por servidor**, no global; se **elimina**.
+> En su lugar, el engranaje del header abre una página nueva de **Ajustes
+> globales del panel** construida sobre los endpoints reales del módulo
+> `settings` del backend (`GET/PATCH/DELETE /settings`).
+
+### Baja de la configuración por servidor
+
+- **Eliminado** `src/features/configuration/` (ConfigurationPage, hooks,
+  properties, types, PropertyField y sus 2 tests).
+- **Router**: fuera la ruta `/servers/:serverId/configuration` y su import.
+- **Sidebar**: el ítem "Configuración" ya estaba removido del working tree.
+- **QuickActions**: "Configuración" pasa de `sub: 'configuration'` a
+  `href: '/admin/settings'`.
+
+### Página de Ajustes globales (backend `settings`)
+
+- **`lib/api/settings.ts`** (nuevo): `PanelSetting` (`SettingResponse` real:
+  key/value/category/description/type/default), `SettingsListResponse`,
+  `PatchSettingsRequest`, `settingsKeys.all`; `listSettings` (`GET /settings`),
+  `patchSettings` (`PATCH /settings`, atómico) y `resetSetting`
+  (`DELETE /settings/{key}`).
+- **`features/settings/`** (nuevo): `types.ts` (categorías del catálogo:
+  storage/limits/defaults/system + `groupByCategory`), `hooks.ts`
+  (`useSettings`, `usePatchSettings`, `useResetSetting` con merge en cache),
+  `SettingsPage.tsx` y `SettingsPage.test.tsx` (5 tests).
+- **`SettingsPage`**: agrupada por categoría; inputs según el tipo del catálogo
+  (bool → checkbox, int/float → number, str/path → texto); guardar por
+  categoría (PATCH, con feedback) y reset por ajuste (DELETE).
+- **RBAC**: `settings.view` = viewer+ (lectura); `settings.update` = solo
+  admin/super_admin (edición/reset deshabilitados para el resto) — añadidos a
+  `useCan.ts`. La página muestra advertencia si no hay `settings.view`.
+- **Header**: el engranaje ahora navega a `/admin/settings` (antes apuntaba a
+  la config por servidor, que se elimina).
+- **Router**: nueva ruta `/admin/settings` → `SettingsPage`.
+
+### Archivos
+
+| Archivo | Cambio |
+|---|---|
+| `src/features/configuration/` | Eliminado (7 archivos) |
+| `src/lib/api/settings.ts` | Nuevo: tipos, claves y funciones `/settings` |
+| `src/features/settings/` | Nuevo: types, hooks, SettingsPage + test (5) |
+| `src/lib/auth/useCan.ts` | `settings.view` (viewer+) y `settings.update` (admin+) |
+| `src/app/router.tsx` | Quita ruta configuration; añade `/admin/settings` |
+| `src/components/layout/Header.tsx` | Engranaje → `/admin/settings` |
+| `src/features/dashboard/components/QuickActions.tsx` | "Configuración" → `/admin/settings` |
+
+### Verificación
+
+- `tsc` ✅ · `eslint` ✅ · `vitest` (**180 global**; settings 5) ✅ ·
+  `build` ✅.
+
+### Fase 8 — `PixelCard` con `noHover` (quita el brillo hover en Ajustes)
+
+> **Fecha**: 2026-08-14. El `pixel-card` reacciona al hover con un brillo
+> blanco + levante, apropiado para cards clicables. Las cards de Ajustes no
+> son interactivas, así que se añade un **prop `noHover`** para desactivar el
+> efecto, reutilizable por cualquier card.
+
+- **`components/ui/pixel-card.tsx`** (nuevo): `PixelCard` (forwardRef) que
+  envuelve `pixel-card` y aplica la clase `no-hover` cuando el prop `noHover`
+  está activo.
+- **`styles/pixel-theme.css`**: reglas `.pixel-card.no-hover` (y `:hover`)
+  que fijan `transform: none` y el `box-shadow` base (sin levante) y
+  `.pixel-card.no-hover:hover::after` con `background` transparente (sin
+  brillo).
+- **`features/settings/SettingsPage.tsx`**: las secciones por categoría pasan
+  de `<section className="pixel-card …">` a `<PixelCard noHover …>`.
+
+**Verificación**: `tsc` ✅ · `eslint` ✅ · `vitest` (settings 5) ✅ · `build` ✅.

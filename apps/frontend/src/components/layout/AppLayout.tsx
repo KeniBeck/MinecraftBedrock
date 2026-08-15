@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Outlet, useNavigate } from 'react-router-dom'
+import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 
 import { Background } from '@/components/Background'
 import { Header } from '@/components/layout/Header'
@@ -14,6 +14,7 @@ import { useServerMonitoring } from '@/hooks/useServerMonitoring'
  */
 export function AppLayout() {
   const navigate = useNavigate()
+  const { pathname } = useLocation()
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth < 768)
   const activeServerId = useActiveServer((state) => state.activeServerId)
   const setActiveServer = useActiveServer((state) => state.setActiveServer)
@@ -23,15 +24,17 @@ export function AppLayout() {
   // jugadores del header vive aquí y necesita datos en vivo en cualquier página.
   useServerMonitoring(activeServerId ?? undefined)
 
-  // Si no hay servidor activo y existen servidores, seleccionar el primero y
-  // navegar a su detalle (comportamiento del selector del mockup).
+  // Si no hay servidor activo y existen servidores, seleccionar el primero
+  // (para que el selector del header y el sidebar tengan contexto). NO se
+  // navega automáticamente: la raíz `/` es el dashboard global y `/servers`
+  // redirige al detalle del primer servidor.
   useEffect(() => {
     if (servers.length === 0 || activeServerId) return
     const first = servers[0]
     if (!first) return
     setActiveServer(first.id)
-    navigate(`/servers/${first.id}`, { replace: true })
-  }, [servers, activeServerId, setActiveServer, navigate])
+    if (pathname !== '/') navigate(`/servers/${first.id}`, { replace: true })
+  }, [servers, activeServerId, setActiveServer, navigate, pathname])
 
   return (
     <div className="min-h-screen text-foreground">

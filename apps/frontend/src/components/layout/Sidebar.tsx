@@ -5,13 +5,11 @@ import {
   Boxes,
   ChevronLeft,
   CircleGauge,
-  Database,
   Gamepad2,
   Globe,
   Keyboard,
   LayoutDashboard,
   ScrollText,
-  Settings2,
   Shield,
   UserCircle,
   Users,
@@ -39,7 +37,7 @@ interface SidebarItem {
 }
 
 const SIDEBAR_ITEMS: SidebarItem[] = [
-  { label: 'Dashboard', icon: LayoutDashboard, disabled: true },
+  { label: 'Dashboard', icon: LayoutDashboard, href: '/', disabled: false },
   { label: 'Servidor', icon: Gamepad2, href: '/servers', disabled: false },
   { label: 'Consola', icon: Keyboard, href: '/servers', sub: 'console', disabled: false },
   { label: 'Jugadores', icon: Users, href: '/servers', sub: 'players', disabled: false },
@@ -49,10 +47,8 @@ const SIDEBAR_ITEMS: SidebarItem[] = [
   { label: 'Monitoreo', icon: Bell, href: '/servers', sub: 'monitoring', disabled: false },
   { label: 'Plantillas', icon: Boxes, href: '/servers', sub: 'templates', disabled: false },
   { label: 'Permisos', icon: Shield, href: '/servers', sub: 'permissions', disabled: false },
-  { label: 'Configuración', icon: Settings2, href: '/servers', sub: 'configuration', disabled: false },
   { label: 'Mi perfil', icon: UserCircle, href: '/profile', disabled: false },
   { label: 'Administración', icon: ScrollText, href: '/admin/iam', gate: 'iam.manage' },
-  { label: 'Logs', icon: Database, disabled: true },
 ]
 
 /**

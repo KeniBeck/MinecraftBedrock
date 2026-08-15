@@ -166,8 +166,9 @@ export function Header() {
 
         <button
           type="button"
-          aria-label="Ajustes del panel"
-          title="Ajustes"
+          aria-label="Configuración del panel"
+          title="Configuración del panel"
+          onClick={() => navigate('/admin/settings')}
           className="rounded-lg p-1.5 text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
         >
           <Settings className="size-5" />
