@@ -7,6 +7,9 @@
 #
 # CÓMO USAR                          : cp .env.prod.example .env.prod && editar,
 #   y luego `docker compose --env-file .env.prod -f docker-compose.prod.yml up -d`.
+#   IMPORTANTE: TODOS los comandos (up/stop/start/down/ps/logs) llevan
+#   `--env-file .env.prod` porque varias variables son obligatorias (`:?`); sin
+#   el flag, la interpolación falla al no encontrar las variables en el shell.
 #
 # REQUISITOS DE RED (clave):
 #   El panel gestiona contenedores Minecraft con docker-py sobre el SOCKET de

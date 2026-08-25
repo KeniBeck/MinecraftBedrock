@@ -131,24 +131,29 @@ re-resuelve el usuario existente sin romper el arranque ni dejar trazas de error
 
 ### Detener / arrancar / borrar
 
+> Todos los comandos de producción llevan `--env-file .env.prod` (igual que en la
+> sección 4): el compose usa variables **obligatorias** (`POSTGRES_PASSWORD`,
+> `BEDROCK_PANEL_IAM_ENCRYPTION_KEY`...). Sin el flag, `stop`/`start`/`down`
+> fallan al interpolar esas variables. Ojo al orden: `--env-file` va antes de `-f`.
+
 ```bash
 # detener (mantiene datos)
-docker compose -f docker-compose.prod.yml stop
+docker compose --env-file .env.prod -f docker-compose.prod.yml stop
 
 # re-arrancar
-docker compose -f docker-compose.prod.yml start
+docker compose --env-file .env.prod -f docker-compose.prod.yml start
 
 # parar y borrar contenedores y red (NO borra el volumen de Postgres)
-docker compose -f docker-compose.prod.yml down
+docker compose --env-file .env.prod -f docker-compose.prod.yml down
 
 # parar y borrar TAMBIÉN el volumen de datos de Postgres (¡destructivo!)
-docker compose -f docker-compose.prod.yml down -v
+docker compose --env-file .env.prod -f docker-compose.prod.yml down -v
 ```
 
 ### Reconstruir tras cambios de código
 
 ```bash
-docker compose -f docker-compose.prod.yml up -d --build
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
 ```
 
 ---

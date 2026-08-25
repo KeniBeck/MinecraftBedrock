@@ -172,21 +172,27 @@ mantiene tu usuario y sus datos.
 
 ## 7. Día a día
 
+> Todos los comandos de producción llevan `--env-file .env.prod` (igual que en el
+> paso 5): el archivo `docker-compose.prod.yml` usa variables **obligatorias**
+> (`POSTGRES_PASSWORD`, `BEDROCK_PANEL_IAM_ENCRYPTION_KEY`...). Sin ese flag, los
+> comandos de `stop`/`start`/`down`/`ps`/`logs` fallan al interpolar esas variables.
+> (Nota: ojo al orden de los argumentos: `--env-file` va **antes** de `-f`.)
+
 ```bash
 # ver el estado
-docker compose -f docker-compose.prod.yml ps
+docker compose --env-file .env.prod -f docker-compose.prod.yml ps
 
 # ver los registros del backend
-docker compose -f docker-compose.prod.yml logs -f backend
+docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f backend
 
 # apagar (mantiene tus datos)
-docker compose -f docker-compose.prod.yml stop
+docker compose --env-file .env.prod -f docker-compose.prod.yml stop
 
 # encender de nuevo
-docker compose -f docker-compose.prod.yml start
+docker compose --env-file .env.prod -f docker-compose.prod.yml start
 
 # mirar los logs del frontend (nginx)
-docker compose -f docker-compose.prod.yml logs -f frontend
+docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f frontend
 ```
 
 Tus datos importantes (mundo, backups, contenedores Minecraft) viven en la carpeta
@@ -200,11 +206,12 @@ carpeta y, si quieres también la base de datos, vuelca el volumen de Postgres.
 
 | Problema | Causa probable | Solución |
 |---|---|---|
-| `POSTGRES_PASSWORD` me da error aunque la puse | El volumen ya guardó una contraseña anterior | Borra el volumen y arranca de nuevo: `docker compose -f docker-compose.prod.yml down -v` y repite el paso 5. **¡Esto borra la DB actual!** |
+| Me da error de `POSTGRES_PASSWORD` / `BEDROCK_PANEL_IAM_ENCRYPTION_KEY` al hacer `stop`, `start`, `down`, `ps` o `logs` | Falta `--env-file .env.prod` en el comando | Todos los comandos de producción llevan `--env-file .env.prod` (con ese archivo ya creado en el paso 3 y poblado). Recuerda: `--env-file` va antes de `-f`. |
+| `POSTGRES_PASSWORD` me da error aunque la puse (con `--env-file`) | El volumen ya guardó una contraseña anterior | Borra el volumen y arranca de nuevo: `docker compose --env-file .env.prod -f docker-compose.prod.yml down -v` y repite el paso 5. **¡Esto borra la DB actual!** |
 | `http://localhost:8080` no carga | Docker Fanso / puerto ocupado | Revisa que Docker esté encendido (`Engine running`) y cambia `BEDROCK_PANEL_HTTP_PORT` a otro puerto (p. ej. `8081`), luego vuelve a `up -d --build`. |
 | Error de `BEDROCK_PANEL_IAM_ENCRYPTION_KEY` | Falta la clave Fernet | Rellénala (paso 4) y vuelve a `up -d --build`. |
 | El administrador no puede entrar | La contraseña de bootstrap cambió después de crearlo | El bootstrap solo crea el usuario **la primera vez**. Borra el volumen (`down -v`) o crea el usuario con el panel; si vas a repetir, hazlo **antes** de la primera arrancada. |
-| Quiero empezar desde cero (todo limpio) | — | `docker compose -f docker-compose.prod.yml down -v`. **Destructivo**: borra DB y datos. |
+| Quiero empezar desde cero (todo limpio) | — | `docker compose --env-file .env.prod -f docker-compose.prod.yml down -v`. **Destructivo**: borra DB y datos. |
 
 ---
 
@@ -356,7 +363,7 @@ sea larga y no la que viene de ejemplo.
    en `BEDROCK_PANEL_SERVER_PUBLIC_HOST` en tu `.env.prod` y reinicia:
 
    ```bash
-   docker compose -f docker-compose.prod.yml up -d --build
+   docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
    ```
 
 ---
