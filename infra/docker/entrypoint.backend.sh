@@ -51,13 +51,25 @@ echo "[entrypoint] Aplicando migraciones Alembic..."
 ./.venv/bin/alembic upgrade head
 
 # ---- 3. Uvicorn ------------------------------------------------------------- #
-CONCURRENCY="${BEDROCK_PANEL_WEB_CONCURRENCY:-}"
-if [ -z "$CONCURRENCY" ]; then
-    # 2 workers por CPU, entre 1 y 8.
-    CPUS=$(nproc)
-    CONCURRENCY=$((CPUS * 2))
-    [ "$CONCURRENCY" -lt 1 ] && CONCURRENCY=1
-    [ "$CONCURRENCY" -gt 8 ] && CONCURRENCY=8
+# IMPORTANTE — Tiempo real y workers:
+#   El panel es un sistema de tiempo real STATEFUL en proceso: el bus de eventos
+#   (InProcessEventBus), el registro de conexiones WebSocket (ConnectionManager),
+#   los streams de consola y los pollers viven en la memoria de UN solo proceso.
+#   Con `--workers>1` cada worker es un proceso independiente: la conexión WS del
+#   navegador cae en un worker y las difusiones/eventos ocurren en otro, por lo
+#   que consola en vivo, notificaciones, sync de mundos y el scheduler dejan de
+#   funcionar (además el reloj del scheduler se duplicaría N veces).
+#
+#   Dev corre 1 worker (`--reload`); en producción el default es TAMBIÉN 1 worker.
+#   `BEDROCK_PANEL_WEB_CONCURRENCY` sigue existiendo SOLO como override para casos
+#   avanzados; >1 requiere externalizar el bus (p. ej. Redis pub/sub) — ver
+#   docs/troubleshooting-tiempo-real-produccion.md.
+CONCURRENCY="${BEDROCK_PANEL_WEB_CONCURRENCY:-1}"
+if [ "$CONCURRENCY" -ne 1 ] 2>/dev/null; then
+    echo "[entrypoint] ADVERTENCIA: BEDROCK_PANEL_WEB_CONCURRENCY=$CONCURRENCY (>1)."
+    echo "[entrypoint] Con varios workers el estado en memoria (WebSockets, consola,"
+    echo "[entrypoint] notificaciones, scheduler) NO es compartido y el tiempo real se rompe."
+    echo "[entrypoint] Vea docs/troubleshooting-tiempo-real-produccion.md."
 fi
 
 echo "[entrypoint] Arrancando uvicorn con $CONCURRENCY worker(s)..."

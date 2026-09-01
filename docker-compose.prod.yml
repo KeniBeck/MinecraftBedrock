@@ -21,6 +21,14 @@
 #     - El backend necesita `- /var/run/docker.sock:/var/run/docker.sock` para
 #       crear/gestionar los contenedores Minecraft en el host.
 #     - `BEDROCK_PANEL_SERVER_PUBLIC_HOST` = IP/LAN/DNS que ven los clientes.
+#
+# TIEMPO REAL Y WORKERS (importante):
+#   El panel es un sistema de tiempo real STATEFUL en proceso (bus de eventos,
+#   conexiones WebSocket, streams de consola y pollers viven en la memoria de un
+#   solo proceso). Con `--workers>1` el tiempo real se rompe (consola, notificaciones,
+#   sync de mundos, scheduler). El default de `BEDROCK_PANEL_WEB_CONCURRENCY` es 1;
+#   NO lo subas salvo que el bus esté externalizado (Redis pub/sub, ver
+#   docs/troubleshooting-tiempo-real-produccion.md).
 
 services:
   postgres:
@@ -62,7 +70,7 @@ services:
       BEDROCK_PANEL_BOOTSTRAP_ADMIN_USERNAME: ${BEDROCK_PANEL_BOOTSTRAP_ADMIN_USERNAME:-}
       BEDROCK_PANEL_BOOTSTRAP_ADMIN_PASSWORD: ${BEDROCK_PANEL_BOOTSTRAP_ADMIN_PASSWORD:-}
       BEDROCK_PANEL_BOOTSTRAP_ADMIN_DISPLAY_NAME: ${BEDROCK_PANEL_BOOTSTRAP_ADMIN_DISPLAY_NAME:-Administrador}
-      BEDROCK_PANEL_WEB_CONCURRENCY: ${BEDROCK_PANEL_WEB_CONCURRENCY:-}
+      BEDROCK_PANEL_WEB_CONCURRENCY: ${BEDROCK_PANEL_WEB_CONCURRENCY:-1}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${BEDROCK_PANEL_STORAGE_ROOT:-/var/lib/bedrockpanel/instances}:${BEDROCK_PANEL_STORAGE_ROOT:-/var/lib/bedrockpanel/instances}

@@ -1,8 +1,16 @@
 # docker-compose.dev.yml — desarrollo del panel (backend) únicamente.
+#
+# Proyecto aislado (`name: bedrockpanel-dev`) y nombres de contenedor propios
+# para NO colisionar con la pila de producción (docker-compose.prod.yml), que
+# usa el mismo servicio `postgres` y el mismo proyecto por defecto (nombre del
+# directorio). Si ambos stacks comparten nombre de contenedor, `start`/`up` de
+# prod puede reutilizar el postgres de dev (que no tiene healthcheck) y falla
+# con "dependency ... has no healthcheck configured".
+name: bedrockpanel-dev
 services:
   postgres:
     image: postgres:16
-    container_name: bedrockpanel-postgres
+    container_name: bedrockpanel-postgres-dev
     environment:
       POSTGRES_USER: bedrockpanel
       POSTGRES_PASSWORD: bedrockpanel_dev
@@ -16,7 +24,7 @@ services:
     build:
       context: .
       dockerfile: infra/docker/Dockerfile.dev
-    container_name: bedrockpanel-dev
+    container_name: bedrockpanel-dev-panel
     command: ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     ports:
       - "8000:8000"

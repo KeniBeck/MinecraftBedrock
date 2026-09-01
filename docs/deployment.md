@@ -181,7 +181,7 @@ Para backup manual del panel: conserva el volumen de Postgres Y el directorio
 | `BEDROCK_PANEL_STORAGE_ROOT` | `/var/lib/bedrockpanel/instances` | Ruta host del storage (MUST match inside container) |
 | `BEDROCK_PANEL_IAM_ENCRYPTION_KEY` | *(requerido)* | Clave Fernet de IAM (secrets 2FA/backup codes) |
 | `BEDROCK_PANEL_IAM_JWT_SECRET` | *(fallback dev)* | Clave HMAC de firma de JWT (HS256); recomendable ≥32 bytes |
-| `BEDROCK_PANEL_WEB_CONCURRENCY` | 2×NCPU (máx 8) | Workers de uvicorn |
+| `BEDROCK_PANEL_WEB_CONCURRENCY` | 1 | Workers de uvicorn. **Default 1 obligatorio**: el panel es stateful en proceso (WebSockets, consola, notificaciones, scheduler). Ver nota de workers abajo |
 | `BEDROCK_PANEL_LOG_LEVEL` | `INFO` | Nivel de log del backend |
 | `BEDROCK_PANEL_HTTP_PORT` | `8080` | Puerto host del frontend |
 | `BEDROCK_PANEL_BOOTSTRAP_ADMIN_USERNAME` | `admin` | Usuario super_admin inicial (solo se crea la 1ª vez) |
@@ -200,9 +200,70 @@ Para backup manual del panel: conserva el volumen de Postgres Y el directorio
 - **Exposición en nube**: Bedrock usa UDP `19132/19133`. Un proxy HTTP no basta
   para gameplay (ver `README.md`); el frontend sirve el panel (TCP), los
   puertos UDP del juego se exponen a nivel de red/host según corresponda.
-- **Workers**: FastAPI inicia 1 worker con `uvicorn` en dev; en prod el entrypoint
-  usa NCPU. Si el estado en memoria (streams, buffers WS) entre procesos no es
-  un requisito, los workers son seguros porque la persistencia es Postgres.
+- **Workers**: el panel es un sistema de tiempo real **stateful en proceso**: el
+  bus de eventos (`InProcessEventBus`), el registro de conexiones WebSocket
+  (`ConnectionManager`), los streams de consola y los pollers de monitoreo y
+  scheduler viven en la memoria de **un solo proceso**. Por eso el default de
+  `BEDROCK_PANEL_WEB_CONCURRENCY` es **1** (igual que dev). Con `--workers>1`
+  cada worker es un proceso aislado: la conexión WS del navegador cae en un
+  worker y los eventos se emiten en otro, rompiendo consola en vivo,
+  notificaciones, sync de mundos y duplicando las tareas del scheduler. Para
+  escalar a varios workers primero hay que externalizar el bus (Redis pub/sub) —
+  ver `docs/troubleshooting-tiempo-real-produccion.md`.
 - Para un despliegue más aislado puede fijarse `network_mode` o exponer solo el
   puerto del frontend y mantener el backend interno (ya es el caso por defecto:
   solo `frontend` publica puerto al host).
+
+---
+
+## 9. Errores comunes y recuperación
+
+### 9.1 `dependency failed to start: container bedrockpanel-postgres has no healthcheck configured`
+
+**Síntoma**: `docker compose --env-file .env.prod -f docker-compose.prod.yml start`
+(o `up`) falla con ese mensaje, aunque `docker ps` muestra el postgres corriendo.
+
+**Causa**: el contenedor `bedrockpanel-postgres` que hay en el host fue creado por
+`docker-compose.dev.yml`, no por el de producción. Ambos stacks usaban el **mismo
+nombre de contenedor** (`bedrockpanel-postgres`) y el **mismo proyecto** (el del
+directorio). El `start`/`up` de prod reutiliza el contenedor existente; como el de
+dev **no define healthcheck**, la dependencia `postgres: condition: service_healthy`
+del backend no puede evaluarse y el arranque se aborta.
+
+**Se distingue así**: el postgres creado por dev publica `5433:5432` y no tiene
+healthcheck; el de prod publica `5432:5432` (default) y sí lo tiene:
+
+```bash
+docker inspect bedrockpanel-postgres \
+  --format 'config={{index .Config.Labels "com.docker.compose.project.config_files"}} healthcheck={{if .Config.Healthcheck}}yes{{else}}NO{{end}}'
+```
+
+**Recuperación** (quita solo el contenedor conflictivo y recrea la pila; los
+volúmenes de datos se conservan):
+
+```bash
+# 1. Elimina el postgres huérfano de dev (los datos dev viven en el volumen
+#    `bedrockpanel-pgdata` y no se tocan).
+docker rm -f bedrockpanel-postgres
+
+# 2. Recrea la pila de producción completa.
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
+
+# 3. Verifica que el nuevo postgres tiene healthcheck y que el backend usa 1 worker.
+docker compose --env-file .env.prod -f docker-compose.prod.yml ps
+docker compose --env-file .env.prod -f docker-compose.prod.yml logs backend | grep -i worker
+```
+
+**Prevención (ya aplicada)**: `docker-compose.dev.yml` ahora usa un proyecto propio
+(`name: bedrockpanel-dev`) y nombres de contenedor propios
+(`bedrockpanel-postgres-dev`, `bedrockpanel-dev-panel`), de modo que dev y prod
+pueden coexistir sin colisión de nombres ni de healthcheck. Dev y prod usan
+volúmenes de Postgres distintos (`bedrockpanel-pgdata` vs `bedrockpanel-pgdata-prod`).
+
+### 9.2 `Found orphan containers (minecraft-bedrock) for this project`
+
+Es informativo, no un error: el contenedor del servidor Minecraft
+(`docker-compose.yml` base, proyecto por defecto del directorio) comparte proyecto
+con la pila del panel. No se borra nada. Si se quiere silenciar, usar
+`--remove-orphans` con cuidado (eliminaría el contenedor Minecraft; sus datos viven
+en el bind-mount `./data` y se recrea con `docker compose up -d`).

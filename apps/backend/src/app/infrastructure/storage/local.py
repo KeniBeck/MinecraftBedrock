@@ -102,7 +102,11 @@ class LocalServerStorage:
             return []
         worlds: list[dict[str, Any]] = []
         for entry in sorted(worlds_root.iterdir()):
-            if not entry.is_dir() or not (entry / "level.dat").exists():
+            if not entry.is_dir():
+                continue
+            # Un mundo es válido si tiene level.dat O levelname.txt (creado desde
+            # el panel, pendiente de primer arranque de BDS que genera level.dat).
+            if not (entry / "level.dat").exists() and not (entry / "levelname.txt").exists():
                 continue
             worlds.append(
                 {

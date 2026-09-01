@@ -614,6 +614,19 @@ async def test_sync_descubre_mundos_puestos_en_el_volumen(storage_root: Path) ->
     assert world is not None and world.level_name == "Alpha"
 
 
+async def test_sync_descubre_mundo_sin_level_dat(storage_root: Path) -> None:
+    """Mundo creado desde el panel (solo levelname.txt) aparece en sync."""
+    fx = Fixture(storage_root)
+    fx.storage.write("worlds/Alpha/levelname.txt", b"Alpha")
+
+    created = await fx.facade.sync(SERVER_ID)
+
+    assert [v.name for v in created] == ["Alpha"]
+    assert created[0].activated is False
+    world = await fx.repository.get_world(SERVER_ID, "Alpha")
+    assert world is not None and world.level_name == "Alpha"
+
+
 async def test_sync_no_duplica_metadata_existente(storage_root: Path) -> None:
     fx = Fixture(storage_root)
     fx.seed_world("Alpha")
