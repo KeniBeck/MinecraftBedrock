@@ -169,6 +169,19 @@ def test_list_worlds_ignora_dirs_sin_level_dat(storage: LocalServerStorage) -> N
     assert storage.list_worlds() == []
 
 
+def test_is_valid_world_exige_level_dat_y_db_no_vacia(storage: LocalServerStorage) -> None:
+    storage.write("worlds/Alpha/level.dat", b"\x0a\x00\x00")
+    assert storage.is_valid_world("worlds/Alpha") is False
+
+    storage.write("worlds/Alpha/db/MANIFEST-000001", b"x")
+    assert storage.is_valid_world("worlds/Alpha") is True
+
+
+def test_is_valid_world_rechaza_nivel_sin_level_dat(storage: LocalServerStorage) -> None:
+    storage.write("worlds/Alpha/db/1.lbd", b"chunk")
+    assert storage.is_valid_world("worlds/Alpha") is False
+
+
 def test_disk_stats_devuelve_uso_de_espacio(storage: LocalServerStorage) -> None:
     stats = storage.disk_stats()
     assert stats["total"] > 0

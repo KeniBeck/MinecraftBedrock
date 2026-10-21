@@ -16,6 +16,7 @@ WORKDIR /workspace/apps/backend
 # Primero copia la configuración del proyecto para cachear la resolución.
 COPY apps/backend/pyproject.toml apps/backend/uv.lock ./
 COPY apps/backend/.python-version ./
+COPY apps/backend/alembic.ini ./
 
 # Sincroniza dependencias (main + dev).
 RUN uv sync

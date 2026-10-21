@@ -15,11 +15,12 @@ export const serverKeys = {
  * Tipos del módulo Server — verificados contra
  * `apps/backend/src/app/modules/server/api/schemas.py` (ServerResponse,
  * ServerConnectionResponse). El backend define `state` como enum de strings:
- * `created | starting | running | stopping | stopped | crashed | removed`.
+ * `created | preparing | starting | running | stopping | stopped | crashed | removed`.
  */
 
 export type ServerState =
   | 'created'
+  | 'preparing'
   | 'starting'
   | 'running'
   | 'stopping'

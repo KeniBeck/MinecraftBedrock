@@ -40,7 +40,7 @@ def make_facade(
     bus = bus or InProcessEventBus()
     runtime = runtime or FakeRuntime()
     config = config or FakeConfigurationReader()
-    settings = FakeSettings()
+    settings = FakeSettings({"server.provisioning.enabled": False})
     spec_factory = RuntimeSpecFactory(settings)
     repository = InMemoryServerRepository()
     deps = ServerDeps(

@@ -11,7 +11,12 @@ from app.kernel.ports.runtime import ServerState
 from app.modules.server.domain.errors import ServerStateError
 
 _ALLOWED_TRANSITIONS: dict[ServerState, frozenset[ServerState]] = {
-    ServerState.CREATED: frozenset({ServerState.STARTING, ServerState.REMOVED}),
+    ServerState.CREATED: frozenset(
+        {ServerState.PREPARING, ServerState.STARTING, ServerState.REMOVED}
+    ),
+    ServerState.PREPARING: frozenset(
+        {ServerState.RUNNING, ServerState.STOPPING, ServerState.CRASHED, ServerState.REMOVED}
+    ),
     ServerState.STARTING: frozenset(
         {ServerState.RUNNING, ServerState.STOPPING, ServerState.CRASHED, ServerState.REMOVED}
     ),
@@ -21,8 +26,12 @@ _ALLOWED_TRANSITIONS: dict[ServerState, frozenset[ServerState]] = {
     ServerState.STOPPING: frozenset(
         {ServerState.STOPPED, ServerState.CRASHED, ServerState.REMOVED}
     ),
-    ServerState.STOPPED: frozenset({ServerState.STARTING, ServerState.REMOVED}),
-    ServerState.CRASHED: frozenset({ServerState.STARTING, ServerState.REMOVED}),
+    ServerState.STOPPED: frozenset(
+        {ServerState.PREPARING, ServerState.STARTING, ServerState.REMOVED}
+    ),
+    ServerState.CRASHED: frozenset(
+        {ServerState.PREPARING, ServerState.STARTING, ServerState.REMOVED}
+    ),
     ServerState.REMOVED: frozenset(),
 }
 

@@ -242,6 +242,36 @@ async def test_import_sin_level_dat_limpia_y_fracasa(storage_root: Path) -> None
     assert not fx.storage.exists("worlds/Beta")
 
 
+async def test_import_sin_db_limpia_y_fracasa(storage_root: Path) -> None:
+    fx = Fixture(storage_root)
+    stream = make_zip([("MyWorld/level.dat", _world_level_dat())])
+
+    with pytest.raises(WorldCorruptError):
+        await fx.facade.import_world(
+            ImportWorldCommand(server_id=SERVER_ID, name="Beta", stream=stream)
+        )
+
+    assert not fx.storage.exists("worlds/Beta")
+
+
+async def test_import_lee_los_ajustes_del_level_dat(storage_root: Path) -> None:
+    fx = Fixture(storage_root)
+    stream = make_zip(
+        [
+            ("MyWorld/level.dat", _world_level_dat()),
+            ("MyWorld/db/1.lbd", b"chunk"),
+        ]
+    )
+
+    view = await fx.facade.import_world(
+        ImportWorldCommand(server_id=SERVER_ID, name="Beta", stream=stream)
+    )
+
+    assert view.seed == "12345"
+    assert view.gamemode == "creative"
+    assert view.difficulty == "hard"
+
+
 async def test_import_con_nombre_duplicado_fracasa(storage_root: Path) -> None:
     fx = Fixture(storage_root)
     fx.seed_world("Beta")

@@ -539,11 +539,12 @@ def create_server(client: TestClient, auth: dict[str, str], name: str = "Surviva
 
 
 def world_zip(level_name: str = "Mapa") -> bytes:
-    """Snapshot ``.mcworld`` en memoria (nivel mínimo con ``level.dat``)."""
+    """Snapshot ``.mcworld`` en memoria (nivel mínimo con ``level.dat`` + ``db``)."""
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("level.dat", b"\x0a\x00\x00")
         archive.writestr("levelname.txt", level_name)
+        archive.writestr("db/1.lbd", b"chunk")
     return buffer.getvalue()
 
 
@@ -629,7 +630,7 @@ class TestServers:
 
         started = client.post(f"/api/v1/servers/{server_id}/start", headers=auth)
         assert started.status_code == 200
-        assert started.json()["state"] == "starting"
+        assert started.json()["state"] == "preparing"
         assert started.json()["connection"]["address"] == "localhost:19132"
 
         stopped = client.post(f"/api/v1/servers/{server_id}/stop", json={"grace": 10}, headers=auth)

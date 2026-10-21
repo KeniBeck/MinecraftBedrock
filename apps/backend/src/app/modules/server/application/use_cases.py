@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 from app.kernel.events.bus import EventBusPort
+from app.kernel.events.event import DomainEvent
 from app.kernel.ids import IdGeneratorPort
 from app.kernel.ports.runtime import RuntimeSpec, ServerRuntimePort, ServerState
 from app.kernel.ports.settings import SettingsPort
@@ -39,6 +40,7 @@ from app.modules.server.domain.events import (
     SERVER_CONFIG_CHANGED,
     SERVER_CRASHED,
     SERVER_CREATED,
+    SERVER_PREPARING,
     SERVER_REMOVED,
     SERVER_STARTED,
     SERVER_STARTING,
@@ -150,7 +152,12 @@ class CreateServerUseCase:
 
 
 class StartServerUseCase:
-    """Arranca el proceso; el estado ``running`` lo confirma Monitoring (§6.2)."""
+    """Arranca el proceso; ``running`` lo confirma Monitoring (§6.2).
+
+    Si el volumen aún no tiene el binario de BDS, el primer arranque pasa por
+    ``preparing`` (descarga/instalación de la imagen) y publica
+    ``SERVER.PREPARING``; en arranques normales se mantiene ``starting``.
+    """
 
     def __init__(self, deps: ServerDeps) -> None:
         self._deps = deps
@@ -158,22 +165,16 @@ class StartServerUseCase:
     async def execute(self, cmd: StartServerCommand) -> ServerView:
         deps = self._deps
         server = await deps.repository.get_required(ServerId(cmd.server_id))
-        server.request_start()
 
         if server.runtime_id is None:
             raise ServerNotMaterializedError(
                 f"Servidor {cmd.server_id} sin artefacto materializado"
             )
+        event = _request_start_or_prepare(deps, server, cmd.actor_id)
         deps.runtime.start(server.runtime_id)
 
         await deps.repository.save(server)
-        await deps.bus.publish(
-            server_event(
-                SERVER_STARTING,
-                server.id.value,
-                actor_id=cmd.actor_id,
-            )
-        )
+        await deps.bus.publish(event)
         return to_view(server, deps.settings)
 
 
@@ -230,17 +231,34 @@ class StopServerUseCase:
 
 
 class MarkCrashedUseCase:
-    """Registra caída (watcher de runtime): cualquier estado → ``crashed``."""
+    """Registra caída (watcher de runtime): cualquier estado → ``crashed``.
+
+    ``reason``/``exit_code`` viajan en el payload para que la UI explique el
+    fallo (p. ej. ``runtime_exited`` y el código de salida del contenedor).
+    """
 
     def __init__(self, deps: ServerDeps) -> None:
         self._deps = deps
 
-    async def execute(self, server_id: str) -> ServerView:
+    async def execute(
+        self,
+        server_id: str,
+        *,
+        reason: str | None = None,
+        exit_code: int | None = None,
+    ) -> ServerView:
         deps = self._deps
         server = await deps.repository.get_required(ServerId(server_id))
         server.mark_crashed()
         await deps.repository.save(server)
-        await deps.bus.publish(server_event(SERVER_CRASHED, server.id.value))
+        payload: dict[str, object] = {"name": server.name}
+        if reason is not None:
+            payload["reason"] = reason
+        if exit_code is not None:
+            payload["exit_code"] = exit_code
+        await deps.bus.publish(
+            server_event(SERVER_CRASHED, server.id.value, payload=payload)
+        )
         return to_view(server, deps.settings)
 
 
@@ -259,7 +277,12 @@ class RestartServerUseCase:
                 raise ServerNotMaterializedError(
                     f"Servidor {cmd.server_id} sin artefacto materializado"
                 )
-            if server.state in (ServerState.STARTING, ServerState.RUNNING, ServerState.STOPPING):
+            if server.state in (
+                ServerState.PREPARING,
+                ServerState.STARTING,
+                ServerState.RUNNING,
+                ServerState.STOPPING,
+            ):
                 if server.state is not ServerState.STOPPING:
                     server.request_stop()
                 self._deps.runtime.stop(server.runtime_id, grace=cmd.grace)
@@ -273,12 +296,10 @@ class RestartServerUseCase:
                     f"No se puede reiniciar desde {server.state}",
                     context={"server_id": cmd.server_id, "state": server.state},
                 )
-            server.request_start()
+            event = _request_start_or_prepare(deps, server, cmd.actor_id)
             self._deps.runtime.start(server.runtime_id)
             await deps.repository.save(server)
-            await deps.bus.publish(
-                server_event(SERVER_STARTING, server.id.value, actor_id=cmd.actor_id)
-            )
+            await deps.bus.publish(event)
             return to_view(server, deps.settings)
 
 
@@ -294,6 +315,7 @@ class RemoveServerUseCase:
         async with self._guard.locked(cmd.server_id):
             server = await deps.repository.get_required(ServerId(cmd.server_id))
             if server.runtime_id is not None and server.state in (
+                ServerState.PREPARING,
                 ServerState.STARTING,
                 ServerState.RUNNING,
                 ServerState.STOPPING,
@@ -358,7 +380,11 @@ class ApplyConfigUseCase:
                 occupied_ports=occupied,
             )
 
-            was_running = server.state in (ServerState.STARTING, ServerState.RUNNING)
+            was_running = server.state in (
+                ServerState.PREPARING,
+                ServerState.STARTING,
+                ServerState.RUNNING,
+            )
             changed = _spec_changed(server.spec, new_spec)
 
             if changed:
@@ -396,7 +422,11 @@ class ChangeVersionUseCase:
         deps = self._deps
         async with self._guard.locked(cmd.server_id):
             server = await deps.repository.get_required(ServerId(cmd.server_id))
-            was_running = server.state in (ServerState.STARTING, ServerState.RUNNING)
+            was_running = server.state in (
+                ServerState.PREPARING,
+                ServerState.STARTING,
+                ServerState.RUNNING,
+            )
             desired = await deps.configuration.desired_config(cmd.server_id)
             desired = DesiredConfig(
                 version=cmd.version,
@@ -446,6 +476,7 @@ class UpdateServerResourcesUseCase:
             server = await deps.repository.get_required(ServerId(cmd.server_id))
 
             if server.state in (
+                ServerState.PREPARING,
                 ServerState.STARTING,
                 ServerState.STOPPING,
                 ServerState.REMOVED,
@@ -456,7 +487,11 @@ class UpdateServerResourcesUseCase:
                 )
 
             self._validate(cmd)
-            was_running = server.state in (ServerState.STARTING, ServerState.RUNNING)
+            was_running = server.state in (
+                ServerState.PREPARING,
+                ServerState.STARTING,
+                ServerState.RUNNING,
+            )
             old_resources = dict(server.spec.resources)
 
             changed = server.change_resources(
@@ -508,6 +543,37 @@ class UpdateServerResourcesUseCase:
             )
 
 
+def _request_start_or_prepare(
+    deps: ServerDeps,
+    server: Server,
+    actor_id: str | None,
+) -> DomainEvent:
+    """Transiciona a ``preparing`` o ``starting`` y devuelve el evento a publicar.
+
+    ``preparing`` se usa cuando el volumen aún no tiene el binario de BDS, es
+    decir, el primer arranque va a descargar/instalar el servidor.
+    """
+    if deps.spec_factory.needs_provisioning(server.id.value, server.version):
+        server.request_prepare()
+        return server_event(
+            SERVER_PREPARING,
+            server.id.value,
+            actor_id=actor_id,
+            payload={
+                "name": server.name,
+                "version": server.version,
+                "message": "Descargando e instalando el servidor…",
+            },
+        )
+    server.request_start()
+    return server_event(
+        SERVER_STARTING,
+        server.id.value,
+        actor_id=actor_id,
+        payload={"name": server.name, "version": server.version},
+    )
+
+
 async def _recreate(
     deps: ServerDeps,
     server: Server,
@@ -518,7 +584,12 @@ async def _recreate(
 ) -> None:
     """Parar (si corre) → materialize nuevo spec → arrancar si tocaba (§6.5)."""
     if server.runtime_id is not None:
-        if server.state in (ServerState.STARTING, ServerState.RUNNING, ServerState.STOPPING):
+        if server.state in (
+            ServerState.PREPARING,
+            ServerState.STARTING,
+            ServerState.RUNNING,
+            ServerState.STOPPING,
+        ):
             deps.runtime.stop(server.runtime_id, grace=30)
         deps.runtime.remove(server.runtime_id, delete_data=False)
     runtime_id = deps.runtime.materialize(new_spec)
@@ -527,8 +598,25 @@ async def _recreate(
 
     if restart_if_running:
         deps.runtime.start(runtime_id)
-        server.state = ServerState.STARTING
-        await deps.bus.publish(server_event(SERVER_STARTING, server.id.value, actor_id=actor_id))
+        if deps.spec_factory.needs_provisioning(server.id.value, server.version):
+            server.state = ServerState.PREPARING
+            await deps.bus.publish(
+                server_event(
+                    SERVER_PREPARING,
+                    server.id.value,
+                    actor_id=actor_id,
+                    payload={
+                        "name": server.name,
+                        "version": server.version,
+                        "message": "Descargando e instalando el servidor…",
+                    },
+                )
+            )
+        else:
+            server.state = ServerState.STARTING
+            await deps.bus.publish(
+                server_event(SERVER_STARTING, server.id.value, actor_id=actor_id)
+            )
 
 
 async def _occupied_ports(

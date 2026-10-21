@@ -128,8 +128,10 @@ class CreateWorldUseCase:
 class ImportWorldUseCase:
     """Importa un snapshot (``.mcworld``/tar.gz) como mundo nuevo.
 
-    Valida que el nivel tenga ``level.dat`` (mínimo para considerar el mundo
-    válido); si no, elimina lo extraído y falla con ``WORLD.CORRUPT``.
+    Valida que el nivel tenga ``level.dat`` y una carpeta ``db/`` no vacía; si
+    no, elimina lo extraído y falla con ``WORLD.CORRUPT``. Tras validar, lee los
+    ajustes del ``level.dat`` (``seed``/``gamemode``/``difficulty``, best effort)
+    para que la metadata quede completa desde el primer listado.
     """
 
     def __init__(self, deps: WorldDeps) -> None:
@@ -145,19 +147,24 @@ class ImportWorldUseCase:
                 context={"server_id": cmd.server_id, "name": name},
             )
         storage.write_snapshot(rel, cmd.stream)
-        if not storage.exists(f"{rel}/{_LEVEL_DAT}"):
+        if not storage.is_valid_world(rel):
             storage.remove(rel)
             raise WorldCorruptError(
-                "El snapshot no contiene un nivel válido (sin level.dat)",
+                "El snapshot no contiene un mundo válido (level.dat + db no vacía)",
                 context={"server_id": cmd.server_id, "name": name},
             )
         meta = _storage_meta(storage, name)
+        settings = storage.world_settings(name)
         world = _new_world(
             self._deps,
             cmd.server_id,
             name,
             level_name=meta["level_name"] if meta else name,
             size_bytes=meta["size_bytes"] if meta else 0,
+            seed=settings.get("seed"),
+            gamemode=settings.get("gamemode"),
+            difficulty=settings.get("difficulty"),
+            view_distance=settings.get("view_distance"),
         )
         await self._deps.repository.save_world(world)
         await self._deps.bus.publish(

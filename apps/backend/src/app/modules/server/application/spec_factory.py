@@ -185,6 +185,18 @@ class RuntimeSpecFactory:
         base_path = self._settings.get("storage.base_path", "/var/lib/bedrockpanel")
         return _discover_server_data_dir(base_path, server_id, version)
 
+    def needs_provisioning(self, server_id: str, version: str) -> bool:
+        """¿El primer arranque requiere descarga/instalación de BDS?
+
+        Es ``True`` cuando el volumen del servidor todavía no tiene un binario
+        Bedrock local (la imagen itzg lo descargará al arrancar). Se puede
+        desactivar con ``server.provisioning.enabled=false``.
+        """
+        if not bool(self._settings.get("server.provisioning.enabled", True)):
+            return False
+        data_dir = self.data_dir(server_id, version)
+        return not _local_bedrock_binary_exists(data_dir, version)
+
     def render(
         self,
         server_id: str,

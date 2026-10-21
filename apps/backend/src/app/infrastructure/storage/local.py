@@ -148,6 +148,19 @@ class LocalServerStorage:
             return
         level_dat.write_bytes(patched)
 
+    def is_valid_world(self, rel: str) -> bool:
+        """Un mundo importable exige ``level.dat`` y una ``db/`` con contenido."""
+        world_dir = self._resolve(rel)
+        if not (world_dir / "level.dat").is_file():
+            return False
+        db_dir = world_dir / "db"
+        if not db_dir.is_dir():
+            return False
+        try:
+            return any(db_dir.iterdir())
+        except OSError:
+            return False
+
     def world_snapshot(self, world_name: str) -> BinaryIO:
         world_dir = self._resolve(f"{_WORLDS}/{world_name}")
         if not world_dir.is_dir():

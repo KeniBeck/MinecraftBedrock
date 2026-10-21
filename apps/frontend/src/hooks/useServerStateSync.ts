@@ -7,6 +7,8 @@ import { useWebSocketStore } from '@/stores/ws'
 
 /** Eventos del canal `server:{id}` que cambian el estado del dominio. */
 const STATE_EVENTS: Record<string, ServerState> = {
+  'SERVER.CREATED': 'created',
+  'SERVER.PREPARING': 'preparing',
   'SERVER.STARTING': 'starting',
   'SERVER.STARTED': 'running',
   'SERVER.STOPPING': 'stopping',

@@ -13,6 +13,8 @@ import { useWebSocketStore } from '@/stores/ws'
  * actualizan datos en silencio y se filtran aquí explícitamente.
  */
 const NOTIFICATION_EVENTS = new Set([
+  'SERVER.CREATED',
+  'SERVER.PREPARING',
   'SERVER.STARTED',
   'SERVER.STOPPED',
   'SERVER.CRASHED',

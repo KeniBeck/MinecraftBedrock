@@ -18,18 +18,22 @@ interface ServerCardProps {
 }
 
 function textColor(state: Server['state']): string {
-  if (state === 'running' || state === 'starting') return 'text-emerald-300'
+  if (state === 'running') return 'text-emerald-300'
+  if (state === 'preparing' || state === 'starting' || state === 'stopping') return 'text-amber-300'
   if (state === 'crashed') return 'text-red-300'
   return 'text-slate-300'
 }
 
 function StatusBadge({ state }: { state: Server['state'] }) {
-  const isRunning = state === 'running' || state === 'starting'
+  const isRunning = state === 'running'
+  const isTransitional = state === 'preparing' || state === 'starting' || state === 'stopping'
   const dot = isRunning
     ? 'bg-emerald-400 shadow-[0_0_0_3px_rgba(16,185,129,.18)]'
-    : state === 'crashed'
-      ? 'bg-red-400 shadow-[0_0_0_3px_rgba(248,113,113,.18)]'
-      : 'bg-slate-400 shadow-[0_0_0_3px_rgba(148,163,184,.15)]'
+    : isTransitional
+      ? 'bg-amber-400 shadow-[0_0_0_3px_rgba(251,191,36,.18)]'
+      : state === 'crashed'
+        ? 'bg-red-400 shadow-[0_0_0_3px_rgba(248,113,113,.18)]'
+        : 'bg-slate-400 shadow-[0_0_0_3px_rgba(148,163,184,.15)]'
   return (
     <span className="inline-flex items-center gap-2 border border-black bg-slate-900/70 px-2.5 py-1 shadow-[inset_1px_1px_0_rgba(255,255,255,.15),inset_-1px_-1px_0_rgba(0,0,0,.4)]">
       <span className={cn('size-2 rounded-none', dot)} />

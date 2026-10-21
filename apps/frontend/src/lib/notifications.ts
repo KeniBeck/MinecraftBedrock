@@ -2,9 +2,11 @@ import type { NotificationItem } from '@/stores/notifications'
 
 /** Etiqueta legible por tipo de evento global (compartida campana + dashboard). */
 export const EVENT_LABEL: Record<string, string> = {
+  'SERVER.CREATED': 'Servidor creado',
+  'SERVER.PREPARING': 'Preparando servidor (descargando/creando)',
   'SERVER.STARTED': 'Servidor en línea',
   'SERVER.STOPPED': 'Servidor detenido',
-  'SERVER.CRASHED': 'Servidor caído',
+  'SERVER.CRASHED': 'Servidor fallido',
   'PLAYER.JOINED': 'Jugador conectado',
   'PLAYER.LEFT': 'Jugador desconectado',
   'BACKUP.COMPLETED': 'Backup completado',
@@ -28,7 +30,9 @@ export function relativeTime(ts: string): string {
 export function labelFor(item: Pick<NotificationItem, 'event' | 'payload'>): string {
   const base = EVENT_LABEL[item.event] ?? item.event
   const name = typeof item.payload.name === 'string' ? item.payload.name : undefined
-  return name ? `${base}: ${name}` : base
+  const exitCode = item.payload.exit_code
+  const suffix = typeof exitCode === 'number' ? ` (código ${exitCode})` : ''
+  return name ? `${base}: ${name}${suffix}` : `${base}${suffix}`
 }
 
 /** ¿Es un evento de error/fallo (para el punto de color rojo)? */

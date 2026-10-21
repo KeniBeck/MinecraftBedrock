@@ -61,6 +61,11 @@ class Server:
 
     # -- transiciones de estado (invariantes del dominio) -----------------
 
+    def request_prepare(self) -> None:
+        """Entra en ``preparing`` (descarga/instalación del servidor)."""
+        assert_can_transition(self.state, ServerState.PREPARING)
+        self.state = ServerState.PREPARING
+
     def request_start(self) -> None:
         assert_can_transition(self.state, ServerState.STARTING)
         self.state = ServerState.STARTING

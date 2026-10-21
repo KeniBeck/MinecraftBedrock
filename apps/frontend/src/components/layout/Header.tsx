@@ -59,6 +59,7 @@ export function Header() {
   const playersMax = Math.max(snap.players_max, 10)
 
   const isOnline = activeServer?.state === 'running' || activeServer?.state === 'starting'
+  const isPreparing = activeServer?.state === 'preparing'
 
   /** Subpágina actual dentro de `/servers/:id/...` (o `null` si no la hay). */
   const currentSub = (() => {
@@ -111,7 +112,10 @@ export function Header() {
             />
             <span className="text-sm">Servidor: {activeServer?.name ?? '—'}</span>
             <span
-              className={cn('size-2 rounded-full', isOnline ? 'bg-emerald-400' : 'bg-slate-500')}
+              className={cn(
+                'size-2 rounded-full',
+                isOnline ? 'bg-emerald-400' : isPreparing ? 'bg-amber-400' : 'bg-slate-500',
+              )}
             />
             <span className="text-xs text-slate-400">
               {activeServer ? (isOnline ? 'En línea' : STATE_LABEL[activeServer.state]) : '—'}
@@ -136,7 +140,9 @@ export function Header() {
                   'size-2 rounded-full',
                   server.state === 'running' || server.state === 'starting'
                     ? 'bg-emerald-400'
-                    : 'bg-slate-400',
+                    : server.state === 'preparing'
+                      ? 'bg-amber-400'
+                      : 'bg-slate-400',
                 )}
               />
               <span className="flex-1">{server.name}</span>

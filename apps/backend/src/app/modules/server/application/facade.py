@@ -95,8 +95,16 @@ class ServerFacade:
     async def mark_started(self, server_id: str) -> ServerView:
         return await self._mark_started.execute(server_id)
 
-    async def mark_crashed(self, server_id: str) -> ServerView:
-        return await self._mark_crashed.execute(server_id)
+    async def mark_crashed(
+        self,
+        server_id: str,
+        *,
+        reason: str | None = None,
+        exit_code: int | None = None,
+    ) -> ServerView:
+        return await self._mark_crashed.execute(
+            server_id, reason=reason, exit_code=exit_code
+        )
 
     # -- config / versión --------------------------------------------------
 

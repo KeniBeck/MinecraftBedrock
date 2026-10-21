@@ -114,6 +114,30 @@ describe('useServerStateSync', () => {
     })
   })
 
+  it('actualiza el estado del server a preparing al recibir SERVER.PREPARING', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Probe serverId="srv-1" />
+      </QueryClientProvider>,
+    )
+
+    const socket = socketAt(0)
+    socket.emitOpen()
+    socket.emitMessage({
+      event: 'SERVER.PREPARING',
+      server_id: 'srv-1',
+      scope: 'server',
+      payload: { name: 'Survival' },
+      ts: '2026-01-01T00:00:00Z',
+      seq: 6,
+    })
+
+    await waitFor(() => {
+      expect(queryClient.getQueryData<Server>(['server', 'srv-1'])?.state).toBe('preparing')
+    })
+  })
+
   it('ignora eventos de otros servidores', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(

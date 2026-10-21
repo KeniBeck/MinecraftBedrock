@@ -61,6 +61,9 @@ class ServerStoragePort(Protocol):
         puede leer o no tiene el tag, no hace nada.
         """
 
+    def is_valid_world(self, rel: str) -> bool:
+        """¿El árbol contiene un mundo completo (``level.dat`` + ``db/`` no vacía)?"""
+
     def world_snapshot(self, world_name: str) -> BinaryIO:
         """Abre un stream de lectura del árbol de un mundo (formato zip)."""
 

@@ -11,6 +11,7 @@ import time
 from datetime import UTC, datetime
 
 from app.infrastructure.events.bus import InProcessEventBus
+from app.kernel.events.event import DomainEvent
 from app.kernel.ports.runtime import ServerState
 from app.kernel.ports.status import ProbeResult
 from app.modules.monitoring.application.polling import StatusPoller, StatusSnapshot
@@ -51,10 +52,15 @@ class FakeProbe:
 class Harness:
     """Facade de Server + runtime/probe fake + poller listos para usar."""
 
-    def __init__(self) -> None:
+    def __init__(self, settings_values: dict[str, object] | None = None) -> None:
         self.bus = InProcessEventBus()
         self.runtime = FakeRuntime()
-        self.deps: ServerDeps = make_deps(self.runtime, FakeConfigurationReader(), self.bus)
+        self.deps: ServerDeps = make_deps(
+            self.runtime,
+            FakeConfigurationReader(),
+            self.bus,
+            settings_values=settings_values,
+        )
         self.facade = make_facade(self.deps)
         self.probe = FakeProbe(ProbeResult(online=True, latency_ms=5.0))
         self.store = InMemoryMetricSampleStore(max_per_server=10)
@@ -109,6 +115,20 @@ async def test_poll_confirma_arranque_cuando_el_juego_responde() -> None:
     assert snapshot.sample.status.value == "online"
 
 
+async def test_poll_confirma_arranque_desde_preparing() -> None:
+    h = Harness({"server.provisioning.enabled": True})
+    view = await CreateServerUseCase(h.deps).execute(CreateServerCommand(name="Survival"))
+    started = await StartServerUseCase(h.deps).execute(StartServerCommand(server_id=view.id))
+    assert started.state is ServerState.PREPARING
+
+    snapshot = await h.poller.poll_server(view.id)
+
+    updated = await h.facade.get_server(view.id)
+    assert snapshot is not None
+    assert snapshot.state is ServerState.RUNNING
+    assert updated is not None and updated.state is ServerState.RUNNING
+
+
 async def test_poll_usa_host_de_probe_configurado_si_existe() -> None:
     h = Harness()
     h.poller = make_poller(
@@ -149,6 +169,24 @@ async def test_poll_marca_crashed_cuando_el_juego_no_responde_y_el_runtime_esta_
     assert snapshot.state is ServerState.CRASHED
     updated = await h.facade.get_server(server_id)
     assert updated is not None and updated.state is ServerState.CRASHED
+
+
+async def test_poll_incluye_codigo_de_salida_al_marcar_crashed() -> None:
+    h = Harness()
+    server_id = await h.create_started()
+    await MarkStartedUseCase(h.deps).execute(server_id)
+    view = await h.facade.get_server(server_id)
+    assert view is not None and view.runtime_id is not None
+    h.runtime.stop(view.runtime_id)
+    h.runtime.get_exit_code = lambda runtime_id: 1  # type: ignore[method-assign]
+    h.probe.result = ProbeResult(online=False, latency_ms=200.0)
+    events: list[DomainEvent] = []
+    h.bus.subscribe("server.crashed", events.append)
+
+    await h.poller.poll_server(server_id)
+
+    assert events and events[0].payload["reason"] == "runtime_exited"
+    assert events[0].payload["exit_code"] == 1
 
 
 async def test_poll_no_marca_crashed_si_el_runtime_sigue_vivo() -> None:

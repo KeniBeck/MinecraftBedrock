@@ -198,16 +198,37 @@ class StatusPoller:
         result: ProbeResult,
         runtime_state: RuntimeState | None,
     ) -> None:
-        if view.state not in (ServerState.STARTING, ServerState.RUNNING):
+        if view.state not in (
+            ServerState.PREPARING,
+            ServerState.STARTING,
+            ServerState.RUNNING,
+        ):
             return
         try:
-            if view.state is ServerState.STARTING and result.online:
+            if view.state in (ServerState.PREPARING, ServerState.STARTING) and result.online:
                 await self._server.mark_started(view.id)
                 return
             if not result.online and runtime_state in _DEAD_RUNTIME_STATES:
-                await self._server.mark_crashed(view.id)
+                exit_code = await self._exit_code(view.runtime_id)
+                await self._server.mark_crashed(
+                    view.id,
+                    reason="runtime_exited",
+                    exit_code=exit_code,
+                )
         except ServerStateError:
             return
+
+    async def _exit_code(self, runtime_id: str | None) -> int | None:
+        """Código de salida del contenedor, best effort con timeout."""
+        if runtime_id is None:
+            return None
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._runtime.get_exit_code, runtime_id),
+                timeout=self.runtime_timeout,
+            )
+        except (TimeoutError, AppError):
+            return None
 
     def _build_sample(
         self,

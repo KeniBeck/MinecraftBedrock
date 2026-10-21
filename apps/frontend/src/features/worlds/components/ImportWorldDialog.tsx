@@ -56,11 +56,15 @@ export function ImportWorldDialog({ open, onOpenChange, serverId }: ImportWorldD
           maxLength={64}
         />
       </FormField>
-      <FormField label="Archivo .mcworld" htmlFor="import-file">
+      <FormField
+        label="Archivo del mundo (.mcworld, .zip, .tar.gz)"
+        htmlFor="import-file"
+        hint="El archivo debe incluir level.dat y la carpeta db del mundo."
+      >
         <Input
           id="import-file"
           type="file"
-          accept=".mcworld,.zip"
+          accept=".mcworld,.zip,.tar.gz,.tgz,.gz"
           ref={fileInputRef}
           onChange={(e) => setFile(e.target.files?.[0] || null)}
           required

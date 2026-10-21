@@ -29,6 +29,7 @@ class ServerState(StrEnum):
     """Estado del servidor a nivel dominio (Blueprint §16.3)."""
 
     CREATED = "created"
+    PREPARING = "preparing"
     STARTING = "starting"
     RUNNING = "running"
     STOPPING = "stopping"

@@ -13,17 +13,26 @@ from app.modules.server.domain.state_machine import (
 )
 
 
-def test_created_permite_starting_y_removed() -> None:
+def test_created_permite_preparing_starting_y_removed() -> None:
     transitions = allowed_transitions(ServerState.CREATED)
-    assert transitions == frozenset({ServerState.STARTING, ServerState.REMOVED})
+    assert transitions == frozenset(
+        {ServerState.PREPARING, ServerState.STARTING, ServerState.REMOVED}
+    )
 
 
 @pytest.mark.parametrize(
     ("current", "target"),
     [
+        (ServerState.CREATED, ServerState.PREPARING),
         (ServerState.CREATED, ServerState.STARTING),
         (ServerState.CREATED, ServerState.REMOVED),
+        (ServerState.PREPARING, ServerState.RUNNING),
+        (ServerState.PREPARING, ServerState.STOPPING),
+        (ServerState.PREPARING, ServerState.CRASHED),
+        (ServerState.PREPARING, ServerState.REMOVED),
+        (ServerState.STOPPED, ServerState.PREPARING),
         (ServerState.STOPPED, ServerState.STARTING),
+        (ServerState.CRASHED, ServerState.PREPARING),
         (ServerState.CRASHED, ServerState.STARTING),
         (ServerState.STARTING, ServerState.RUNNING),
         (ServerState.STARTING, ServerState.STOPPING),
@@ -44,6 +53,8 @@ def test_transiciones_validas(current: ServerState, target: ServerState) -> None
     [
         (ServerState.CREATED, ServerState.RUNNING),
         (ServerState.CREATED, ServerState.STOPPED),
+        (ServerState.PREPARING, ServerState.PREPARING),
+        (ServerState.PREPARING, ServerState.STARTING),
         (ServerState.RUNNING, ServerState.RUNNING),
         (ServerState.STARTING, ServerState.STARTING),
         (ServerState.STOPPED, ServerState.STOPPED),

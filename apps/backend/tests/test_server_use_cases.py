@@ -48,6 +48,7 @@ from app.modules.server.domain.events import (
     SERVER_CONFIG_CHANGED,
     SERVER_CRASHED,
     SERVER_CREATED,
+    SERVER_PREPARING,
     SERVER_REMOVED,
     SERVER_RESOURCES_CHANGED,
     SERVER_STARTED,
@@ -91,7 +92,11 @@ def make_deps(
     ids: SequenceIds | None = None,
     settings_values: dict[str, object] | None = None,
 ) -> ServerDeps:
-    settings = FakeSettings(settings_values)
+    # Los tests de ciclo de vida asumen el arranque normal (``starting``); la
+    # preparación/descarga se prueba explícitamente activando esta opción.
+    values: dict[str, object] = {"server.provisioning.enabled": False}
+    values.update(settings_values or {})
+    settings = FakeSettings(values)
     spec_factory = RuntimeSpecFactory(settings)
     return ServerDeps(
         repository=InMemoryServerRepository(),
@@ -280,6 +285,48 @@ async def test_start_y_confirm_started() -> None:
     running = await MarkStartedUseCase(deps).execute(server_id)
     assert running.state == ServerState.RUNNING
     assert SERVER_STARTED in recorder.types
+
+
+async def test_start_en_volumen_sin_binario_entra_en_preparing() -> None:
+    bus = InProcessEventBus()
+    recorder = Recorder(bus)
+    runtime = FakeRuntime()
+    deps = make_deps(
+        runtime,
+        FakeConfigurationReader(),
+        bus,
+        settings_values={"server.provisioning.enabled": True},
+    )
+    server_id = "srv-1"
+    await CreateServerUseCase(deps).execute(CreateServerCommand(name="Survival"))
+
+    view = await StartServerUseCase(deps).execute(StartServerCommand(server_id=server_id))
+
+    assert view.state == ServerState.PREPARING
+    assert SERVER_PREPARING in recorder.types
+    event = next(e for e in recorder.events if e.type == SERVER_PREPARING)
+    assert event.payload["name"] == "Survival"
+    assert event.payload["message"]
+
+
+async def test_mark_crashed_incluye_motivo_y_codigo_de_salida() -> None:
+    bus = InProcessEventBus()
+    recorder = Recorder(bus)
+    runtime = FakeRuntime()
+    deps = make_deps(runtime, FakeConfigurationReader(), bus)
+    server_id = await make_running(deps, runtime)
+
+    view = await MarkCrashedUseCase(deps).execute(
+        server_id, reason="runtime_exited", exit_code=137
+    )
+
+    assert view.state == ServerState.CRASHED
+    event = next(e for e in recorder.events if e.type == SERVER_CRASHED)
+    assert event.payload == {
+        "name": "Survival",
+        "reason": "runtime_exited",
+        "exit_code": 137,
+    }
 
 
 async def test_stop_ordenada_publica_stopping_y_stopped() -> None:
