@@ -3,7 +3,7 @@ import type { NotificationItem } from '@/stores/notifications'
 /** Etiqueta legible por tipo de evento global (compartida campana + dashboard). */
 export const EVENT_LABEL: Record<string, string> = {
   'SERVER.CREATED': 'Servidor creado',
-  'SERVER.PREPARING': 'Preparando servidor (descargando/creando)',
+  'SERVER.PREPARING': 'Descargando servidor (imagen/binarios)',
   'SERVER.STARTED': 'Servidor en línea',
   'SERVER.STOPPED': 'Servidor detenido',
   'SERVER.CRASHED': 'Servidor fallido',

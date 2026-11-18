@@ -2,8 +2,8 @@ import type { ServerState } from '@/lib/api/servers'
 
 /** Etiqueta legible del estado del servidor (badge del mockup). */
 export const STATE_LABEL: Record<ServerState, string> = {
-  created: 'Creado',
-  preparing: 'Preparando',
+  created: 'Pendiente',
+  preparing: 'Descargando',
   starting: 'Iniciando',
   running: 'En línea',
   stopping: 'Deteniendo',
@@ -44,10 +44,9 @@ export function serverActions(state: ServerState): ServerActions {
     case 'crashed':
       return { canStart: true, canStop: false, canRestart: false }
     case 'preparing':
-      return { canStart: false, canStop: true, canRestart: false }
-    case 'running':
     case 'starting':
-      return { canStart: false, canStop: true, canRestart: true }
+    case 'running':
+      return { canStart: false, canStop: true, canRestart: state === 'running' }
     case 'stopping':
     case 'removed':
       return { canStart: false, canStop: false, canRestart: false }
