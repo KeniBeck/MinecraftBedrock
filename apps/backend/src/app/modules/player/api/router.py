@@ -67,6 +67,7 @@ def _session_response(view: PlaySessionView) -> PlaySessionResponse:
         left_at=view.left_at,
         reason=view.reason,
         playtime_seconds=view.playtime_seconds,
+        name=view.name,
     )
 
 
@@ -165,6 +166,22 @@ async def online_players(
 ) -> list[PlaySessionResponse]:
     del identity
     sessions = await _facade(request).online_players(server_id)
+    return [_session_response(session) for session in sessions]
+
+
+@router.get(
+    "/servers/{server_id}/players/sessions",
+    response_model=list[PlaySessionResponse],
+    summary="Historial de sesiones cerradas del servidor (jugadores que estuvieron)",
+)
+async def server_sessions(
+    server_id: str,
+    request: Request,
+    limit: int = 50,
+    identity: Identity = Depends(require_server_action("player.sessions")),
+) -> list[PlaySessionResponse]:
+    del identity
+    sessions = await _facade(request).list_server_sessions(server_id, limit=limit)
     return [_session_response(session) for session in sessions]
 
 

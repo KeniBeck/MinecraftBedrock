@@ -15,6 +15,7 @@ import {
   listServerBans,
   onlinePlayers,
   searchPlayer,
+  serverSessions,
   unbanPlayerGlobally,
   unbanPlayerOnServer,
   type PlaySessionResponse,
@@ -30,11 +31,13 @@ vi.mock('@/lib/api/players', () => ({
     search: (serverId: string, name: string) => ['players', serverId, 'search', name],
     serverBans: (serverId: string) => ['players', serverId, 'bans'],
     globalBans: () => ['players', 'global', 'bans'],
+    serverSessions: (serverId: string) => ['players', serverId, 'sessions'],
   },
   onlinePlayers: vi.fn(),
   searchPlayer: vi.fn(),
   getPlayer: vi.fn(),
   playerSessions: vi.fn(),
+  serverSessions: vi.fn(),
   listGlobalBans: vi.fn(),
   listServerBans: vi.fn(),
   banPlayerGlobally: vi.fn(),
@@ -52,6 +55,7 @@ const SESSION: PlaySessionResponse = {
   left_at: null,
   reason: null,
   playtime_seconds: 3600,
+  name: null,
 }
 
 /** AxiosError real con la forma del error del backend (para getApiCode). */
@@ -93,6 +97,7 @@ describe('PlayersPage', () => {
   beforeEach(() => {
     vi.mocked(listGlobalBans).mockResolvedValue([])
     vi.mocked(listServerBans).mockResolvedValue([])
+    vi.mocked(serverSessions).mockResolvedValue([])
   })
 
   afterEach(() => {

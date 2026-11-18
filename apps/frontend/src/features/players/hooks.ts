@@ -11,6 +11,7 @@ import {
   playerKeys,
   playerSessions,
   searchPlayer,
+  serverSessions,
   unbanPlayerGlobally,
   unbanPlayerOnServer,
   type BanPlayerRequest,
@@ -84,6 +85,17 @@ export function usePlayerSessions(serverId: string | undefined, xuid: string | u
     queryKey: playerKeys.sessions(serverId ?? '', xuid ?? ''),
     queryFn: () => playerSessions(serverId!, xuid!, 20),
     enabled: Boolean(serverId) && Boolean(xuid),
+    refetchOnWindowFocus: false,
+    retry: false,
+  })
+}
+
+/** `GET /servers/{id}/players/sessions?limit=` — historial de sesiones del servidor. */
+export function useServerSessions(serverId: string | undefined) {
+  return useQuery({
+    queryKey: playerKeys.serverSessions(serverId ?? ''),
+    queryFn: () => serverSessions(serverId!, 50),
+    enabled: Boolean(serverId),
     refetchOnWindowFocus: false,
     retry: false,
   })

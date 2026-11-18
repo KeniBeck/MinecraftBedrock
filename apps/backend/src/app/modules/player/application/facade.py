@@ -90,12 +90,32 @@ class PlayerFacade:
     async def list_sessions(self, xuid: str, limit: int = 20) -> list[PlaySessionView]:
         """Historial de sesiones de un jugador, más recientes primero."""
         sessions = await self.deps.repository.list_sessions(xuid, limit=limit)
-        return [session_to_view(session) for session in sessions]
+        names = await self._names_for(sessions)
+        return [session_to_view(session, names.get(session.xuid)) for session in sessions]
+
+    async def list_server_sessions(
+        self, server_id: str, limit: int = 50, include_open: bool = False
+    ) -> list[PlaySessionView]:
+        """Historial de sesiones del servidor (cerradas por defecto), recientes primero."""
+        sessions = await self.deps.repository.list_server_sessions(
+            server_id, limit=limit, include_open=include_open
+        )
+        names = await self._names_for(sessions)
+        return [session_to_view(session, names.get(session.xuid)) for session in sessions]
 
     async def online_players(self, server_id: str) -> list[PlaySessionView]:
         """Jugadores con sesión abierta (presencia en vivo) en un servidor."""
         sessions = await self.deps.repository.list_open_sessions(server_id)
-        return [session_to_view(session) for session in sessions]
+        names = await self._names_for(sessions)
+        return [session_to_view(session, names.get(session.xuid)) for session in sessions]
+
+    async def _names_for(self, sessions: list[PlaySession]) -> dict[str, str]:
+        names: dict[str, str] = {}
+        for xuid in {session.xuid for session in sessions}:
+            player = await self.deps.repository.get_player(xuid)
+            if player is not None:
+                names[xuid] = player.name
+        return names
 
     async def list_global_bans(self) -> list[GlobalBanView]:
         """Todos los bans globales, más recientes primero."""

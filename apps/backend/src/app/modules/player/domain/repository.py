@@ -39,6 +39,11 @@ class PlayerRepositoryPort(Protocol):
 
     async def list_sessions(self, xuid: str, limit: int = 20) -> list[PlaySession]: ...
 
+    async def list_server_sessions(
+        self, server_id: str, limit: int = 50, include_open: bool = False
+    ) -> list[PlaySession]:
+        """Sesiones del servidor, más recientes primero (historial)."""
+
 
 class PlayerBanRepositoryPort(Protocol):
     """Persistencia de bans persistentes (globales y por servidor)."""

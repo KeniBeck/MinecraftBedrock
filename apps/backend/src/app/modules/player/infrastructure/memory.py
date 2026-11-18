@@ -66,6 +66,17 @@ class InMemoryPlayerRepository:
         sessions.sort(key=lambda s: s.joined_at, reverse=True)
         return sessions[:limit]
 
+    async def list_server_sessions(
+        self, server_id: str, limit: int = 50, include_open: bool = False
+    ) -> list[PlaySession]:
+        sessions = [
+            s
+            for s in self._sessions.values()
+            if s.server_id == server_id and (include_open or s.left_at is not None)
+        ]
+        sessions.sort(key=lambda s: s.joined_at, reverse=True)
+        return sessions[:limit]
+
 
 class InMemoryPlayerBanRepository:
     """``PlayerBanRepositoryPort`` en memoria (filtra vigencia por ``expires_at``)."""

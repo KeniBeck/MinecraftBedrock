@@ -131,6 +131,17 @@ class PostgresPlayerRepository:
             rows = (await session.execute(stmt)).scalars().all()
         return [session_from_row(row) for row in rows]
 
+    async def list_server_sessions(
+        self, server_id: str, limit: int = 50, include_open: bool = False
+    ) -> list[PlaySession]:
+        stmt = select(PlaySessionRow).where(PlaySessionRow.server_id == server_id)
+        if not include_open:
+            stmt = stmt.where(PlaySessionRow.left_at.is_not(None))
+        stmt = stmt.order_by(PlaySessionRow.joined_at.desc()).limit(limit)
+        async with self._session_factory() as session:
+            rows = (await session.execute(stmt)).scalars().all()
+        return [session_from_row(row) for row in rows]
+
 
 def _now() -> datetime:
     return datetime.now(UTC)

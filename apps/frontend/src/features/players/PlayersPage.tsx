@@ -19,6 +19,7 @@ import {
   useOnlinePlayers,
   useSearchPlayer,
   useServerBans,
+  useServerSessions,
   useUnbanPlayerGlobally,
   useUnbanPlayerOnServer,
 } from './hooks'
@@ -60,6 +61,7 @@ export function PlayersPage() {
   const online = useOnlinePlayers(serverId)
   const globalBans = useGlobalBans(canGlobal)
   const serverBans = useServerBans(serverId)
+  const history = useServerSessions(serverId)
   const kick = useKickPlayer(serverId ?? '')
   const ban = useBanPlayerOnServer(serverId ?? '')
   const unbanGlobal = useUnbanPlayerGlobally()
@@ -253,6 +255,59 @@ export function PlayersPage() {
             />
           ))}
         </div>
+      </div>
+
+      {/* Historial: sesiones cerradas (jugadores que estuvieron). */}
+      <div>
+        <h2 className="mb-3 text-lg font-semibold">Historial de jugadores</h2>
+        {history.isLoading && <p className="text-sm text-muted-foreground">Cargando historial…</p>}
+        {history.isError && (
+          <p className="text-sm text-red-300">
+            {getApiMessage(history.error, 'No se pudo cargar el historial')}
+          </p>
+        )}
+        {history.data && history.data.length === 0 && (
+          <p className="py-6 text-center text-muted-foreground">Sin sesiones registradas aún.</p>
+        )}
+        {history.data && history.data.length > 0 && (
+          <div className="overflow-x-auto rounded-xl border border-white/10 bg-slate-900/60 backdrop-blur-xl">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-white/10 bg-white/5 text-xs uppercase tracking-wide text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-2">Jugador</th>
+                  <th className="px-4 py-2">Entrada</th>
+                  <th className="px-4 py-2">Salida</th>
+                  <th className="px-4 py-2">Tiempo</th>
+                  <th className="px-4 py-2">Motivo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.data.map((session) => (
+                  <tr key={session.id} className="border-b border-white/5 last:border-0">
+                    <td className="px-4 py-2">
+                      <div className="font-medium">{session.name ?? session.xuid}</div>
+                      {session.name ? (
+                        <div className="font-mono text-xs text-muted-foreground">{session.xuid}</div>
+                      ) : null}
+                    </td>
+                    <td className="px-4 py-2 text-xs text-muted-foreground">
+                      {new Date(session.joined_at).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-2 text-xs text-muted-foreground">
+                      {session.left_at ? new Date(session.left_at).toLocaleString() : '—'}
+                    </td>
+                    <td className="px-4 py-2 text-xs">
+                      {session.playtime_seconds > 0 ? `${Math.round(session.playtime_seconds / 60)} min` : '—'}
+                    </td>
+                    <td className="px-4 py-2 text-xs text-muted-foreground">
+                      {session.reason ?? '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       <ConfirmDialog

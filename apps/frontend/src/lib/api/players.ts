@@ -14,6 +14,7 @@ export const playerKeys = {
   search: (serverId: string, name: string) => [...playerKeys.all(serverId), 'search', name] as const,
   serverBans: (serverId: string) => [...playerKeys.all(serverId), 'bans'] as const,
   globalBans: () => ['players', 'global', 'bans'] as const,
+  serverSessions: (serverId: string) => [...playerKeys.all(serverId), 'sessions'] as const,
 }
 
 /**
@@ -53,6 +54,7 @@ export interface PlaySessionResponse {
   left_at: string | null
   reason: string | null
   playtime_seconds: number
+  name: string | null
 }
 
 /** `CommandAckResponse` — acuse del comando enviado a BDS (kick). */
@@ -139,6 +141,18 @@ export async function playerSessions(
 ): Promise<PlaySessionResponse[]> {
   const { data } = await apiClient.get<PlaySessionResponse[]>(
     `/servers/${serverId}/players/${encodeURIComponent(xuid)}/sessions`,
+    { params: { limit } },
+  )
+  return data
+}
+
+/** `GET /servers/{id}/players/sessions?limit=` — historial del servidor (cerradas). */
+export async function serverSessions(
+  serverId: string,
+  limit = 50,
+): Promise<PlaySessionResponse[]> {
+  const { data } = await apiClient.get<PlaySessionResponse[]>(
+    `/servers/${serverId}/players/sessions`,
     { params: { limit } },
   )
   return data

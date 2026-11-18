@@ -41,6 +41,7 @@ class PlaySessionResponse(BaseModel):
     left_at: datetime | None
     reason: str | None
     playtime_seconds: int
+    name: str | None = None
 
 
 class CommandAckResponse(BaseModel):

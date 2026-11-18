@@ -12,10 +12,8 @@ interface OnlinePlayerRowProps {
 }
 
 /**
- * Fila de un jugador con sesión abierta: XUID + hora de conexión + duración.
- * El backend NO devuelve el gamertag en `online` (PlaySessionResponse solo
- * trae `xuid`), así que el nombre se resuelve aparte (buscador de jugadores)
- * y las acciones kick/ban se lanzan sobre el XUID.
+ * Fila de un jugador con sesión abierta: nombre (si disponible) + XUID + hora.
+ * Las acciones kick/ban se lanzan sobre el XUID.
  */
 export function OnlinePlayerRow({
   session,
@@ -31,7 +29,14 @@ export function OnlinePlayerRow({
     <div className="flex items-center justify-between rounded-xl border border-white/10 bg-slate-900/60 p-4 backdrop-blur-xl">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-3">
-          <span className="truncate font-mono text-sm">{session.xuid}</span>
+          <div className="min-w-0">
+            <span className="truncate font-medium">{session.name ?? session.xuid}</span>
+            {session.name ? (
+              <span className="ml-2 truncate font-mono text-xs text-muted-foreground">
+                {session.xuid}
+              </span>
+            ) : null}
+          </div>
           <span className="rounded-none border border-emerald-500/30 bg-emerald-500/20 px-2 py-0.5 text-xs text-emerald-300">
             En línea
           </span>

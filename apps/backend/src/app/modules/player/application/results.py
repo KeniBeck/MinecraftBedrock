@@ -32,6 +32,7 @@ class PlaySessionView:
     left_at: datetime | None
     reason: str | None
     playtime_seconds: int
+    name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +75,7 @@ def player_to_view(player: Player) -> PlayerView:
     )
 
 
-def session_to_view(session: PlaySession) -> PlaySessionView:
+def session_to_view(session: PlaySession, name: str | None = None) -> PlaySessionView:
     """Proyecta una sesión del dominio a su vista de presentación."""
     return PlaySessionView(
         id=session.id,
@@ -84,6 +85,7 @@ def session_to_view(session: PlaySession) -> PlaySessionView:
         left_at=session.left_at,
         reason=session.reason.value if session.reason is not None else None,
         playtime_seconds=session.playtime_seconds,
+        name=name,
     )
 
 
