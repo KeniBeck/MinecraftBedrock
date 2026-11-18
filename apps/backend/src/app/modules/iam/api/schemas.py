@@ -108,6 +108,7 @@ class AuditLogResponse(BaseModel):
     created_at: datetime | None
     hash: str | None
     prev_hash: str | None
+    actor_name: str | None = None
 
 
 class AuditLogListResponse(BaseModel):

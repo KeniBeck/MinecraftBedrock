@@ -115,7 +115,14 @@ export function AuditLogList() {
                     <td className="px-4 py-2 text-xs text-muted-foreground">
                       {log.created_at ? new Date(log.created_at).toLocaleString() : '—'}
                     </td>
-                    <td className="px-4 py-2 text-xs">{log.actor_id ?? '—'}</td>
+                    <td className="px-4 py-2 text-xs">
+                      <div className="font-medium text-slate-200">
+                        {log.actor_name ?? log.actor_id ?? log.actor_type}
+                      </div>
+                      {log.actor_name && log.actor_id ? (
+                        <div className="text-muted-foreground">{log.actor_id}</div>
+                      ) : null}
+                    </td>
                     <td className="px-4 py-2 font-medium">{log.action}</td>
                     <td className="px-4 py-2 text-xs text-muted-foreground">
                       {log.resource_type ? `${log.resource_type}:${log.resource_id ?? ''}` : '—'}

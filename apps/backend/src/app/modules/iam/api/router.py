@@ -134,6 +134,7 @@ def _audit_log_response(view: AuditLogView) -> AuditLogResponse:
         created_at=view.created_at,
         hash=view.hash,
         prev_hash=view.prev_hash,
+        actor_name=view.actor_name,
     )
 
 

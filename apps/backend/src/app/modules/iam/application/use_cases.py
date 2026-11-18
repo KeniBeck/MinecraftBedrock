@@ -630,6 +630,15 @@ class ListAuditLogsUseCase:
             limit=limit,
             offset=offset,
         )
+        actor_ids = {record.actor_id for record in records if record.actor_id}
+        names: dict[str, str] = {}
+        if actor_ids:
+            users = await self._deps.repository.list_users()
+            names = {
+                user.id: (user.display_name or user.username)
+                for user in users
+                if user.id in actor_ids
+            }
         items = [
             AuditLogView(
                 id=record.id,
@@ -645,6 +654,7 @@ class ListAuditLogsUseCase:
                 created_at=record.created_at,
                 hash=record.hash,
                 prev_hash=record.prev_hash,
+                actor_name=names.get(record.actor_id) if record.actor_id else None,
             )
             for record in records
         ]

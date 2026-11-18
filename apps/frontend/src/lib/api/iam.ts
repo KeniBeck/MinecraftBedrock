@@ -90,6 +90,7 @@ export interface AuditLog {
   created_at: string | null
   hash: string | null
   prev_hash: string | null
+  actor_name: string | null
 }
 
 /** `AuditLogListResponse` — página de auditoría. */
